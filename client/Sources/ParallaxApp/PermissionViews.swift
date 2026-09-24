@@ -20,7 +20,11 @@ struct PermissionCard: View {
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
                 step(1, "Click **Open System Settings**.")
-                step(2, "Turn on **Parallax**. If it's already on, turn it off and back on.")
+                if permission == .screenRecording {
+                    step(2, "Turn on **Parallax**. If it's already on but this keeps appearing, select it, click **−** to remove it, then click Open System Settings again and turn it on.")
+                } else {
+                    step(2, "Turn on **Parallax**. If it's already on, turn it off and back on.")
+                }
                 if permission.mayNeedRelaunch {
                     step(3, "Come back and click **Relaunch Parallax**.")
                 }
@@ -31,9 +35,9 @@ struct PermissionCard: View {
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             HStack {
                 Button("Open System Settings") {
-                    // Make sure Parallax is listed in the pane; macOS only adds
-                    // it after the app has asked once.
-                    if permission == .screenRecording, !Permission.hasRequestedScreenRecording {
+                    // Make sure Parallax is listed in the pane. Asking is a no-op
+                    // if it already is, and re-adds it if the entry was removed.
+                    if permission == .screenRecording {
                         Task { await permission.request() }
                     }
                     permission.openSystemSettings()
