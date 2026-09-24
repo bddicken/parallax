@@ -6,6 +6,8 @@ import ParallaxCore
 /// streaming so a flaky uplink never affects the local copy.
 public final class Recorder: MediaSink, @unchecked Sendable {
     public let url: URL
+    /// The recording's frame size (the canvas, or scaled down from it).
+    public let encodedSize: CGSize
     private let writer: AVAssetWriter
     private let videoInput: AVAssetWriterInput
     private let audioInput: AVAssetWriterInput
@@ -28,10 +30,14 @@ public final class Recorder: MediaSink, @unchecked Sendable {
         // Fragmented output keeps everything up to the last fragment if we crash.
         writer.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)
 
+        let size = recording.resolution.size(for: output)
+        encodedSize = CGSize(width: size.width, height: size.height)
         let video: [String: Any] = [
             AVVideoCodecKey: recording.codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
-            AVVideoWidthKey: output.width,
-            AVVideoHeightKey: output.height,
+            AVVideoWidthKey: size.width,
+            AVVideoHeightKey: size.height,
+            // The canvas may be larger than the recording; scale to fit.
+            AVVideoScalingModeKey: AVVideoScalingModeResizeAspect,
             AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: recording.videoBitrateKbps * 1000,
                 AVVideoExpectedSourceFrameRateKey: output.fps,

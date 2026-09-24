@@ -20,6 +20,7 @@ public final class MediaEngine {
     private var videoSources: [UUID: VideoSource] = [:]
     private var audioNodes: [UUID: (kind: AudioSourceKind, node: AudioInputNode)] = [:]
     private var captureFPS = 0
+    private var canvas = OutputSettings(width: 0, height: 0)
     private var recorder: Recorder?
     private var monitor: AudioMonitor?
     private var monitorSettings = MonitorSettings()
@@ -48,11 +49,15 @@ public final class MediaEngine {
 
     public func apply(_ profile: Profile) {
         let fpsChanged = captureFPS != profile.output.fps
+        let sizeChanged = canvas.width != profile.output.width || canvas.height != profile.output.height
         captureFPS = profile.output.fps
+        canvas = profile.output
 
         let wantedVideo = Dictionary(uniqueKeysWithValues: profile.videoSources.map { ($0.id, $0) })
         for (id, running) in videoSources {
-            let needsRestart = fpsChanged && running.kind.isScreen
+            // Screens capture at the canvas rate and size; cameras pick 4K or 1080p from it.
+            let isCamera = if case .camera = running.kind { true } else { false }
+            let needsRestart = (fpsChanged && running.kind.isScreen) || (sizeChanged && (running.kind.isScreen || isCamera))
             if wantedVideo[id]?.kind != running.kind || needsRestart {
                 registry[id]?.stop()
                 registry[id] = nil
@@ -215,9 +220,11 @@ public final class MediaEngine {
         }
         switch source.kind.withNameHint(source.name) {
         case .camera(let uniqueID, let name, let modelID):
-            return CameraNode(uniqueID: uniqueID, name: name, modelID: modelID, onError: onError, onResolved: onResolved)
+            return CameraNode(uniqueID: uniqueID, name: name, modelID: modelID, wants4K: canvas.height >= 2160,
+                              onError: onError, onResolved: onResolved)
         case .display, .window:
-            return ScreenNode(kind: source.kind.withNameHint(source.name), fps: captureFPS, onError: onError, onResolved: onResolved)
+            return ScreenNode(kind: source.kind.withNameHint(source.name), fps: captureFPS, maxWidth: canvas.width,
+                              onError: onError, onResolved: onResolved)
         case .image(let path):
             let image = CIImage(contentsOf: URL(filePath: path))
             if image == nil { onError(.failed("Could not open image at \(path).")) }

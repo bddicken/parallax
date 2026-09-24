@@ -55,6 +55,7 @@ struct ControlBar: View {
                 .frame(minWidth: 90)
             }
             .controlSize(.large)
+            .help(recordingSummary)
 
             Button { showingGoLive = true } label: {
                 HStack(spacing: 6) {
@@ -78,6 +79,11 @@ struct ControlBar: View {
         }
     }
 
+    private var recordingSummary: String {
+        let r = model.profile.recording, size = r.resolution.size(for: model.profile.output)
+        return "Records \(size.width)×\(size.height) \(model.profile.output.fps) fps, \(r.codec == .hevc ? "HEVC" : "H.264") \(r.videoBitrateKbps / 1000) Mbps (⇧⌘R)"
+    }
+
     private func transitionBinding<T>(_ path: WritableKeyPath<TransitionSettings, T>) -> Binding<T> {
         Binding(get: { model.profile.transition[keyPath: path] }, set: { model.profile.transition[keyPath: path] = $0 })
     }
@@ -93,6 +99,12 @@ struct GoLiveSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(broadcast.status.live ? "You're live" : "Go Live").font(.title2.bold())
+            let stream = model.profile.broadcast.stream, size = stream.resolution.size(for: model.profile.output)
+            HStack {
+                Text("Stream: \(String(size.width))×\(String(size.height)) · \(model.profile.output.fps) fps · \(String(format: "%.1f", Double(stream.videoBitrateKbps) / 1000)) Mbps")
+                    .font(.callout).foregroundStyle(.secondary)
+                SettingsLink { Text("Change…") }.buttonStyle(.link)
+            }
 
             if broadcast.service.isMock {
                 Label("Using the built-in mock server. Nothing is actually streamed until parallax-server and the uplink are built.",

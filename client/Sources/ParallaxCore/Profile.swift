@@ -254,6 +254,80 @@ public struct OutputSettings: Codable, Hashable, Sendable {
     }
 }
 
+extension OutputSettings {
+    public static let presets: [(width: Int, height: Int)] = [(3840, 2160), (2560, 1440), (1920, 1080), (1280, 720)]
+
+    /// "4K", "1080p", … for the common sizes; otherwise "W × H".
+    public var shortName: String { OutputResolution.name(forHeight: height) ?? "\(width) × \(height)" }
+}
+
+/// Size of a recording or stream relative to the canvas. Never upscales.
+public enum OutputResolution: String, Codable, CaseIterable, Sendable {
+    case canvas, p2160, p1440, p1080, p720
+
+    public var height: Int? {
+        switch self {
+        case .canvas: nil
+        case .p2160: 2160
+        case .p1440: 1440
+        case .p1080: 1080
+        case .p720: 720
+        }
+    }
+
+    /// The encoded size for a canvas: same aspect, even dimensions, no larger than the canvas.
+    public func size(for canvas: OutputSettings) -> (width: Int, height: Int) {
+        guard let target = height, target < canvas.height else { return (canvas.width, canvas.height) }
+        let width = Int((Double(canvas.width) * Double(target) / Double(canvas.height)).rounded())
+        return (width - width % 2, target)
+    }
+
+    /// Whether this is an actual downscale for the canvas (so worth offering).
+    public func isAvailable(for canvas: OutputSettings) -> Bool {
+        height.map { $0 < canvas.height } ?? true
+    }
+
+    static func name(forHeight height: Int) -> String? {
+        switch height {
+        case 2160: "4K"
+        case 1440: "1440p"
+        case 1080: "1080p"
+        case 720: "720p"
+        default: nil
+        }
+    }
+}
+
+public enum Bitrates {
+    /// Recording: high quality for editing later.
+    public static func recording(height: Int, fps: Int, codec: VideoCodec) -> Int {
+        let h264: Int = switch height {
+        case 2160...: 60_000
+        case 1440..<2160: 32_000
+        case 1080..<1440: 16_000
+        default: 8_000
+        }
+        let fpsFactor = fps > 30 ? 1.5 : 1
+        let codecFactor = codec == .hevc ? 0.65 : 1
+        return Int((Double(h264) * fpsFactor * codecFactor / 1000).rounded()) * 1000
+    }
+
+    /// Streaming: in line with YouTube's recommended ingest bitrates (H.264).
+    public static func streaming(height: Int, fps: Int) -> Int {
+        let high = fps > 30
+        return switch height {
+        case 2160...: high ? 40_000 : 30_000
+        case 1440..<2160: high ? 18_000 : 12_000
+        case 1080..<1440: high ? 9_000 : 6_000
+        default: high ? 6_000 : 4_000
+        }
+    }
+
+    public static func gigabytesPerHour(videoKbps: Int, audioKbps: Int) -> Double {
+        Double(videoKbps + audioKbps) * 1000 * 3600 / 8 / 1_000_000_000
+    }
+}
+
 public enum VideoCodec: String, Codable, CaseIterable, Sendable {
     case h264, hevc
 }
@@ -264,6 +338,7 @@ public enum RecordingContainer: String, Codable, CaseIterable, Sendable {
 
 public struct RecordingSettings: Codable, Hashable, Sendable {
     public var directoryPath: String
+    public var resolution: OutputResolution = .canvas
     public var codec: VideoCodec = .h264
     public var container: RecordingContainer = .mov
     public var videoBitrateKbps: Int = 16_000
@@ -271,6 +346,17 @@ public struct RecordingSettings: Codable, Hashable, Sendable {
 
     public init(directoryPath: String = RecordingSettings.defaultDirectory) {
         self.directoryPath = directoryPath
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = RecordingSettings()
+        directoryPath = try c.decodeIfPresent(String.self, forKey: .directoryPath) ?? d.directoryPath
+        resolution = try c.decodeIfPresent(OutputResolution.self, forKey: .resolution) ?? d.resolution
+        codec = try c.decodeIfPresent(VideoCodec.self, forKey: .codec) ?? d.codec
+        container = try c.decodeIfPresent(RecordingContainer.self, forKey: .container) ?? d.container
+        videoBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .videoBitrateKbps) ?? d.videoBitrateKbps
+        audioBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? d.audioBitrateKbps
     }
 
     public static var defaultDirectory: String {
@@ -293,13 +379,39 @@ public struct TransitionSettings: Codable, Hashable, Sendable {
     }
 }
 
+/// What Parallax sends to parallax-server, which relays it unchanged to
+/// each platform. Usually smaller than the canvas and the recording.
+public struct StreamSettings: Codable, Hashable, Sendable {
+    public var resolution: OutputResolution = .p1080
+    public var videoBitrateKbps: Int = 6_000
+    public var audioBitrateKbps: Int = 160
+    public var keyframeIntervalSeconds: Int = 2
+
+    public init() {}
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = StreamSettings()
+        resolution = try c.decodeIfPresent(OutputResolution.self, forKey: .resolution) ?? d.resolution
+        videoBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .videoBitrateKbps) ?? d.videoBitrateKbps
+        audioBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? d.audioBitrateKbps
+        keyframeIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .keyframeIntervalSeconds) ?? d.keyframeIntervalSeconds
+    }
+}
+
 public struct BroadcastSettings: Codable, Hashable, Sendable {
     /// Base URL of parallax-server. Empty means use the built-in mock.
     public var serverURL: String = ""
-    public var uplinkVideoBitrateKbps: Int = 8_000
+    public var stream = StreamSettings()
 
     public init(serverURL: String = "") {
         self.serverURL = serverURL
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        serverURL = try c.decodeIfPresent(String.self, forKey: .serverURL) ?? ""
+        stream = try c.decodeIfPresent(StreamSettings.self, forKey: .stream) ?? StreamSettings()
     }
 }
 

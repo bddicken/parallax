@@ -40,7 +40,8 @@ final class CameraNode: NSObject, VideoSourceNode, AVCaptureVideoDataOutputSampl
     private let onError: SourceErrorHandler
     private var link: ReconnectingCaptureSession!
 
-    init(uniqueID: String, name: String?, modelID: String?, onError: @escaping SourceErrorHandler,
+    /// `wants4K` asks for 2160p when the device supports it (4K canvas).
+    init(uniqueID: String, name: String?, modelID: String?, wants4K: Bool, onError: @escaping SourceErrorHandler,
          onResolved: @escaping @Sendable (VideoSourceKind) -> Void) {
         self.onError = onError
         super.init()
@@ -51,7 +52,8 @@ final class CameraNode: NSObject, VideoSourceNode, AVCaptureVideoDataOutputSampl
                 let input = try AVCaptureDeviceInput(device: device)
                 guard session.canAddInput(input) else { throw MediaError("Camera is in use by another capture.") }
                 session.addInput(input)
-                session.sessionPreset = session.canSetSessionPreset(.hd1920x1080) ? .hd1920x1080 : .high
+                let preferred: [AVCaptureSession.Preset] = wants4K ? [.hd4K3840x2160, .hd1920x1080] : [.hd1920x1080]
+                session.sessionPreset = preferred.first(where: session.canSetSessionPreset) ?? .high
                 let output = AVCaptureVideoDataOutput()
                 output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
                 output.alwaysDiscardsLateVideoFrames = true
@@ -92,6 +94,7 @@ final class CameraNode: NSObject, VideoSourceNode, AVCaptureVideoDataOutputSampl
 
 final class ScreenNode: NSObject, VideoSourceNode, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     private let fps: Int
+    private let maxWidth: Int
     private let queue = DispatchQueue(label: "parallax.screen", qos: .userInteractive)
     private let frames = VideoFrameBuffer()
     private let onError: SourceErrorHandler
@@ -104,14 +107,13 @@ final class ScreenNode: NSObject, VideoSourceNode, SCStreamOutput, SCStreamDeleg
     private var poll: DispatchSourceTimer?
     private var observers: [(NotificationCenter, NSObjectProtocol)] = []
 
-    /// Captures are scaled down to this width; the canvas is at most 1440p.
-    private static let maxWidth = 2560
-
-    /// `kind` must be `.display` or `.window`.
-    init(kind: VideoSourceKind, fps: Int, onError: @escaping SourceErrorHandler,
+    /// `kind` must be `.display` or `.window`. Captures wider than
+    /// `maxWidth` (normally the canvas width) are scaled down at the source.
+    init(kind: VideoSourceKind, fps: Int, maxWidth: Int, onError: @escaping SourceErrorHandler,
          onResolved: @escaping @Sendable (VideoSourceKind) -> Void) {
         self.kind = kind
         self.fps = fps
+        self.maxWidth = max(1280, maxWidth)
         self.onError = onError
         self.onResolved = onResolved
         super.init()
@@ -230,7 +232,7 @@ final class ScreenNode: NSObject, VideoSourceNode, SCStreamOutput, SCStreamDeleg
             }
 
             let config = SCStreamConfiguration()
-            let scale = min(1, Double(Self.maxWidth) / pixelSize.width)
+            let scale = min(1, Double(maxWidth) / pixelSize.width)
             config.width = Int(pixelSize.width * scale)
             config.height = Int(pixelSize.height * scale)
             config.minimumFrameInterval = CMTime(value: 1, timescale: CMTimeScale(fps))

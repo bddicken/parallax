@@ -101,6 +101,38 @@ import Testing
         #expect(inside.r > 200 && inside.g < 60)
     }
 
+    @Test func recordsAtAScaledDownResolution() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var profile = Profile.makeDefault()
+        profile.output = OutputSettings(width: 2560, height: 1440, fps: 30)
+        let red = VideoSource(name: "Red", kind: .color(RGBAColor(red: 1, green: 0, blue: 0)))
+        profile.videoSources = [red]
+        profile.scenes[0].items = [SceneItem(sourceID: red.id, frame: LayoutPreset.leftHalf.rect, contentMode: .stretch)]
+        profile.recording = RecordingSettings(directoryPath: dir.path)
+        profile.recording.resolution = .p720
+
+        let engine = MediaEngine()
+        engine.apply(profile)
+        engine.setProgram(profile.programSceneID, transition: TransitionSettings(kind: .cut))
+        try await Task.sleep(for: .milliseconds(200))
+        _ = try engine.startRecording(profile.recording)
+        try await Task.sleep(for: .seconds(1))
+        let url = try await engine.stopRecording()
+
+        let asset = AVURLAsset(url: url)
+        let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        #expect(try await video.load(.naturalSize) == CGSize(width: 1280, height: 720))
+        // Scaled, not cropped: the left half is still red, the right half black.
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .positiveInfinity
+        generator.requestedTimeToleranceAfter = .positiveInfinity
+        let frame = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let left = try pixel(frame, x: 0.45, y: 0.5), right = try pixel(frame, x: 0.55, y: 0.5)
+        #expect(left.r > 200 && right.r < 30)
+    }
+
     private func pixel(_ image: CGImage, x: Double, y: Double) throws -> (r: Int, g: Int, b: Int) {
         var data = [UInt8](repeating: 0, count: 4)
         let ctx = try #require(CGContext(data: &data, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,

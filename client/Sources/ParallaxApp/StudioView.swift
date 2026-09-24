@@ -3,6 +3,7 @@ import SwiftUI
 struct StudioView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         @Bindable var model = model
@@ -52,6 +53,14 @@ struct StudioView: View {
             PermissionSheet(permission: permission).environment(model)
         }
         .onAppear { model.undoManager = undoManager }
+        #if DEBUG
+        .task {
+            if ProcessInfo.processInfo.environment["PARALLAX_DEBUG_SETTINGS_TAB"] != nil {
+                try? await Task.sleep(for: .seconds(1))
+                openSettings()
+            }
+        }
+        #endif
         .onChange(of: undoManager) { _, manager in model.undoManager = manager }
     }
 }

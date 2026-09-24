@@ -37,6 +37,7 @@ struct PreviewPanel: View {
                     }
                 }
                 .contextMenu { contextMenu }
+                .overlay(alignment: .bottomLeading) { CanvasBadge().padding(8) }
                 .offset(x: canvas.minX, y: canvas.minY)
             }
         }
@@ -200,5 +201,23 @@ struct PreviewLayerView: NSViewRepresentable {
             hosted?.frame = bounds
             CATransaction.commit()
         }
+    }
+}
+
+/// Shows the canvas size on the preview; click to change it.
+private struct CanvasBadge: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let o = model.profile.output
+        SettingsLink {
+            Text("\(o.shortName) · \(String(o.width))×\(String(o.height)) · \(o.fps) fps")
+                .font(.caption2.weight(.semibold).monospacedDigit())
+                .padding(.horizontal, 7).padding(.vertical, 3)
+                .background(.black.opacity(0.55), in: Capsule())
+                .foregroundStyle(.white.opacity(0.9))
+        }
+        .buttonStyle(.plain)
+        .help("Canvas resolution. Click to change it, or the recording and stream quality.")
     }
 }

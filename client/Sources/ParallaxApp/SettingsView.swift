@@ -4,46 +4,80 @@ import ParallaxRemote
 import SwiftUI
 
 struct SettingsView: View {
+    @State private var tab = Self.initialTab
+
     var body: some View {
-        TabView {
-            OutputSettingsView().tabItem { Label("Output", systemImage: "rectangle.on.rectangle") }
-            RecordingSettingsView().tabItem { Label("Recording", systemImage: "record.circle") }
-            ServerSettingsView().tabItem { Label("Server", systemImage: "server.rack") }
+        TabView(selection: $tab) {
+            CanvasSettingsView().tabItem { Label("Canvas", systemImage: "rectangle.on.rectangle") }.tag("canvas")
+            RecordingSettingsView().tabItem { Label("Recording", systemImage: "record.circle") }.tag("recording")
+            StreamingSettingsView().tabItem { Label("Streaming", systemImage: "antenna.radiowaves.left.and.right") }.tag("streaming")
+            ServerSettingsView().tabItem { Label("Server", systemImage: "server.rack") }.tag("server")
         }
-        .frame(width: 520)
+        .frame(width: 540)
         .padding(.vertical, 8)
     }
 }
 
-private struct OutputSettingsView: View {
-    @Environment(AppModel.self) private var model
+extension SettingsView {
+    static var initialTab: String {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["PARALLAX_DEBUG_SETTINGS_TAB"] ?? "canvas"
+        #else
+        "canvas"
+        #endif
+    }
+}
 
-    private static let resolutions = [(1280, 720), (1920, 1080), (2560, 1440)]
+private struct CanvasSettingsView: View {
+    @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
         Form {
-            Picker("Resolution", selection: Binding(
-                get: { "\(model.profile.output.width)x\(model.profile.output.height)" },
-                set: { value in
-                    let parts = value.split(separator: "x").compactMap { Int($0) }
-                    if parts.count == 2 {
-                        model.profile.output.width = parts[0]
-                        model.profile.output.height = parts[1]
+            Section {
+                Picker("Resolution", selection: Binding(
+                    get: { "\(model.profile.output.width)x\(model.profile.output.height)" },
+                    set: { value in
+                        let parts = value.split(separator: "x").compactMap { Int($0) }
+                        if parts.count == 2 {
+                            model.profile.output.width = parts[0]
+                            model.profile.output.height = parts[1]
+                        }
+                    })) {
+                    ForEach(OutputSettings.presets, id: \.height) { w, h in
+                        Text("\(OutputSettings(width: w, height: h).shortName) (\(String(w)) × \(String(h)))").tag("\(w)x\(h)")
                     }
-                })) {
-                ForEach(Self.resolutions, id: \.0) { w, h in Text("\(w) × \(h)").tag("\(w)x\(h)") }
-            }
-            Picker("Frame rate", selection: $model.profile.output.fps) {
-                Text("30 fps").tag(30)
-                Text("60 fps").tag(60)
+                }
+                Picker("Frame rate", selection: $model.profile.output.fps) {
+                    Text("30 fps").tag(30)
+                    Text("60 fps").tag(60)
+                }
+            } footer: {
+                Text("Every scene is composed at this size. Recording and streaming can each be scaled down from it (see their tabs), so a 4K canvas can record in 4K and stream in 1080p.")
+                    .foregroundStyle(.secondary)
             }
             if model.isRecording {
-                Text("Stop recording to change output settings.").foregroundStyle(.secondary)
+                Text("Stop recording to change canvas settings.").foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .disabled(model.isRecording)
+    }
+}
+
+/// Picker for recording/stream size; only offers sizes at or below the canvas.
+private struct ResolutionPicker: View {
+    let canvas: OutputSettings
+    @Binding var selection: OutputResolution
+
+    var body: some View {
+        Picker("Resolution", selection: $selection) {
+            Text("Same as canvas (\(canvas.shortName))").tag(OutputResolution.canvas)
+            ForEach(OutputResolution.allCases.filter { $0 != .canvas && $0.isAvailable(for: canvas) }, id: \.self) { r in
+                let size = r.size(for: canvas)
+                Text("\(OutputSettings(width: size.width, height: size.height).shortName) (\(String(size.width)) × \(String(size.height)))").tag(r)
+            }
+        }
     }
 }
 
@@ -52,31 +86,52 @@ private struct RecordingSettingsView: View {
 
     var body: some View {
         @Bindable var model = model
+        let rec = model.profile.recording
+        let size = rec.resolution.size(for: model.profile.output)
+        let recommended = Bitrates.recording(height: size.height, fps: model.profile.output.fps, codec: rec.codec)
         Form {
-            LabeledContent("Folder") {
-                HStack {
-                    Text(model.profile.recording.directoryPath).lineLimit(1).truncationMode(.middle)
-                    Button("Choose…", action: chooseFolder)
+            Section {
+                ResolutionPicker(canvas: model.profile.output, selection: $model.profile.recording.resolution)
+                Picker("Codec", selection: $model.profile.recording.codec) {
+                    Text("H.264").tag(VideoCodec.h264)
+                    Text("HEVC (smaller files, recommended for 4K)").tag(VideoCodec.hevc)
                 }
+                LabeledContent("Video bitrate") {
+                    HStack {
+                        Stepper("\(rec.videoBitrateKbps / 1000) Mbps",
+                                value: $model.profile.recording.videoBitrateKbps, in: 2_000...150_000, step: 2_000)
+                        Button("Use recommended (\(recommended / 1000) Mbps)") {
+                            model.profile.recording.videoBitrateKbps = recommended
+                        }
+                        .disabled(rec.videoBitrateKbps == recommended)
+                    }
+                }
+                Picker("Audio bitrate", selection: $model.profile.recording.audioBitrateKbps) {
+                    ForEach([128, 192, 256, 320], id: \.self) { Text("\($0) kbps").tag($0) }
+                }
+            } footer: {
+                Text(summary(size: size, rec: rec)).foregroundStyle(.secondary)
             }
-            Picker("Codec", selection: $model.profile.recording.codec) {
-                Text("H.264").tag(VideoCodec.h264)
-                Text("HEVC").tag(VideoCodec.hevc)
-            }
-            Picker("Container", selection: $model.profile.recording.container) {
-                Text("QuickTime (.mov)").tag(RecordingContainer.mov)
-                Text("MPEG-4 (.mp4)").tag(RecordingContainer.mp4)
-            }
-            LabeledContent("Video bitrate") {
-                Stepper("\(model.profile.recording.videoBitrateKbps / 1000) Mbps",
-                        value: $model.profile.recording.videoBitrateKbps, in: 2_000...80_000, step: 2_000)
-            }
-            Picker("Audio bitrate", selection: $model.profile.recording.audioBitrateKbps) {
-                ForEach([128, 192, 256, 320], id: \.self) { Text("\($0) kbps").tag($0) }
+            Section {
+                LabeledContent("Folder") {
+                    HStack {
+                        Text(rec.directoryPath).lineLimit(1).truncationMode(.middle)
+                        Button("Choose…", action: chooseFolder)
+                    }
+                }
+                Picker("Container", selection: $model.profile.recording.container) {
+                    Text("QuickTime (.mov)").tag(RecordingContainer.mov)
+                    Text("MPEG-4 (.mp4)").tag(RecordingContainer.mp4)
+                }
             }
         }
         .formStyle(.grouped)
         .disabled(model.isRecording)
+    }
+
+    private func summary(size: (width: Int, height: Int), rec: RecordingSettings) -> String {
+        let gb = Bitrates.gigabytesPerHour(videoKbps: rec.videoBitrateKbps, audioKbps: rec.audioBitrateKbps)
+        return "Records \(size.width) × \(size.height) at \(model.profile.output.fps) fps, \(rec.codec == .hevc ? "HEVC" : "H.264") \(rec.videoBitrateKbps / 1000) Mbps: about \(String(format: "%.0f", gb)) GB per hour."
     }
 
     private func chooseFolder() {
@@ -88,6 +143,47 @@ private struct RecordingSettingsView: View {
         if panel.runModal() == .OK, let url = panel.url {
             model.profile.recording.directoryPath = url.path
         }
+    }
+}
+
+private struct StreamingSettingsView: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        let stream = model.profile.broadcast.stream
+        let size = stream.resolution.size(for: model.profile.output)
+        let recommended = Bitrates.streaming(height: size.height, fps: model.profile.output.fps)
+        Form {
+            Section {
+                ResolutionPicker(canvas: model.profile.output, selection: $model.profile.broadcast.stream.resolution)
+                LabeledContent("Video bitrate") {
+                    HStack {
+                        Stepper("\(String(format: "%.1f", Double(stream.videoBitrateKbps) / 1000)) Mbps",
+                                value: $model.profile.broadcast.stream.videoBitrateKbps, in: 1_000...60_000, step: 500)
+                        Button("Use recommended (\(recommended / 1000) Mbps)") {
+                            model.profile.broadcast.stream.videoBitrateKbps = recommended
+                        }
+                        .disabled(stream.videoBitrateKbps == recommended)
+                    }
+                }
+                Picker("Audio bitrate", selection: $model.profile.broadcast.stream.audioBitrateKbps) {
+                    ForEach([128, 160, 192, 256], id: \.self) { Text("\($0) kbps").tag($0) }
+                }
+                Picker("Keyframe interval", selection: $model.profile.broadcast.stream.keyframeIntervalSeconds) {
+                    ForEach([1, 2, 4], id: \.self) { Text("\($0) s").tag($0) }
+                }
+            } footer: {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Streams \(String(size.width)) × \(String(size.height)) at \(model.profile.output.fps) fps, H.264 \(String(format: "%.1f", Double(stream.videoBitrateKbps) / 1000)) Mbps. Parallax uploads this once; the server relays it unchanged to every platform, so pick a bitrate your upload can sustain (aim for under ~70% of it).")
+                    Text("Sending the stream to the server isn't built yet. These settings are saved and will be used once it is.")
+                        .foregroundStyle(.orange)
+                }
+                .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .disabled(model.broadcast.status.live)
     }
 }
 
