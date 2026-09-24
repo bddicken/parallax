@@ -20,7 +20,7 @@ What works now:
 - **Video delay** per source, 0–2 s.
 - **Local recording**: H.264/HEVC + AAC to .mov/.mp4, with configurable bitrate and folder. Files are fragmented, so a crash keeps what was recorded, and quitting finishes the file.
 - **Canvas**: 720p, 1080p, 1440p, or 4K at 30/60 fps, shown on the preview (click it to change). **Recording** and **streaming** each have their own resolution (canvas size or scaled down), bitrate with a recommended value, and a size and bitrate summary, so you can record in 4K and stream in 1080p.
-- **Chat and Go Live** are offline until a `parallax-server` URL is set in Settings › Server. The **Mock** toggle in the chat header fills chat with fake messages for trying things out; it is off by default.
+- **Go Live and chat** use [`parallax-server`](../server/). In Settings › Server, enter its URL and token, then **Connect Twitch** (you approve Parallax on twitch.tv; no stream key to copy). **Go Live** encodes the program once (H.264 + AAC via [HaishinKit](https://github.com/HaishinKit/HaishinKit.swift)) and sends it to the server over SRT, reconnecting by itself if the connection drops; the server relays it to Twitch. Twitch chat shows up in the chat panel, and replies post as you. Without a server, the **Mock** toggle in the chat header fills chat with fake messages; it is off by default.
 
 Sources survive restarts and replugging. Displays are remembered by hardware UUID, cameras and mics by device ID with name and model as a fallback, and windows by app and title. A missing device shows a ⚠︎ "waiting…" on its source and reconnects by itself when it's back.
 

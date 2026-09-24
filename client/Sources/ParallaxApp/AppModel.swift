@@ -24,6 +24,8 @@ final class AppModel {
     var levels: [UUID: AudioLevel] = [:]
     var masterLevel = AudioLevel.silent
     var recordingStartedAt: Date?
+    /// Sending video to the server; nil when not streaming.
+    var uplinkState: UplinkState?
     var lastRecordingURL: URL?
     var sourceErrors: [UUID: String] = [:]
     var banner: String?
@@ -42,6 +44,7 @@ final class AppModel {
     @ObservationIgnored private var lastUndo: (key: String, time: Date)?
     @ObservationIgnored private let store = ProfileStore()
     @ObservationIgnored private var saveTask: Task<Void, Never>?
+    @ObservationIgnored private var uplinkGeneration = 0
 
     init() {
         let firstRun = !FileManager.default.fileExists(atPath: store.url.path)
@@ -530,6 +533,51 @@ final class AppModel {
         } catch {
             banner = "Recording failed: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: Broadcasting
+
+    /// Starts sending video to the server, then asks it to go live on
+    /// `destinationIDs`. The mock server only pretends, so nothing is sent.
+    func goLive(_ destinationIDs: [String]) async {
+        if broadcast.service.mode == .server {
+            guard await startUplink() else { return }
+        }
+        if await !broadcast.start(destinationIDs) {
+            stopUplink()
+        }
+    }
+
+    func endBroadcast() async {
+        await broadcast.stop()
+        stopUplink()
+    }
+
+    /// For when the server is live but this app isn't sending (e.g. it was
+    /// restarted mid-broadcast).
+    @discardableResult
+    func startUplink() async -> Bool {
+        guard let info = await broadcast.ingest() else { return false }
+        guard let url = URL(string: info.srtURL) else {
+            broadcast.connectionError = "The server sent a bad video address: \(info.srtURL)"
+            return false
+        }
+        uplinkGeneration += 1
+        let generation = uplinkGeneration
+        uplinkState = .connecting
+        engine.startStreaming(to: url, settings: profile.broadcast.stream) { [weak self] state in
+            Task { @MainActor in
+                guard let self, self.uplinkGeneration == generation, self.uplinkState != nil else { return }
+                self.uplinkState = state
+            }
+        }
+        return true
+    }
+
+    func stopUplink() {
+        uplinkGeneration += 1
+        uplinkState = nil
+        engine.stopStreaming()
     }
 
     // MARK: Chat

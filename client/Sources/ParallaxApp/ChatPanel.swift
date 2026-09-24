@@ -41,7 +41,7 @@ struct ChatPanel: View {
                             ContentUnavailableView {
                                 Label("Chat not connected", systemImage: "bubble.left.and.bubble.right")
                             } description: {
-                                Text("Chat from YouTube, X, and Twitch shows up here once parallax-server is set up in Settings › Server. Turn on Mock to try it with fake messages.")
+                                Text("Chat from your connected platforms shows up here once parallax-server is set up in Settings › Server. Turn on Mock to try it with fake messages.")
                             }
                         } else {
                             ContentUnavailableView("No messages yet", systemImage: "bubble.left.and.bubble.right")

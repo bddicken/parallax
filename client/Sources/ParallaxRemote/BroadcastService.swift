@@ -19,7 +19,11 @@ public protocol BroadcastService: Sendable {
     func startBroadcast(destinationIDs: [String]) async throws
     func stopBroadcast() async throws
     func sendChat(_ request: SendChatRequest) async throws
-    /// Live chat and status. Ends (or throws) when the connection drops.
+    func accounts() async throws -> [Account]
+    /// Starts signing in to `platform`; the user finishes in a browser.
+    func connectAccount(_ platform: Platform) async throws -> DeviceCode
+    func disconnectAccount(_ platform: Platform) async throws
+    /// Live chat, status, and account changes. Ends (or throws) when the connection drops.
     func events() -> AsyncThrowingStream<ServerEvent, Error>
 }
 
@@ -43,6 +47,9 @@ public struct OfflineBroadcastService: BroadcastService {
     public func startBroadcast(destinationIDs: [String]) async throws { throw notConnected }
     public func stopBroadcast() async throws {}
     public func sendChat(_ request: SendChatRequest) async throws { throw notConnected }
+    public func accounts() async throws -> [Account] { [] }
+    public func connectAccount(_ platform: Platform) async throws -> DeviceCode { throw notConnected }
+    public func disconnectAccount(_ platform: Platform) async throws { throw notConnected }
     /// Never yields; there's nothing to listen to.
     public func events() -> AsyncThrowingStream<ServerEvent, Error> { AsyncThrowingStream { _ in } }
 }
@@ -79,6 +86,18 @@ public final class HTTPBroadcastService: BroadcastService {
 
     public func sendChat(_ request: SendChatRequest) async throws {
         try await post("v1/chat/send", body: request)
+    }
+
+    public func accounts() async throws -> [Account] { try await get("v1/accounts") }
+
+    public func connectAccount(_ platform: Platform) async throws -> DeviceCode {
+        var r = request("v1/accounts/\(platform.rawValue)/connect", method: "POST")
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        return try WireCoding.decoder().decode(DeviceCode.self, from: await perform(r))
+    }
+
+    public func disconnectAccount(_ platform: Platform) async throws {
+        _ = try await perform(request("v1/accounts/\(platform.rawValue)", method: "DELETE"))
     }
 
     public func events() -> AsyncThrowingStream<ServerEvent, Error> {
