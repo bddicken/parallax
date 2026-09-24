@@ -85,6 +85,8 @@ async fn ingest(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
             _ => authority.to_owned(),
         }
     });
+    // SRT listens on IPv4 only (see ingest.rs), and "localhost" may resolve to ::1.
+    let host = if host == "localhost" { "127.0.0.1".to_owned() } else { host };
     Json(IngestInfo { srt_url: state.ingest.srt_url(&host), rtmp_url: state.ingest.rtmp_url(&host) })
 }
 
