@@ -1,8 +1,8 @@
 # Client ↔ server protocol
 
-Types: `server/internal/protocol/protocol.go` ⇄ `client/Sources/ParallaxRemote/Protocol.swift`. Keep them in sync.
+Types: `server/src/protocol.rs` ⇄ `client/Sources/ParallaxRemote/Protocol.swift`. Keep them in sync: both sides' tests decode the samples in [`protocol-fixtures/`](protocol-fixtures/), so add or update a fixture when a type changes.
 
-All endpoints require `Authorization: Bearer <token>`. JSON bodies, and times are RFC 3339.
+Every `/v1` endpoint requires `Authorization: Bearer <token>`. Bodies are JSON, times are RFC 3339 with milliseconds, and errors are plain text meant to be shown to the user.
 
 | Method | Path | Body → Response |
 |---|---|---|
@@ -10,17 +10,21 @@ All endpoints require `Authorization: Bearer <token>`. JSON bodies, and times ar
 | GET | `/v1/status` | → `BroadcastStatus` |
 | GET | `/v1/ingest` | → `IngestInfo` (`srtURL`, `rtmpURL`) |
 | GET | `/v1/destinations` | → `[Destination]` (stream keys omitted) |
-| PUT | `/v1/destinations` | `[Destination]` → 204 |
+| PUT | `/v1/destinations` | `[Destination]` → 204. Replaces the `custom` destinations; a missing `streamKey` keeps the saved one. Platform destinations come from connected accounts. |
 | POST | `/v1/broadcast/start` | `{destinationIDs: [..]}` → 204 |
 | POST | `/v1/broadcast/stop` | → 204 |
-| POST | `/v1/chat/send` | `{text, platforms?}` → 204 (no `platforms` means all) |
-| GET | `/v1/events` | websocket of `{type, data}` events |
+| POST | `/v1/chat/send` | `{text, platforms?}` → 204 (no `platforms` means every connected platform) |
+| GET | `/v1/accounts` | → `[Account]` |
+| POST | `/v1/accounts/twitch/connect` | → `DeviceCode` `{userCode, verificationURL, expiresAt}`. The user opens the URL and enters the code; an `accounts` event follows when they finish. |
+| DELETE | `/v1/accounts/twitch` | → 204 |
+| GET | `/v1/events` | WebSocket of `{type, data}` events. Sends the current `broadcast.status` and `accounts` on connect. |
 
 Events:
 
 - `chat.message` → `ChatMessage` `{id, platform, author{id, displayName, avatarURL?, isOwner, isModerator}, text, timestamp}`
 - `broadcast.status` → `BroadcastStatus` `{live, ingestActive, startedAt?, destinations[{destinationID, state, bitrateKbps, error?}]}`
+- `accounts` → `[Account]` `{platform, state: disconnected|pending|connected, login?, displayName?, pending?: DeviceCode, error?}`
 
 Unknown event types must be ignored so either side can add events.
 
-Media: the client pushes H.264 + AAC to `IngestInfo.srtURL` (MPEG-TS over SRT, `streamid` authenticates), or to `rtmpURL` as a fallback.
+Media: the client pushes H.264 + AAC as MPEG-TS over SRT to `IngestInfo.srtURL` (the `streamid` carries the ingest key), or as FLV to `rtmpURL` as a fallback. The server relays it unchanged, so the client's encoder settings must suit every destination: Twitch needs H.264, a 2 s keyframe interval, and at most 6 Mbps.

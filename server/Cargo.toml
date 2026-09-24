@@ -1,0 +1,24 @@
+[package]
+name = "parallax-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["ws"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+dotenvy = "0.15.7"
+futures-util = "0.3.34"
+rand = "0.10.3"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "form", "rustls"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["full"] }
+tokio-tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+twitch_api = { version = "0.8.0", features = ["reqwest", "helix", "eventsub", "client"] }
+twitch_oauth2 = { version = "0.17.1", features = ["reqwest"] }
+
+[dev-dependencies]
+tower = { version = "0.5.3", features = ["util"] }

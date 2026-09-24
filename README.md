@@ -5,7 +5,7 @@ A single Mac app to replace an OBS + StreamYard + Loopback/Audio Hijack setup: c
 | Directory | What | Status |
 |---|---|---|
 | [`client/`](client/) | macOS app (Swift, SwiftUI, AVFoundation, ScreenCaptureKit, Core Image/Metal) | Capture, scenes, mixer, recording, mock chat |
-| [`server/`](server/) | Cloud relay (Go): ingest one stream, fan out to platforms, aggregate chat | Stub |
+| [`server/`](server/) | Relay (Rust, MediaMTX, ffmpeg): ingest one stream, relay it to platforms, bring chat back | Twitch |
 | [`docs/`](docs/) | [Architecture](docs/architecture.md), [client↔server protocol](docs/protocol.md) | |
 
 ## Quick start
