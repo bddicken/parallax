@@ -23,7 +23,11 @@ async fn main() -> Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
 
-    let config = Arc::new(Config::from_env()?);
+    let mut config = Config::from_env()?;
+    // Absolute, since MediaMTX runs with the data dir as its working directory.
+    std::fs::create_dir_all(&config.data_dir).with_context(|| format!("creating {}", config.data_dir.display()))?;
+    config.data_dir = config.data_dir.canonicalize()?;
+    let config = Arc::new(config);
     let store = Arc::new(Store::open(&config.data_dir)?);
     if let Some(token) = &config.api_token {
         store.update(|s| s.api_token = token.clone())?;
