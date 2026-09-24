@@ -140,6 +140,8 @@ final class ScreenNode: NSObject, VideoSourceNode, SCStreamOutput, SCStreamDeleg
     }
 
     private func startStream() async {
+        // Check first: calling ScreenCaptureKit without access makes macOS prompt.
+        guard CGPreflightScreenCaptureAccess() else { return onError(.permissionDenied(.screenRecording)) }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             let filter: SCContentFilter

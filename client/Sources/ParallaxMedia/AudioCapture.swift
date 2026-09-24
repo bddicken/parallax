@@ -155,6 +155,7 @@ final class SystemAudioNode: NSObject, AudioInputNode, SCStreamOutput, SCStreamD
     }
 
     private func startStream() async {
+        guard CGPreflightScreenCaptureAccess() else { return onError(.permissionDenied(.screenRecording)) }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first else { return onError(.failed("No display available for system audio.")) }

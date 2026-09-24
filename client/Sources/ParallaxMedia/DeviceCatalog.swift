@@ -66,7 +66,13 @@ public final class DeviceCatalog {
         }
     }
 
+    /// Lists displays and windows. Does nothing (and triggers no macOS
+    /// prompt) until Screen Recording access has been granted.
     public func refreshShareableContent() async {
+        guard CGPreflightScreenCaptureAccess() else {
+            needsScreenRecordingPermission = true
+            return
+        }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
             let names = Dictionary(NSScreen.screens.compactMap { screen -> (UInt32, String)? in

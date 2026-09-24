@@ -30,6 +30,8 @@ final class AppModel {
     /// A permission the user needs to grant; drives the permission sheet.
     var permissionPrompt: Permission?
     @ObservationIgnored private var isRelaunching = false
+    /// Permissions the user said "Not Now" to; not prompted again until they ask.
+    @ObservationIgnored private var snoozedPermissions: Set<Permission> = []
 
     @ObservationIgnored let engine = MediaEngine()
     /// Set by the window so layout edits land in Edit › Undo.
@@ -49,8 +51,13 @@ final class AppModel {
             guard let self else { return }
             switch issue {
             case .permissionDenied(let permission):
-                sourceErrors[id] = "\(permission.title) access is off."
-                if permissionPrompt == nil { permissionPrompt = permission }
+                // A source can fail for a moment around a grant; don't nag if access is there now.
+                if permission.status == .granted {
+                    permissionGranted(permission)
+                    return
+                }
+                sourceErrors[id] = "\(permission.title) access is off. Click to fix."
+                if permissionPrompt == nil, !snoozedPermissions.contains(permission) { permissionPrompt = permission }
             case .failed(let message):
                 sourceErrors[id] = message
                 banner = message
@@ -387,7 +394,23 @@ final class AppModel {
 
     /// Called once macOS reports the permission granted: restart the captures
     /// that failed without it.
+    func snooze(_ permission: Permission) {
+        snoozedPermissions.insert(permission)
+        if permissionPrompt == permission { permissionPrompt = nil }
+    }
+
+    /// Opens the permission sheet on request (e.g. from a source's warning icon).
+    func showPermission(_ permission: Permission) {
+        snoozedPermissions.remove(permission)
+        if permission.status == .granted {
+            permissionGranted(permission)
+        } else {
+            permissionPrompt = permission
+        }
+    }
+
     func permissionGranted(_ permission: Permission) {
+        snoozedPermissions.remove(permission)
         let affected = Set(profile.videoSources.filter { $0.kind.permission == permission }.map(\.id)
             + profile.audioSources.filter { $0.kind.permission == permission }.map(\.id))
         sourceErrors = sourceErrors.filter { !affected.contains($0.key) }

@@ -61,16 +61,36 @@ struct PermissionCard: View {
 }
 
 struct PermissionSheet: View {
+    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let permission: Permission
 
     var body: some View {
         VStack(spacing: 16) {
             PermissionCard(permission: permission) { dismiss() }
-            Button("Not Now") { dismiss() }
+            Button("Not Now") { model.snooze(permission) }
                 .buttonStyle(.link)
         }
         .padding(24)
         .frame(width: 420)
+        // Dismiss only via "Not Now", so the choice is remembered.
+        .interactiveDismissDisabled()
+    }
+}
+
+/// The warning shown on a source row. Clicking a permission problem opens the fix.
+struct SourceWarning: View {
+    @Environment(AppModel.self) private var model
+    let message: String
+    let permission: Permission?
+
+    var body: some View {
+        Button {
+            if let permission { model.showPermission(permission) }
+        } label: {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+        }
+        .buttonStyle(.borderless)
+        .help(message)
     }
 }

@@ -1,4 +1,5 @@
 import ParallaxCore
+import ParallaxMedia
 import SwiftUI
 
 struct SourcesPanel: View {
@@ -60,10 +61,8 @@ private struct SourceRow: View {
             Text(source?.name ?? "Missing")
                 .lineLimit(1)
                 .foregroundStyle(item.isVisible ? .primary : .tertiary)
-            if model.sourceErrors[item.sourceID] != nil {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.yellow)
-                    .help(model.sourceErrors[item.sourceID] ?? "")
+            if let error = model.sourceErrors[item.sourceID] {
+                SourceWarning(message: error, permission: source?.kind.permission)
             }
             Spacer()
             Button {

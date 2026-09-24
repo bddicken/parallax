@@ -1,4 +1,5 @@
 import ParallaxCore
+import ParallaxMedia
 import SwiftUI
 
 struct MixerPanel: View {
@@ -64,7 +65,7 @@ private struct ChannelStrip: View {
                     .foregroundStyle(.secondary)
                 Text(source.name).lineLimit(1)
                 if let error = model.sourceErrors[source.id] {
-                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow).help(error)
+                    SourceWarning(message: error, permission: source.kind.permission)
                 }
                 Spacer()
                 if source.delayMs > 0 {

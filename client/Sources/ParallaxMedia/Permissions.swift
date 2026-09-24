@@ -20,14 +20,16 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Shows the system prompt if macOS still allows one (only the first
-    /// time for each permission). Returns whether access is granted now.
+    /// Shows the system prompt if access isn't granted and macOS still allows
+    /// one (only the first time for each permission). Returns whether access
+    /// is granted now.
     @discardableResult
     public func request() async -> Bool {
+        if status == .granted { return true }
         switch self {
-        case .camera: await AVCaptureDevice.requestAccess(for: .video)
-        case .microphone: await AVCaptureDevice.requestAccess(for: .audio)
-        case .screenRecording: CGRequestScreenCaptureAccess()
+        case .camera: return await AVCaptureDevice.requestAccess(for: .video)
+        case .microphone: return await AVCaptureDevice.requestAccess(for: .audio)
+        case .screenRecording: return CGRequestScreenCaptureAccess()
         }
     }
 
