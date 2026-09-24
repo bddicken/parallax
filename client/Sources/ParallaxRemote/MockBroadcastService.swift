@@ -47,6 +47,16 @@ public actor MockBroadcastService: BroadcastService {
         }
     }
 
+    public func accounts() async throws -> [Account] {
+        [Account(platform: .twitch, state: .connected, login: "mockstreamer", displayName: "MockStreamer")]
+    }
+
+    public func connectAccount(_ platform: Platform) async throws -> DeviceCode {
+        throw ServerError(message: "The mock server can't sign in to \(platform.displayName).")
+    }
+
+    public func disconnectAccount(_ platform: Platform) async throws {}
+
     public nonisolated func events() -> AsyncThrowingStream<ServerEvent, Error> {
         AsyncThrowingStream { continuation in
             let id = UUID()
@@ -58,6 +68,7 @@ public actor MockBroadcastService: BroadcastService {
     private func subscribe(_ id: UUID, _ continuation: AsyncThrowingStream<ServerEvent, Error>.Continuation) {
         subscribers[id] = continuation
         continuation.yield(.status(current))
+        continuation.yield(.accounts([Account(platform: .twitch, state: .connected, login: "mockstreamer", displayName: "MockStreamer")]))
         if chatter == nil {
             chatter = Task { [weak self] in
                 while !Task.isCancelled {

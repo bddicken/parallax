@@ -112,10 +112,12 @@ struct GoLiveSheet: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if broadcast.service.isMock {
-                Label("Using the built-in mock server. Nothing is actually streamed until parallax-server and the uplink are built.",
+                Label("Using the built-in mock server, so nothing is actually streamed.",
                       systemImage: "info.circle")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+            } else {
+                UplinkRow()
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -138,8 +140,13 @@ struct GoLiveSheet: View {
                     }
                 }
                 if broadcast.destinations.isEmpty {
-                    Text(broadcast.connectionError ?? "No destinations configured on the server.")
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text(broadcast.connectionError ?? "No destinations yet. Connect Twitch in Settings › Server.")
+                            .foregroundStyle(.secondary)
+                        if broadcast.connectionError == nil {
+                            SettingsLink { Text("Open…") }.buttonStyle(.link)
+                        }
+                    }
                 }
             }
             .padding(12)
@@ -153,10 +160,10 @@ struct GoLiveSheet: View {
                 Spacer()
                 Button("Close") { dismiss() }
                 if broadcast.status.live {
-                    Button("End Broadcast", role: .destructive) { Task { await broadcast.stop() } }
+                    Button("End Broadcast", role: .destructive) { Task { await model.endBroadcast() } }
                         .buttonStyle(.borderedProminent).tint(.red)
                 } else {
-                    Button("Start Broadcast") { Task { await broadcast.start(Array(selected)) } }
+                    Button("Start Broadcast") { Task { await model.goLive(Array(selected)) } }
                         .buttonStyle(.borderedProminent)
                         .disabled(selected.isEmpty || broadcast.isBusy)
                 }
@@ -168,6 +175,39 @@ struct GoLiveSheet: View {
             await broadcast.refreshDestinations()
             selected = Set(broadcast.destinations.filter(\.enabled).map(\.id))
         }
+    }
+}
+
+/// Whether this Mac is sending video to the server.
+private struct UplinkRow: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 6) {
+            switch model.uplinkState {
+            case nil:
+                if model.broadcast.status.live {
+                    Label("Live on the server, but this Mac isn't sending video.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Button("Send Video") { Task { await model.startUplink() } }
+                } else {
+                    Label("Video goes to the server once you start.", systemImage: "arrow.up.circle")
+                        .foregroundStyle(.secondary)
+                }
+            case .connecting:
+                ProgressView().controlSize(.small)
+                Text("Connecting to the server…").foregroundStyle(.secondary)
+            case .sending:
+                Label(model.broadcast.status.ingestActive ? "Sending video to the server" : "Sending video…",
+                      systemImage: "arrow.up.circle.fill")
+                    .foregroundStyle(.green)
+            case .retrying(let reason):
+                Label(reason, systemImage: "arrow.clockwise.circle.fill")
+                    .foregroundStyle(.orange)
+                    .help("Parallax keeps retrying on its own.")
+            }
+        }
+        .font(.callout)
     }
 }
 

@@ -1,6 +1,7 @@
 import Foundation
 
-// Mirrors server/internal/protocol/protocol.go. Keep the two in sync.
+// Mirrors server/src/protocol.rs. Keep the two in sync; the shared samples in
+// docs/protocol-fixtures are decoded by tests on both sides.
 
 public enum Platform: String, Codable, CaseIterable, Sendable {
     case youtube, x, twitch, custom
@@ -119,9 +120,48 @@ public struct IngestInfo: Codable, Hashable, Sendable {
     public var rtmpURL: String
 }
 
+public enum AccountState: String, Codable, Sendable {
+    case disconnected, pending, connected
+}
+
+/// A platform sign-in held by the server.
+public struct Account: Codable, Hashable, Sendable {
+    public var platform: Platform
+    public var state: AccountState
+    public var login: String?
+    public var displayName: String?
+    /// While `pending`: the code to enter on the platform's site.
+    public var pending: DeviceCode?
+    public var error: String?
+
+    public init(platform: Platform, state: AccountState, login: String? = nil, displayName: String? = nil,
+                pending: DeviceCode? = nil, error: String? = nil) {
+        self.platform = platform
+        self.state = state
+        self.login = login
+        self.displayName = displayName
+        self.pending = pending
+        self.error = error
+    }
+}
+
+/// OAuth device code: open `verificationURL` and enter `userCode` there.
+public struct DeviceCode: Codable, Hashable, Sendable {
+    public var userCode: String
+    public var verificationURL: String
+    public var expiresAt: Date
+
+    public init(userCode: String, verificationURL: String, expiresAt: Date) {
+        self.userCode = userCode
+        self.verificationURL = verificationURL
+        self.expiresAt = expiresAt
+    }
+}
+
 public enum ServerEvent: Sendable {
     case chat(ChatMessage)
     case status(BroadcastStatus)
+    case accounts([Account])
 }
 
 extension ServerEvent: Decodable {
@@ -132,6 +172,7 @@ extension ServerEvent: Decodable {
         switch try c.decode(String.self, forKey: .type) {
         case "chat.message": self = .chat(try c.decode(ChatMessage.self, forKey: .data))
         case "broadcast.status": self = .status(try c.decode(BroadcastStatus.self, forKey: .data))
+        case "accounts": self = .accounts(try c.decode([Account].self, forKey: .data))
         case let other: throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "Unknown event \(other)")
         }
     }
@@ -140,7 +181,7 @@ extension ServerEvent: Decodable {
 enum WireCoding {
     static func decoder() -> JSONDecoder {
         let d = JSONDecoder()
-        // Go's time.Time marshals as RFC 3339, with fractional seconds when non-zero.
+        // RFC 3339; the server sends milliseconds.
         d.dateDecodingStrategy = .custom { decoder in
             let s = try decoder.singleValueContainer().decode(String.self)
             if let date = ISO8601DateFormatter().date(from: s) { return date }

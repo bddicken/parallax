@@ -29,7 +29,7 @@ Camera  ─┐                                                   ┌─▶ Previ
 Display ─┼─▶ VideoSourceNode ─▶ VideoFrameBuffer (delay) ─┐  │
 Window  ─┤                                                ├─▶ Compositor ─────┼─▶ Recorder      (AVAssetWriter, H.264/HEVC + AAC)
 Image / Color / Chat overlays ────────────────────────────┘  (Core Image,   │
-                                                              Metal, 30/60)  └─▶ UplinkSink    (next: VideoToolbox → SRT/RTMP)
+                                                              Metal, 30/60)  └─▶ Uplink        (HaishinKit: H.264 + AAC → SRT)
 Mic / interface ─┐
 System audio ────┴─▶ PCMNormalizer ─▶ DelayBuffer ─▶ ChannelStrip ─▶ AudioMixer ─▶ same sinks
                      (48 kHz float)   (sync delay,   (HPF, gate,     (10 ms chunks,
@@ -41,7 +41,7 @@ Modules (`client/Sources`):
 | Module | Responsibility |
 |---|---|
 | `ParallaxCore` | `Profile` model (sources, scenes, settings), persistence, layout math, DSP. No AVFoundation, so it's fast to unit test. |
-| `ParallaxMedia` | Capture nodes, compositor, mixer, recorder, `MediaEngine`. `MediaSink` is the seam where the server uplink plugs in. |
+| `ParallaxMedia` | Capture nodes, compositor, mixer, recorder, `Uplink` (stream to the server), `MediaEngine`. Everything that consumes the program output is a `MediaSink`. |
 | `ParallaxRemote` | Wire types mirroring `server/internal/protocol`, `BroadcastService` protocol, HTTP/websocket client, and a mock. |
 | `ParallaxApp` | SwiftUI UI. `AppModel` edits the `Profile`, and `MediaEngine.apply(_:)` reconciles running captures against it. |
 
@@ -54,7 +54,7 @@ Key decisions:
 
 ## Roadmap
 
-1. **Uplink**: `UplinkSink` encodes with VideoToolbox/AudioToolbox and sends SRT (RTMP fallback). Evaluate HaishinKit before writing our own.
+1. **Uplink**: done. `Uplink` hands the program to HaishinKit, which encodes with VideoToolbox (H.264) and AAC and sends MPEG-TS over SRT.
 2. **Server**: SRT ingest, ffmpeg `-c copy` relay, and Twitch (sign-in, stream key, chat) are in. Next: deploy to a VM, then more platforms one at a time.
 3. **Replace Loopback / virtual camera**: headphone monitoring output, a CoreMediaIO camera extension (needs Xcode and a signing identity), and possibly a virtual audio device.
 4. **Studio polish**: preview/program ("studio mode"), hotkeys, compressor and voice-isolation filters, per-scene audio.
