@@ -39,6 +39,8 @@ final class CameraNode: NSObject, VideoSourceNode, AVCaptureVideoDataOutputSampl
     private let frames = VideoFrameBuffer()
     private let onError: SourceErrorHandler
     private var link: ReconnectingCaptureSession!
+    private let lock = NSLock()
+    private var wantsRunning = false
 
     init(uniqueID: String, name: String?, modelID: String?, onError: @escaping SourceErrorHandler,
          onResolved: @escaping @Sendable (VideoSourceKind) -> Void) {
@@ -47,7 +49,10 @@ final class CameraNode: NSObject, VideoSourceNode, AVCaptureVideoDataOutputSampl
         let frames = frames
         link = ReconnectingCaptureSession(
             mediaType: .video, target: .init(uniqueID: uniqueID, name: name, modelID: modelID), queue: queue,
-            configure: { [unowned self] session, device in
+            // Weak: a start queued by a node that has since been replaced
+            // (e.g. canvas switched to 4K) must not touch the old node.
+            configure: { [weak self] session, device in
+                guard let self else { throw ReconnectingCaptureSession.OwnerGone() }
                 let input = try AVCaptureDeviceInput(device: device)
                 guard session.canAddInput(input) else { throw MediaError("Camera is in use by another capture.") }
                 session.addInput(input)
@@ -65,14 +70,18 @@ final class CameraNode: NSObject, VideoSourceNode, AVCaptureVideoDataOutputSampl
     }
 
     func start() {
+        lock.withLock { wantsRunning = true }
         let askedJustNow = AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined
-        AVCaptureDevice.requestAccess(for: .video) { [self] granted in
+        AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+            guard let self else { return }
             guard granted else { return onError(.permissionDenied(.camera, askedJustNow: askedJustNow)) }
-            link.start()
+            // The access callback can land after stop(); don't restart then.
+            if lock.withLock({ wantsRunning }) { link.start() }
         }
     }
 
     func stop() {
+        lock.withLock { wantsRunning = false }
         link.stop()
         frames.clear()
     }

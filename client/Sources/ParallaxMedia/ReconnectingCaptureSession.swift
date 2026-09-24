@@ -16,6 +16,10 @@ final class ReconnectingCaptureSession: NSObject, @unchecked Sendable {
 
     typealias Configure = (AVCaptureSession, AVCaptureDevice) throws -> Void
 
+    /// Thrown by `configure` when the source that owns this session is gone
+    /// (removed, or replaced after a settings change). Not a user-facing error.
+    struct OwnerGone: Error {}
+
     private let mediaType: AVMediaType
     private let queue: DispatchQueue
     private let configure: Configure
@@ -60,6 +64,7 @@ final class ReconnectingCaptureSession: NSObject, @unchecked Sendable {
 
     deinit {
         observers.forEach(NotificationCenter.default.removeObserver)
+        session?.stopRunning()
     }
 
     func start() {
@@ -94,6 +99,9 @@ final class ReconnectingCaptureSession: NSObject, @unchecked Sendable {
             session.beginConfiguration()
             try configure(session, device)
             session.commitConfiguration()
+        } catch is OwnerGone {
+            wantsRunning = false
+            return
         } catch {
             onIssue(.failed("\(device.localizedName): \(error.localizedDescription)"))
             return
