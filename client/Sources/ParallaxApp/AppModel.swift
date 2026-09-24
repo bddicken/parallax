@@ -27,6 +27,7 @@ final class AppModel {
     var lastRecordingURL: URL?
     var sourceErrors: [UUID: String] = [:]
     var banner: String?
+    var monitorError: String?
     /// A permission the user needs to grant; drives the permission sheet.
     var permissionPrompt: Permission? {
         didSet { if let permissionPrompt { shownPermission = permissionPrompt } }
@@ -76,6 +77,12 @@ final class AppModel {
             }
         }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
+        engine.onMonitorStateChanged = { [weak self] in self?.monitorError = self?.engine.monitorError }
+        // Follow device changes: a plugged-in headset, a new system default.
+        devices.onOutputsChanged = { [weak self] in
+            guard let self, profile.monitor.output != .off else { return }
+            engine.restartMonitor()
+        }
         if firstRun { addDefaultDevices() }
         engine.apply(profile)
         engine.setProgram(profile.programSceneID, transition: TransitionSettings(kind: .cut))

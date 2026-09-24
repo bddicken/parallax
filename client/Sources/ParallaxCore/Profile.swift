@@ -255,6 +255,25 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
     }
 }
 
+/// Where to play the program audio so you can hear it (headphones, usually).
+public struct MonitorSettings: Codable, Hashable, Sendable {
+    public enum Output: Codable, Hashable, Sendable {
+        case off
+        case systemDefault
+        /// A Core Audio device UID, stable across reboots and reconnects.
+        case device(uid: String)
+    }
+
+    public var output: Output = .off
+    /// 0...1
+    public var volume: Double = 0.8
+
+    public init(output: Output = .off, volume: Double = 0.8) {
+        self.output = output
+        self.volume = volume
+    }
+}
+
 /// Everything the user configures, persisted as one JSON document.
 public struct Profile: Codable, Hashable, Sendable {
     public var version: Int = 1
@@ -266,8 +285,26 @@ public struct Profile: Codable, Hashable, Sendable {
     public var recording = RecordingSettings()
     public var transition = TransitionSettings()
     public var broadcast = BroadcastSettings()
+    public var monitor = MonitorSettings()
 
     public init() {}
+
+    // Every field is optional on disk so profiles saved by older builds
+    // still load after new settings are added.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = Profile()
+        version = try c.decodeIfPresent(Int.self, forKey: .version) ?? d.version
+        videoSources = try c.decodeIfPresent([VideoSource].self, forKey: .videoSources) ?? d.videoSources
+        audioSources = try c.decodeIfPresent([AudioSource].self, forKey: .audioSources) ?? d.audioSources
+        scenes = try c.decodeIfPresent([StudioScene].self, forKey: .scenes) ?? d.scenes
+        programSceneID = try c.decodeIfPresent(UUID.self, forKey: .programSceneID)
+        output = try c.decodeIfPresent(OutputSettings.self, forKey: .output) ?? d.output
+        recording = try c.decodeIfPresent(RecordingSettings.self, forKey: .recording) ?? d.recording
+        transition = try c.decodeIfPresent(TransitionSettings.self, forKey: .transition) ?? d.transition
+        broadcast = try c.decodeIfPresent(BroadcastSettings.self, forKey: .broadcast) ?? d.broadcast
+        monitor = try c.decodeIfPresent(MonitorSettings.self, forKey: .monitor) ?? d.monitor
+    }
 
     public static func makeDefault() -> Profile {
         var p = Profile()

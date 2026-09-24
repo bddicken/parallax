@@ -56,6 +56,23 @@ import Testing
         #expect(store.load() == profile)
     }
 
+    @Test func profilesFromOlderBuildsGetDefaultsForNewSettings() throws {
+        var old = Profile.makeDefault()
+        old.monitor = MonitorSettings(output: .device(uid: "x"), volume: 0.3)
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(old)) as! [String: Any]
+        json["monitor"] = nil
+        let decoded = try JSONDecoder().decode(Profile.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.monitor == MonitorSettings())
+        #expect(decoded.scenes == old.scenes)
+    }
+
+    @Test func monitorSettingsRoundTrip() throws {
+        var profile = Profile.makeDefault()
+        profile.monitor = MonitorSettings(output: .device(uid: "BuiltInSpeakerDevice"), volume: 0.25)
+        let decoded = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(profile))
+        #expect(decoded.monitor == profile.monitor)
+    }
+
     @Test func corruptFileFallsBackToDefaultAndIsKept() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }

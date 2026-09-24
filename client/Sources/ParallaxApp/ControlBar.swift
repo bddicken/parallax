@@ -22,6 +22,9 @@ struct ControlBar: View {
                 }
             }
 
+            Divider().frame(height: 20)
+            MonitorControl()
+
             Spacer()
 
             if let url = model.lastRecordingURL, !model.isRecording {

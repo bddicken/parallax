@@ -16,6 +16,7 @@ What works now:
   - Every edit is undoable (⌘Z). A whole drag is one undo step.
 - **Layers**: the sources list shows the top layer first. Drag to reorder, + / − to add or remove, and the eye button hides a layer.
 - **Audio**: any mic or interface (pick mono or stereo channels) plus system audio. Each input has a gain fader and, right under it, a live sync delay slider (0–1000 ms), plus mute, meter, 80 Hz high-pass, and noise gate. The master bus has a limiter.
+- **Audio monitor**: the headphones button next to Cut/Fade picks where you hear the program mix (None, System Default, or any connected output) and sets its volume. It follows device plug/unplug and system default changes.
 - **Video delay** per source, 0–2 s.
 - **Local recording**: H.264/HEVC + AAC to .mov/.mp4, with configurable bitrate and folder. Files are fragmented, so a crash keeps what was recorded, and quitting finishes the file.
 - **Output**: 720p/1080p/1440p at 30/60 fps.

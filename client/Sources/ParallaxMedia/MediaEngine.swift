@@ -21,6 +21,11 @@ public final class MediaEngine {
     private var audioNodes: [UUID: (kind: AudioSourceKind, node: AudioInputNode)] = [:]
     private var captureFPS = 0
     private var recorder: Recorder?
+    private var monitor: AudioMonitor?
+    private var monitorSettings = MonitorSettings()
+    /// Why monitoring isn't playing, if it should be (e.g. device unplugged).
+    public private(set) var monitorError: String?
+    public var onMonitorStateChanged: (() -> Void)?
 
     private var feedImage = ChatOverlayRenderer.feed([])
     private var featuredImage: CIImage?
@@ -72,7 +77,55 @@ public final class MediaEngine {
         }
 
         compositor.update(scenes: profile.scenes, output: profile.output)
+        applyMonitor(profile.monitor)
     }
+
+    // MARK: Monitoring
+
+    private func applyMonitor(_ settings: MonitorSettings) {
+        let previous = monitorSettings
+        monitorSettings = settings
+        if settings.output == previous.output, monitor != nil || settings.output == .off {
+            monitor?.setVolume(settings.volume)
+            return
+        }
+        restartMonitor()
+    }
+
+    /// Rebuilds the monitor output, e.g. after a device is plugged in or the
+    /// system default output changes.
+    public func restartMonitor() {
+        if let monitor {
+            sinks.remove(monitor)
+            monitor.stop()
+        }
+        monitor = nil
+        monitorError = nil
+        defer { onMonitorStateChanged?() }
+
+        let deviceID: AudioDeviceID?
+        switch monitorSettings.output {
+        case .off:
+            return
+        case .systemDefault:
+            deviceID = nil
+        case .device(let uid):
+            guard let id = CoreAudioOutputs.deviceID(forUID: uid) else {
+                monitorError = "That output device isn't connected."
+                return
+            }
+            deviceID = id
+        }
+        do {
+            let m = try AudioMonitor(deviceID: deviceID, volume: monitorSettings.volume)
+            monitor = m
+            sinks.add(m)
+        } catch {
+            monitorError = error.localizedDescription
+        }
+    }
+
+    public var isMonitoring: Bool { monitor?.isRunning ?? false }
 
     public func setProgram(_ sceneID: UUID?, transition: TransitionSettings) {
         compositor.setProgram(sceneID, transition: transition)

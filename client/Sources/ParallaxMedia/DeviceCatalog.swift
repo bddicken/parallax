@@ -27,6 +27,10 @@ public final class DeviceCatalog {
     public private(set) var cameras: [CaptureDeviceInfo] = []
     public private(set) var microphones: [CaptureDeviceInfo] = []
     public private(set) var displays: [DisplayInfo] = []
+    public private(set) var outputDevices: [AudioOutputDevice] = []
+    public private(set) var defaultOutputName: String?
+    /// Called when outputs are added/removed or the system default changes.
+    @ObservationIgnored public var onOutputsChanged: (() -> Void)?
     public private(set) var windows: [WindowInfo] = []
     public private(set) var screenCaptureError: String?
     public private(set) var needsScreenRecordingPermission = false
@@ -36,6 +40,13 @@ public final class DeviceCatalog {
     public init() {
         refreshDevices()
         refreshDisplays()
+        refreshOutputs()
+        CoreAudioOutputs.observeChanges { [weak self] in
+            MainActor.assumeIsolated {
+                self?.refreshOutputs()
+                self?.onOutputsChanged?()
+            }
+        }
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -56,6 +67,12 @@ public final class DeviceCatalog {
         microphones = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified
         ).devices.map { CaptureDeviceInfo(id: $0.uniqueID, name: $0.localizedName) }
+    }
+
+    private func refreshOutputs() {
+        outputDevices = CoreAudioOutputs.all()
+        let defaultID = CoreAudioOutputs.defaultOutput()
+        defaultOutputName = outputDevices.first { $0.deviceID == defaultID }?.name
     }
 
     /// Displays from AppKit, which needs no Screen Recording permission.
