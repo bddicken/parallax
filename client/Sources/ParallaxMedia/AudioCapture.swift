@@ -86,7 +86,7 @@ final class DeviceAudioNode: NSObject, AudioInputNode, AVCaptureAudioDataOutputS
 
     func start() {
         AVCaptureDevice.requestAccess(for: .audio) { [self] granted in
-            guard granted else { return onError("Microphone access denied. Enable it in System Settings › Privacy & Security › Microphone.") }
+            guard granted else { return onError(.permissionDenied(.microphone)) }
             queue.async { [self] in
                 if !configured { configure() }
                 if configured, !session.isRunning { session.startRunning() }
@@ -101,20 +101,20 @@ final class DeviceAudioNode: NSObject, AudioInputNode, AVCaptureAudioDataOutputS
     }
 
     private func configure() {
-        guard let device = AVCaptureDevice(uniqueID: uniqueID) else { return onError("Audio device is disconnected.") }
+        guard let device = AVCaptureDevice(uniqueID: uniqueID) else { return onError(.failed("Audio device is disconnected.")) }
         do {
             session.beginConfiguration()
             defer { session.commitConfiguration() }
             let input = try AVCaptureDeviceInput(device: device)
-            guard session.canAddInput(input) else { return onError("Audio device is unavailable.") }
+            guard session.canAddInput(input) else { return onError(.failed("Audio device is unavailable.")) }
             session.addInput(input)
             let output = AVCaptureAudioDataOutput()
             output.setSampleBufferDelegate(self, queue: queue)
-            guard session.canAddOutput(output) else { return onError("Could not read from audio device.") }
+            guard session.canAddOutput(output) else { return onError(.failed("Could not read from audio device.")) }
             session.addOutput(output)
             configured = true
         } catch {
-            onError("Audio device failed: \(error.localizedDescription)")
+            onError(.failed("Audio device failed: \(error.localizedDescription)"))
         }
     }
 
@@ -157,7 +157,7 @@ final class SystemAudioNode: NSObject, AudioInputNode, SCStreamOutput, SCStreamD
     private func startStream() async {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-            guard let display = content.displays.first else { return onError("No display available for system audio.") }
+            guard let display = content.displays.first else { return onError(.failed("No display available for system audio.")) }
             let config = SCStreamConfiguration()
             config.capturesAudio = true
             config.excludesCurrentProcessAudio = true
@@ -177,7 +177,9 @@ final class SystemAudioNode: NSObject, AudioInputNode, SCStreamOutput, SCStreamD
             guard keep else { return }
             try await stream.startCapture()
         } catch {
-            onError("System audio failed: \(error.localizedDescription). Check System Settings › Privacy & Security › Screen Recording.")
+            onError(CGPreflightScreenCaptureAccess()
+                ? .failed("System audio failed: \(error.localizedDescription)")
+                : .permissionDenied(.screenRecording))
         }
     }
 
@@ -187,6 +189,6 @@ final class SystemAudioNode: NSObject, AudioInputNode, SCStreamOutput, SCStreamD
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        onError("System audio stopped: \(error.localizedDescription)")
+        onError(.failed("System audio stopped: \(error.localizedDescription)"))
     }
 }

@@ -29,7 +29,7 @@ final class SourceRegistry: @unchecked Sendable {
     var ids: [UUID] { lock.withLock { Array(nodes.keys) } }
 }
 
-typealias SourceErrorHandler = @Sendable (String) -> Void
+typealias SourceErrorHandler = @Sendable (SourceIssue) -> Void
 
 // MARK: - Camera
 
@@ -48,7 +48,7 @@ final class CameraNode: NSObject, VideoSourceNode, AVCaptureVideoDataOutputSampl
 
     func start() {
         AVCaptureDevice.requestAccess(for: .video) { [self] granted in
-            guard granted else { return onError("Camera access denied. Enable it in System Settings › Privacy & Security › Camera.") }
+            guard granted else { return onError(.permissionDenied(.camera)) }
             queue.async { [self] in
                 if !configured { configure() }
                 if configured, !session.isRunning { session.startRunning() }
@@ -70,23 +70,23 @@ final class CameraNode: NSObject, VideoSourceNode, AVCaptureVideoDataOutputSampl
     }
 
     private func configure() {
-        guard let device = AVCaptureDevice(uniqueID: uniqueID) else { return onError("Camera is disconnected.") }
+        guard let device = AVCaptureDevice(uniqueID: uniqueID) else { return onError(.failed("Camera is disconnected.")) }
         do {
             session.beginConfiguration()
             defer { session.commitConfiguration() }
             let input = try AVCaptureDeviceInput(device: device)
-            guard session.canAddInput(input) else { return onError("Camera is in use by another capture.") }
+            guard session.canAddInput(input) else { return onError(.failed("Camera is in use by another capture.")) }
             session.addInput(input)
             session.sessionPreset = session.canSetSessionPreset(.hd1920x1080) ? .hd1920x1080 : .high
             let output = AVCaptureVideoDataOutput()
             output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
             output.alwaysDiscardsLateVideoFrames = true
             output.setSampleBufferDelegate(self, queue: queue)
-            guard session.canAddOutput(output) else { return onError("Could not read from camera.") }
+            guard session.canAddOutput(output) else { return onError(.failed("Could not read from camera.")) }
             session.addOutput(output)
             configured = true
         } catch {
-            onError("Camera failed: \(error.localizedDescription)")
+            onError(.failed("Camera failed: \(error.localizedDescription)"))
         }
     }
 
@@ -147,14 +147,14 @@ final class ScreenNode: NSObject, VideoSourceNode, SCStreamOutput, SCStreamDeleg
             switch target {
             case .display(let id):
                 guard let display = content.displays.first(where: { $0.displayID == id }) else {
-                    return onError("Display is disconnected.")
+                    return onError(.failed("Display is disconnected."))
                 }
                 let mode = CGDisplayCopyDisplayMode(id)
                 pixelSize = CGSize(width: mode?.pixelWidth ?? display.width, height: mode?.pixelHeight ?? display.height)
                 filter = SCContentFilter(display: display, excludingWindows: [])
             case .window(let id):
                 guard let window = content.windows.first(where: { $0.windowID == id }) else {
-                    return onError("Window was closed.")
+                    return onError(.failed("Window was closed."))
                 }
                 filter = SCContentFilter(desktopIndependentWindow: window)
                 let scale = Double(filter.pointPixelScale)
@@ -179,7 +179,9 @@ final class ScreenNode: NSObject, VideoSourceNode, SCStreamOutput, SCStreamDeleg
             guard keep else { return }
             try await stream.startCapture()
         } catch {
-            onError("Screen capture failed: \(error.localizedDescription). Check System Settings › Privacy & Security › Screen Recording.")
+            onError(CGPreflightScreenCaptureAccess()
+                ? .failed("Screen capture failed: \(error.localizedDescription)")
+                : .permissionDenied(.screenRecording))
         }
     }
 
@@ -194,7 +196,7 @@ final class ScreenNode: NSObject, VideoSourceNode, SCStreamOutput, SCStreamDeleg
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        onError("Screen capture stopped: \(error.localizedDescription)")
+        onError(.failed("Screen capture stopped: \(error.localizedDescription)"))
     }
 }
 

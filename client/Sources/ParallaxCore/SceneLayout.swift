@@ -224,3 +224,50 @@ extension CGRect {
         }
     }
 }
+
+extension SceneItem {
+    /// Changes the crop the way a crop tool should: the edited edges are cut
+    /// away in place, so the rest of the image keeps its size and position
+    /// and the item's box shrinks (or grows) with it.
+    ///
+    /// In fill mode the edges the box was already hiding become explicit
+    /// crop first, so the sliders show exactly what's cut.
+    public func withCrop(_ newCrop: CropInsets, sourceSize: CGSize, canvas: CGSize) -> SceneItem {
+        var item = self
+        let box = frame.denormalized(in: canvas)
+        guard sourceSize.width > 0, sourceSize.height > 0,
+              let p = Placement.compute(sourceSize: sourceSize, crop: crop, frame: box, mode: contentMode) else {
+            item.crop = newCrop
+            return item
+        }
+        let visible = p.sourceRect
+        var target = CropInsets(
+            top: visible.minY / sourceSize.height,
+            left: visible.minX / sourceSize.width,
+            bottom: 1 - visible.maxY / sourceSize.height,
+            right: 1 - visible.maxX / sourceSize.width)
+        if newCrop.top != crop.top { target.top = newCrop.top }
+        if newCrop.left != crop.left { target.left = newCrop.left }
+        if newCrop.bottom != crop.bottom { target.bottom = newCrop.bottom }
+        if newCrop.right != crop.right { target.right = newCrop.right }
+        // Keep at least 2% of the source on each axis.
+        target.left = min(max(0, target.left), 0.98 - target.right)
+        target.top = min(max(0, target.top), 0.98 - target.bottom)
+
+        let sx = p.destRect.width / visible.width, sy = p.destRect.height / visible.height
+        let kept = CGRect(
+            x: sourceSize.width * target.left, y: sourceSize.height * target.top,
+            width: sourceSize.width * (1 - target.left - target.right),
+            height: sourceSize.height * (1 - target.top - target.bottom))
+        let dest = CGRect(
+            x: p.destRect.minX + (kept.minX - visible.minX) * sx,
+            y: p.destRect.minY + (kept.minY - visible.minY) * sy,
+            width: kept.width * sx, height: kept.height * sy)
+
+        item.crop = target
+        item.frame = NormalizedRect(
+            x: dest.minX / canvas.width, y: dest.minY / canvas.height,
+            width: dest.width / canvas.width, height: dest.height / canvas.height)
+        return item
+    }
+}

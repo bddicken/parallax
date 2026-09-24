@@ -10,7 +10,7 @@ import ParallaxCore
 public final class MediaEngine {
     public let preview = PreviewSink()
     public var onLevels: ((MixerLevels) -> Void)?
-    public var onSourceError: ((UUID, String) -> Void)?
+    public var onSourceIssue: ((UUID, SourceIssue) -> Void)?
 
     private let sinks = SinkHub()
     private let registry = SourceRegistry()
@@ -78,6 +78,24 @@ public final class MediaEngine {
         compositor.setProgram(sceneID, transition: transition)
     }
 
+    /// Pixel size of a source's current image, if it has produced one.
+    public func sourceSize(_ id: UUID) -> CGSize? {
+        registry[id]?.image(at: hostNow())?.extent.size
+    }
+
+    /// Restarts every capture that depends on `permission`, e.g. after the
+    /// user grants it in System Settings.
+    public func restartSources(needing permission: Permission) {
+        for (id, source) in videoSources where source.kind.permission == permission {
+            registry[id]?.stop()
+            registry[id]?.start()
+        }
+        for entry in audioNodes.values where entry.kind.permission == permission {
+            entry.node.stop()
+            entry.node.start()
+        }
+    }
+
     // MARK: Chat overlays
 
     public func updateChat(feed: [ChatOverlayLine], featured: ChatOverlayLine?) {
@@ -117,8 +135,8 @@ public final class MediaEngine {
 
     private func makeVideoNode(_ source: VideoSource) -> VideoSourceNode {
         let id = source.id
-        let onError: SourceErrorHandler = { [weak self] message in
-            Task { @MainActor in self?.onSourceError?(id, message) }
+        let onError: SourceErrorHandler = { [weak self] issue in
+            Task { @MainActor in self?.onSourceIssue?(id, issue) }
         }
         switch source.kind {
         case .camera(let uniqueID):
@@ -129,7 +147,7 @@ public final class MediaEngine {
             return ScreenNode(target: .window(windowID), fps: captureFPS, onError: onError)
         case .image(let path):
             let image = CIImage(contentsOf: URL(filePath: path))
-            if image == nil { onError("Could not open image at \(path).") }
+            if image == nil { onError(.failed("Could not open image at \(path).")) }
             return StaticImageNode(image: image)
         case .color(let c):
             let color = CIColor(red: c.red, green: c.green, blue: c.blue, alpha: c.alpha)
@@ -144,8 +162,8 @@ public final class MediaEngine {
     private func makeAudioNode(_ source: AudioSource) -> AudioInputNode {
         let id = source.id
         let onBuffer: AudioBufferHandler = { [mixer] pcm in mixer.write(pcm, to: id) }
-        let onError: SourceErrorHandler = { [weak self] message in
-            Task { @MainActor in self?.onSourceError?(id, message) }
+        let onError: SourceErrorHandler = { [weak self] issue in
+            Task { @MainActor in self?.onSourceIssue?(id, issue) }
         }
         switch source.kind {
         case .device(let uniqueID): return DeviceAudioNode(uniqueID: uniqueID, onBuffer: onBuffer, onError: onError)

@@ -29,6 +29,7 @@ public final class DeviceCatalog {
     public private(set) var displays: [DisplayInfo] = []
     public private(set) var windows: [WindowInfo] = []
     public private(set) var screenCaptureError: String?
+    public private(set) var needsScreenRecordingPermission = false
 
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
 
@@ -79,8 +80,10 @@ public final class DeviceCatalog {
                 .map { WindowInfo(id: $0.windowID, title: $0.title ?? "", appName: $0.owningApplication?.applicationName ?? "") }
                 .sorted { ($0.appName, $0.title) < ($1.appName, $1.title) }
             screenCaptureError = nil
+            needsScreenRecordingPermission = false
         } catch {
-            screenCaptureError = "Screen Recording permission is needed. Grant it in System Settings › Privacy & Security › Screen Recording, then relaunch Parallax."
+            needsScreenRecordingPermission = !CGPreflightScreenCaptureAccess()
+            screenCaptureError = needsScreenRecordingPermission ? nil : "Couldn't list screens: \(error.localizedDescription)"
         }
     }
 }

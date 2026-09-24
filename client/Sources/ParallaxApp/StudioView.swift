@@ -5,6 +5,7 @@ struct StudioView: View {
     @Environment(\.undoManager) private var undoManager
 
     var body: some View {
+        @Bindable var model = model
         HSplitView {
             VStack(spacing: 0) {
                 ScenesPanel()
@@ -47,6 +48,9 @@ struct StudioView: View {
             }
         }
         .animation(.snappy, value: model.banner)
+        .sheet(item: $model.permissionPrompt) { permission in
+            PermissionSheet(permission: permission).environment(model)
+        }
         .onAppear { model.undoManager = undoManager }
         .onChange(of: undoManager) { _, manager in model.undoManager = manager }
     }

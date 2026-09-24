@@ -27,6 +27,9 @@ final class AppModel {
     var lastRecordingURL: URL?
     var sourceErrors: [UUID: String] = [:]
     var banner: String?
+    /// A permission the user needs to grant; drives the permission sheet.
+    var permissionPrompt: Permission?
+    @ObservationIgnored private var isRelaunching = false
 
     @ObservationIgnored let engine = MediaEngine()
     /// Set by the window so layout edits land in Edit › Undo.
@@ -42,9 +45,16 @@ final class AppModel {
             self?.levels = levels.inputs
             self?.masterLevel = levels.master
         }
-        engine.onSourceError = { [weak self] id, message in
-            self?.sourceErrors[id] = message
-            self?.banner = message
+        engine.onSourceIssue = { [weak self] id, issue in
+            guard let self else { return }
+            switch issue {
+            case .permissionDenied(let permission):
+                sourceErrors[id] = "\(permission.title) access is off."
+                if permissionPrompt == nil { permissionPrompt = permission }
+            case .failed(let message):
+                sourceErrors[id] = message
+                banner = message
+            }
         }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
         if firstRun { addDefaultDevices() }
@@ -55,6 +65,9 @@ final class AppModel {
         // Lets screenshots show selection chrome without driving the mouse.
         if ProcessInfo.processInfo.environment["PARALLAX_DEBUG_SELECT_TOP"] != nil {
             selectedItemID = programScene?.items.last?.id
+        }
+        if let raw = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_PERMISSION"] {
+            permissionPrompt = Permission(rawValue: raw)
         }
         #endif
     }
@@ -314,6 +327,24 @@ final class AppModel {
         }
     }
 
+    /// Crops in place: the kept part of the image stays where it is and the
+    /// box resizes around it.
+    func setCrop(_ id: UUID, _ edge: WritableKeyPath<CropInsets, Double>, to value: Double) {
+        guard let item = programScene?.items.first(where: { $0.id == id }) else { return }
+        var crop = item.crop
+        crop[keyPath: edge] = value
+        let canvas = CGSize(width: profile.output.width, height: profile.output.height)
+        let updated = engine.sourceSize(item.sourceID).map { item.withCrop(crop, sourceSize: $0, canvas: canvas) }
+        updateItem(id, undo: "Crop Source") { current in
+            if let updated {
+                current.crop = updated.crop
+                current.frame = updated.frame
+            } else {
+                current.crop = crop
+            }
+        }
+    }
+
     func nudgeSelected(dx: Double, dy: Double) {
         guard let id = selectedItemID else { return }
         updateItem(id, undo: "Move Source") { item in
@@ -350,6 +381,44 @@ final class AppModel {
     func removeAudioSource(_ id: UUID) {
         profile.audioSources.removeAll { $0.id == id }
         sourceErrors[id] = nil
+    }
+
+    // MARK: Permissions
+
+    /// Called once macOS reports the permission granted: restart the captures
+    /// that failed without it.
+    func permissionGranted(_ permission: Permission) {
+        let affected = Set(profile.videoSources.filter { $0.kind.permission == permission }.map(\.id)
+            + profile.audioSources.filter { $0.kind.permission == permission }.map(\.id))
+        sourceErrors = sourceErrors.filter { !affected.contains($0.key) }
+        engine.restartSources(needing: permission)
+        if permissionPrompt == permission { permissionPrompt = nil }
+    }
+
+    /// Screen recording access only applies to a new process, so offer to
+    /// relaunch. Any recording in progress is finished first.
+    func relaunch() {
+        guard !isRelaunching else { return }
+        isRelaunching = true
+        saveNow()
+        // An open sheet makes AppKit refuse to terminate, which would leave
+        // this copy running next to the new one.
+        permissionPrompt = nil
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        let url = Bundle.main.bundleURL
+        Task {
+            await stopRecording()
+            saveNow()
+            _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: config)
+            NSApp.terminate(nil)
+            // Backstop in case something still vetoes termination.
+            try? await Task.sleep(for: .seconds(2))
+            exit(0)
+        }
     }
 
     // MARK: Recording

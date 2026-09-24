@@ -97,10 +97,10 @@ private struct ItemInspector: View {
             }
 
             section("Crop") {
-                cropSlider("Top", \.crop.top)
-                cropSlider("Bottom", \.crop.bottom)
-                cropSlider("Left", \.crop.left)
-                cropSlider("Right", \.crop.right)
+                cropSlider("Top", \.top)
+                cropSlider("Bottom", \.bottom)
+                cropSlider("Left", \.left)
+                cropSlider("Right", \.right)
             }
 
             if source.kind.isLive {
@@ -154,11 +154,11 @@ private struct ItemInspector: View {
         }
     }
 
-    private func cropSlider(_ label: String, _ path: WritableKeyPath<SceneItem, Double>) -> some View {
+    private func cropSlider(_ label: String, _ edge: WritableKeyPath<CropInsets, Double>) -> some View {
         HStack {
             Text(label).frame(width: 50, alignment: .leading).foregroundStyle(.secondary)
-            Slider(value: itemBinding(path), in: 0...0.49)
-            Text(item[keyPath: path], format: .percent.precision(.fractionLength(0)))
+            Slider(value: Binding(get: { item.crop[keyPath: edge] }, set: { model.setCrop(item.id, edge, to: $0) }), in: 0...0.49)
+            Text(item.crop[keyPath: edge], format: .percent.precision(.fractionLength(0)))
                 .monospacedDigit().frame(width: 40, alignment: .trailing)
         }
         .controlSize(.small)

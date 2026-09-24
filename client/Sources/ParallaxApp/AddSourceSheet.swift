@@ -32,7 +32,7 @@ struct AddSourceSheet: View {
                 case .existing: existing
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: 240, maxHeight: 240, alignment: .topLeading)
+            .frame(maxWidth: .infinity, minHeight: 320, maxHeight: 320, alignment: .topLeading)
 
             HStack {
                 Spacer()
@@ -49,7 +49,16 @@ struct AddSourceSheet: View {
         }
     }
 
+    @ViewBuilder
     private var cameras: some View {
+        if Permission.camera.status == .denied {
+            PermissionCard(permission: .camera)
+        } else {
+            cameraList
+        }
+    }
+
+    private var cameraList: some View {
         pickList(model.devices.cameras.map { ($0.id, $0.name) }, empty: "No cameras found.") { id, name in
             add(.camera(uniqueID: id), name)
         }
@@ -57,7 +66,9 @@ struct AddSourceSheet: View {
 
     @ViewBuilder
     private var displays: some View {
-        if let error = model.devices.screenCaptureError {
+        if model.devices.needsScreenRecordingPermission {
+            screenPermission
+        } else if let error = model.devices.screenCaptureError {
             Text(error).foregroundStyle(.secondary)
         } else {
             pickList(model.devices.displays.map { ($0.id, $0.name) }, empty: "Loading displays…") { id, name in
@@ -68,13 +79,24 @@ struct AddSourceSheet: View {
 
     @ViewBuilder
     private var windows: some View {
-        if let error = model.devices.screenCaptureError {
+        if model.devices.needsScreenRecordingPermission {
+            screenPermission
+        } else if let error = model.devices.screenCaptureError {
             Text(error).foregroundStyle(.secondary)
         } else {
             pickList(model.devices.windows.map { ($0.id, $0.title.isEmpty ? $0.appName : "\($0.appName) — \($0.title)") },
                      empty: "Loading windows…") { id, name in
                 add(.window(windowID: id), name)
             }
+        }
+    }
+
+    private var screenPermission: some View {
+        ScrollView {
+            PermissionCard(permission: .screenRecording) {
+                Task { await model.devices.refreshShareableContent() }
+            }
+            .padding(.vertical, 4)
         }
     }
 

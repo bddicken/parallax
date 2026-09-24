@@ -101,3 +101,53 @@ import Testing
         #expect(abs(free.frame.x - Snapper.margin) > 1e-3)
     }
 }
+
+@Suite struct CropTests {
+    let canvas = CGSize(width: 1920, height: 1080)
+    let source = CGSize(width: 1920, height: 1080)
+
+    private func near(_ a: Double, _ b: Double) -> Bool { abs(a - b) < 1e-9 }
+
+    @Test func croppingLeftTrimsInPlaceWithoutZooming() {
+        let item = SceneItem(sourceID: UUID(), frame: .full)
+        let cropped = item.withCrop(CropInsets(left: 0.25), sourceSize: source, canvas: canvas)
+        #expect(near(cropped.frame.x, 0.25) && near(cropped.frame.width, 0.75))
+        #expect(near(cropped.frame.y, 0) && near(cropped.frame.height, 1))
+        // Rendering it maps each remaining source pixel to the same spot as before.
+        let p = Placement.compute(sourceSize: source, crop: cropped.crop, frame: cropped.frame.denormalized(in: canvas), mode: .fit)!
+        #expect(near(p.destRect.width / p.sourceRect.width, 1))
+        #expect(near(p.destRect.minX, 480))
+    }
+
+    @Test func croppingAPipKeepsItsScale() {
+        let item = SceneItem(sourceID: UUID(), frame: LayoutPreset.pipTopRight.rect)
+        let cropped = item.withCrop(CropInsets(top: 0.1, bottom: 0.1), sourceSize: source, canvas: canvas)
+        #expect(near(cropped.frame.width, item.frame.width))
+        #expect(near(cropped.frame.height, item.frame.height * 0.8))
+        #expect(near(cropped.frame.y, item.frame.y + item.frame.height * 0.1))
+    }
+
+    @Test func uncroppingGrowsTheBoxBack() {
+        let item = SceneItem(sourceID: UUID(), frame: .full)
+        let cropped = item.withCrop(CropInsets(right: 0.3), sourceSize: source, canvas: canvas)
+        let restored = cropped.withCrop(.none, sourceSize: source, canvas: canvas)
+        #expect(near(restored.frame.width, 1) && near(restored.frame.x, 0))
+    }
+
+    @Test func fitModeBoxShrinksToTheVisibleImage() {
+        // A 4:3 source letterboxed in a full 16:9 box.
+        let item = SceneItem(sourceID: UUID(), frame: .full, contentMode: .fit)
+        let cropped = item.withCrop(CropInsets(top: 0.5), sourceSize: CGSize(width: 1440, height: 1080), canvas: canvas)
+        #expect(near(cropped.frame.x, 0.125) && near(cropped.frame.width, 0.75))
+        #expect(near(cropped.frame.y, 0.5) && near(cropped.frame.height, 0.5))
+    }
+
+    @Test func fillModeTurnsHiddenEdgesIntoExplicitCrop() {
+        // 16:9 camera filling a square box: the sides are already hidden.
+        let item = SceneItem(sourceID: UUID(), frame: NormalizedRect(x: 0.1, y: 0.1, width: 0.28125, height: 0.5), contentMode: .fill)
+        let cropped = item.withCrop(CropInsets(top: 0.2), sourceSize: source, canvas: canvas)
+        #expect(near(cropped.crop.left, 0.21875) && near(cropped.crop.right, 0.21875))
+        #expect(near(cropped.frame.width, item.frame.width))
+        #expect(near(cropped.frame.height, item.frame.height * 0.8))
+    }
+}
