@@ -68,9 +68,6 @@ private struct ChannelStrip: View {
                     SourceWarning(message: error, permission: source.kind.permission)
                 }
                 Spacer()
-                if source.delayMs > 0 {
-                    Text("+\(source.delayMs) ms").font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                }
                 Button { showingOptions.toggle() } label: { Image(systemName: "slider.horizontal.3") }
                     .buttonStyle(.borderless)
                     .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
@@ -88,16 +85,30 @@ private struct ChannelStrip: View {
             }
             LevelMeter(level: level, dimmed: source.isMuted).frame(height: 8)
             HStack {
+                Text("Gain").font(.caption).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
                 Slider(value: binding(\.gainDB), in: -60...20)
                     .controlSize(.small)
                 Text(String(format: "%+.1f dB", source.gainDB))
                     .font(.caption).monospacedDigit().frame(width: 60, alignment: .trailing)
             }
+            // Applied live: raising it inserts a gap of silence, lowering it
+            // skips ahead, so you can dial in sync by ear while talking.
+            HStack {
+                Text("Delay").font(.caption).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
+                Slider(value: Binding(get: { Double(min(source.delayMs, Self.maxDelayMs)) },
+                                      set: { v in model.updateAudioSource(source.id) { $0.delayMs = Int(v.rounded()) } }),
+                       in: 0...Double(Self.maxDelayMs))
+                    .controlSize(.small)
+                Text("\(source.delayMs) ms")
+                    .font(.caption).monospacedDigit().frame(width: 60, alignment: .trailing)
+            }
+            .help("Delay this input to line up with a slower camera")
         }
         .padding(8)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         .contextMenu {
             Button("Reset Gain") { model.updateAudioSource(source.id) { $0.gainDB = 0 } }
+            Button("Reset Delay") { model.updateAudioSource(source.id) { $0.delayMs = 0 } }
             Button("Remove", role: .destructive) { model.removeAudioSource(source.id) }
         }
     }
@@ -105,6 +116,8 @@ private struct ChannelStrip: View {
     private func binding<T>(_ path: WritableKeyPath<AudioSource, T>) -> Binding<T> {
         Binding(get: { source[keyPath: path] }, set: { v in model.updateAudioSource(source.id) { $0[keyPath: path] = v } })
     }
+
+    private static let maxDelayMs = 1000
 }
 
 private struct ChannelOptions: View {
@@ -114,15 +127,6 @@ private struct ChannelOptions: View {
     var body: some View {
         Form {
             TextField("Name", text: binding(\.name))
-            Section("Sync") {
-                HStack {
-                    Slider(value: Binding(get: { Double(source.delayMs) },
-                                          set: { v in model.updateAudioSource(source.id) { $0.delayMs = Int(v) } }),
-                           in: 0...2000, step: 5)
-                    Text("\(source.delayMs) ms").monospacedDigit().frame(width: 60, alignment: .trailing)
-                }
-                Text("Delay this input to line up with a slower camera.").font(.caption).foregroundStyle(.secondary)
-            }
             if case .device = source.kind {
                 Section("Channels") {
                     Picker("Mode", selection: binding(\.channelMode)) {

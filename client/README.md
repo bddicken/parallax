@@ -15,7 +15,7 @@ What works now:
   - Inspector: preset buttons, a size slider that keeps corner PiPs anchored, fit/fill/stretch, rounded corners (up to circle/pill), border, drop shadow (distance, direction, blur, opacity, color), and crop. Crop trims edges in place: the rest of the image doesn't move or zoom, and the box shrinks to match. The ⇄ button swaps which camera, display, or window a layer shows.
   - Every edit is undoable (⌘Z). A whole drag is one undo step.
 - **Layers**: the sources list shows the top layer first. Drag to reorder, + / − to add or remove, and the eye button hides a layer.
-- **Audio**: any mic or interface (pick mono or stereo channels) plus system audio. Each input has a gain fader, mute, meter, sync delay (0–2 s), 80 Hz high-pass, and noise gate. The master bus has a limiter.
+- **Audio**: any mic or interface (pick mono or stereo channels) plus system audio. Each input has a gain fader and, right under it, a live sync delay slider (0–1000 ms), plus mute, meter, 80 Hz high-pass, and noise gate. The master bus has a limiter.
 - **Video delay** per source, 0–2 s.
 - **Local recording**: H.264/HEVC + AAC to .mov/.mp4, with configurable bitrate and folder. Files are fragmented, so a crash keeps what was recorded, and quitting finishes the file.
 - **Output**: 720p/1080p/1440p at 30/60 fps.
