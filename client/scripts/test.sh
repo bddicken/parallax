@@ -3,4 +3,4 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/env.sh
-swift test "${SWIFT_FLAGS[@]}" "$@"
+swift test ${SWIFT_FLAGS[@]+"${SWIFT_FLAGS[@]}"} "$@"

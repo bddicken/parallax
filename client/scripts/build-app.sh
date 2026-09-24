@@ -36,7 +36,7 @@ if [[ -z "$IDENTITY" ]]; then
   # the bundle ID instead so rebuilt copies count as the same app.
   REQUIREMENTS=(--requirements '=designated => identifier "com.bddicken.parallax"')
 fi
-codesign --force --sign "$IDENTITY" "${REQUIREMENTS[@]}" --entitlements Support/Parallax.entitlements "$APP"
+codesign --force --sign "$IDENTITY" ${REQUIREMENTS[@]+"${REQUIREMENTS[@]}"} --entitlements Support/Parallax.entitlements "$APP"
 echo "Built $APP (signed with: $IDENTITY)"
 
 if [[ "$OPEN" == "--open" ]]; then
