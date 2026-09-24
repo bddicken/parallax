@@ -20,17 +20,23 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Parallax"
 cp Support/Info.plist "$APP/Contents/Info.plist"
+# Unique build number, so each build is distinguishable (About box, crash logs).
+plutil -replace CFBundleVersion -string "$(date +%Y%m%d.%H%M%S)" "$APP/Contents/Info.plist"
 
 # Prefer an explicit identity, then the one from setup-signing.sh, else ad hoc.
 IDENTITY="${PARALLAX_SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]] && security find-identity -v -p codesigning | grep -q "Parallax Local Signing"; then
   IDENTITY="Parallax Local Signing"
 fi
+REQUIREMENTS=()
 if [[ -z "$IDENTITY" ]]; then
   IDENTITY="-"
-  echo "note: signing ad hoc, so macOS will re-ask for permissions after each rebuild. Run scripts/setup-signing.sh once to fix."
+  # Ad hoc signatures default to requiring this exact binary (its cdhash), so
+  # macOS forgets permission grants on every rebuild. Pin the requirement to
+  # the bundle ID instead so rebuilt copies count as the same app.
+  REQUIREMENTS=(--requirements '=designated => identifier "com.bddicken.parallax"')
 fi
-codesign --force --sign "$IDENTITY" --entitlements Support/Parallax.entitlements "$APP"
+codesign --force --sign "$IDENTITY" "${REQUIREMENTS[@]}" --entitlements Support/Parallax.entitlements "$APP"
 echo "Built $APP (signed with: $IDENTITY)"
 
 if [[ "$OPEN" == "--open" ]]; then

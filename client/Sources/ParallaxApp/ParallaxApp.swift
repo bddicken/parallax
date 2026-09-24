@@ -1,7 +1,22 @@
 import AppKit
+import ParallaxMedia
 import SwiftUI
 
 @main
+enum Main {
+    static func main() {
+        // `--permission-report <file>` writes what macOS has granted and exits
+        // before any capture starts, so checking never triggers a prompt.
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--permission-report"), i + 1 < args.count {
+            let report = Permission.allCases.map { "\($0.rawValue): \($0.status)" }.joined(separator: "\n")
+            try? (report + "\n").write(toFile: args[i + 1], atomically: true, encoding: .utf8)
+            exit(0)
+        }
+        ParallaxApp.main()
+    }
+}
+
 struct ParallaxApp: App {
     @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     @State private var model = AppModel()

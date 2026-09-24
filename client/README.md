@@ -27,13 +27,15 @@ Settings are saved to `~/Library/Application Support/Parallax/profile.json`. Set
 
 Parallax asks for Camera, Microphone, or Screen Recording access only when a source needs it and access isn't already granted. If access is off, it shows a sheet that opens the right System Settings pane. After **Not Now**, it won't ask again until you click the source's ⚠︎ icon.
 
-macOS ties those grants to the app's code signature. Ad-hoc signatures (the default) change on every build, so macOS treats each rebuild as a new app. Run this once to create a local signing certificate:
+macOS ties those grants to the app's code signature. A plain ad-hoc signature is tied to the exact binary, so every rebuild would look like a new app. `build-app.sh` pins the signature's designated requirement to the bundle ID (`identifier "com.bddicken.parallax"`) instead, so grants survive rebuilds without any certificate.
+
+To use a real identity (for example, for distribution), run `scripts/setup-signing.sh` once to create a trusted local certificate, or set `PARALLAX_SIGN_IDENTITY`.
+
+To see what macOS has granted without triggering any prompt:
 
 ```bash
-scripts/setup-signing.sh
+open -n build/Parallax.app --args --permission-report /tmp/parallax-permissions.txt
 ```
-
-`build-app.sh` then signs with it automatically, and permissions survive rebuilds. You can also set `PARALLAX_SIGN_IDENTITY` to use another identity, such as an Apple Development certificate.
 
 ## Command Line Tools only (no Xcode)
 
