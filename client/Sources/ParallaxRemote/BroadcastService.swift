@@ -2,8 +2,17 @@ import Foundation
 
 /// The client's view of parallax-server: which destinations exist, going
 /// live, and chat. The media uplink itself is a `MediaSink` in ParallaxMedia.
+public enum BroadcastMode: Sendable {
+    /// No server configured: no chat, can't go live.
+    case offline
+    /// Built-in fake server that generates chat, for trying the UI.
+    case mock
+    /// A real parallax-server.
+    case server
+}
+
 public protocol BroadcastService: Sendable {
-    var isMock: Bool { get }
+    var mode: BroadcastMode { get }
     func destinations() async throws -> [Destination]
     func status() async throws -> BroadcastStatus
     func ingest() async throws -> IngestInfo
@@ -14,6 +23,30 @@ public protocol BroadcastService: Sendable {
     func events() -> AsyncThrowingStream<ServerEvent, Error>
 }
 
+extension BroadcastService {
+    public var isMock: Bool { mode == .mock }
+}
+
+/// Used when no server is set up and mock chat is off.
+public struct OfflineBroadcastService: BroadcastService {
+    public let mode = BroadcastMode.offline
+
+    public init() {}
+
+    private var notConnected: ServerError {
+        ServerError(message: "No server is set up. Add one in Settings › Server, or turn on Mock in the chat panel to try this.")
+    }
+
+    public func destinations() async throws -> [Destination] { [] }
+    public func status() async throws -> BroadcastStatus { BroadcastStatus() }
+    public func ingest() async throws -> IngestInfo { throw notConnected }
+    public func startBroadcast(destinationIDs: [String]) async throws { throw notConnected }
+    public func stopBroadcast() async throws {}
+    public func sendChat(_ request: SendChatRequest) async throws { throw notConnected }
+    /// Never yields; there's nothing to listen to.
+    public func events() -> AsyncThrowingStream<ServerEvent, Error> { AsyncThrowingStream { _ in } }
+}
+
 public struct ServerError: LocalizedError, Sendable {
     public let message: String
     public var errorDescription: String? { message }
@@ -21,7 +54,7 @@ public struct ServerError: LocalizedError, Sendable {
 
 /// Talks to a real parallax-server over REST + a websocket.
 public final class HTTPBroadcastService: BroadcastService {
-    public let isMock = false
+    public let mode = BroadcastMode.server
     private let baseURL: URL
     private let token: String
     private let session: URLSession

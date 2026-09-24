@@ -106,7 +106,12 @@ struct GoLiveSheet: View {
                 SettingsLink { Text("Change…") }.buttonStyle(.link)
             }
 
-            if broadcast.service.isMock {
+            if broadcast.service.mode == .offline {
+                Label("No server is set up yet, so there's nowhere to stream to. Add one in Settings › Server, or turn on Mock in the chat panel to try Go Live.",
+                      systemImage: "info.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if broadcast.service.isMock {
                 Label("Using the built-in mock server. Nothing is actually streamed until parallax-server and the uplink are built.",
                       systemImage: "info.circle")
                     .font(.callout)

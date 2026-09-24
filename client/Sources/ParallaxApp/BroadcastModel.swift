@@ -6,7 +6,7 @@ import ParallaxRemote
 /// Connection to parallax-server (or the mock): destinations, live status, chat.
 @Observable
 final class BroadcastModel {
-    private(set) var service: BroadcastService = MockBroadcastService()
+    private(set) var service: BroadcastService = OfflineBroadcastService()
     var destinations: [Destination] = []
     var status = BroadcastStatus()
     var messages: [ChatMessage] = []
@@ -22,12 +22,25 @@ final class BroadcastModel {
 
     func connect(_ settings: BroadcastSettings) {
         eventsTask?.cancel()
+        eventsTask = nil
         connectionError = nil
+        let previousMode = service.mode
         if let url = URL(string: settings.serverURL), url.scheme != nil {
             service = HTTPBroadcastService(baseURL: url, token: Keychain.read("server-token") ?? "")
-        } else {
+        } else if settings.useMockServer {
             service = MockBroadcastService()
+        } else {
+            service = OfflineBroadcastService()
         }
+        // Don't mix fake and real chat when switching.
+        if service.mode != previousMode {
+            messages = []
+            featuredMessageID = nil
+            destinations = []
+            status = BroadcastStatus()
+            onChatChanged?()
+        }
+        guard service.mode != .offline else { return }
         let service = self.service
         eventsTask = Task { [weak self] in
             await self?.refreshDestinations()

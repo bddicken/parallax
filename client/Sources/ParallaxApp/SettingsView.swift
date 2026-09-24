@@ -198,7 +198,7 @@ private struct ServerSettingsView: View {
                 TextField("Server URL", text: $url, prompt: Text("https://relay.example.com"))
                 SecureField("Token", text: $token)
             } footer: {
-                Text("Leave the URL empty to use the built-in mock server. The token is stored in your Keychain.")
+                Text("Leave the URL empty to stay offline (turn on Mock in the chat panel to try things with fake chat). The token is stored in your Keychain.")
                     .foregroundStyle(.secondary)
             }
             HStack {

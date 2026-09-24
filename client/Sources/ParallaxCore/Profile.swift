@@ -402,6 +402,8 @@ public struct StreamSettings: Codable, Hashable, Sendable {
 public struct BroadcastSettings: Codable, Hashable, Sendable {
     /// Base URL of parallax-server. Empty means use the built-in mock.
     public var serverURL: String = ""
+    /// Use the built-in fake server (generated chat) when no URL is set.
+    public var useMockServer = false
     public var stream = StreamSettings()
 
     public init(serverURL: String = "") {
@@ -411,6 +413,7 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         serverURL = try c.decodeIfPresent(String.self, forKey: .serverURL) ?? ""
+        useMockServer = try c.decodeIfPresent(Bool.self, forKey: .useMockServer) ?? false
         stream = try c.decodeIfPresent(StreamSettings.self, forKey: .stream) ?? StreamSettings()
     }
 }

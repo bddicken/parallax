@@ -36,5 +36,6 @@ import Testing
         let broadcast = #"{"serverURL":"","uplinkVideoBitrateKbps":8000}"#
         let b = try JSONDecoder().decode(BroadcastSettings.self, from: Data(broadcast.utf8))
         #expect(b.stream == StreamSettings())
+        #expect(!b.useMockServer, "mock chat is off unless turned on")
     }
 }

@@ -11,11 +11,14 @@ struct ChatPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader(title: "Chat") {
-                if broadcast.service.isMock {
-                    Text("MOCK").font(.caption2.bold()).padding(.horizontal, 5).padding(.vertical, 2)
-                        .background(.orange.opacity(0.25), in: Capsule())
-                        .help("Using the built-in mock server. Set a server URL in Settings.")
-                }
+                Toggle(isOn: mockBinding) { Text("Mock") }
+                    .toggleStyle(.button)
+                    .controlSize(.small)
+                    .tint(.orange)
+                    .disabled(broadcast.service.mode == .server)
+                    .help(broadcast.service.mode == .server
+                          ? "Connected to a real server; mock chat is unavailable."
+                          : "Fill chat with fake messages to try out chat, replies, and on-screen comments.")
                 if broadcast.connectionError != nil {
                     Image(systemName: "wifi.exclamationmark").foregroundStyle(.red).help(broadcast.connectionError ?? "")
                 }
@@ -34,7 +37,15 @@ struct ChatPanel: View {
                 }
                 .overlay {
                     if broadcast.messages.isEmpty {
-                        ContentUnavailableView("No messages yet", systemImage: "bubble.left.and.bubble.right")
+                        if broadcast.service.mode == .offline {
+                            ContentUnavailableView {
+                                Label("Chat not connected", systemImage: "bubble.left.and.bubble.right")
+                            } description: {
+                                Text("Chat from YouTube, X, and Twitch shows up here once parallax-server is set up in Settings › Server. Turn on Mock to try it with fake messages.")
+                            }
+                        } else {
+                            ContentUnavailableView("No messages yet", systemImage: "bubble.left.and.bubble.right")
+                        }
                     }
                 }
             }
@@ -59,6 +70,13 @@ struct ChatPanel: View {
             }
             .padding(10)
         }
+    }
+
+    private var mockBinding: Binding<Bool> {
+        Binding(get: { broadcast.service.mode == .mock }, set: { on in
+            model.profile.broadcast.useMockServer = on
+            broadcast.connect(model.profile.broadcast)
+        })
     }
 
     private func send() {

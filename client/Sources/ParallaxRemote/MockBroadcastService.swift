@@ -3,7 +3,7 @@ import Foundation
 /// Stands in for parallax-server so the broadcast and chat UI can be built
 /// before the server exists. Generates chatter and echoes your replies.
 public actor MockBroadcastService: BroadcastService {
-    public nonisolated let isMock = true
+    public nonisolated let mode = BroadcastMode.mock
 
     private var current = BroadcastStatus()
     private var subscribers: [UUID: AsyncThrowingStream<ServerEvent, Error>.Continuation] = [:]
