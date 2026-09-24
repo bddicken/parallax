@@ -108,6 +108,19 @@ final class AppModel {
         if ProcessInfo.processInfo.environment["PARALLAX_DEBUG_SELECT_TOP"] != nil {
             selectedItemID = programScene?.items.last?.id
         }
+        // Repeatedly switches the canvas between 1080p and 4K, which restarts
+        // cameras; used to reproduce restart races.
+        if let flips = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_CANVAS_FLIPS"].flatMap(Int.init) {
+            Task { [weak self] in
+                for i in 0..<flips {
+                    try? await Task.sleep(for: .milliseconds(1500))
+                    // Width then height as separate edits, like the old Canvas picker did.
+                    let target = i % 2 == 0 ? (3840, 2160) : (1920, 1080)
+                    self?.profile.output.width = target.0
+                    self?.profile.output.height = target.1
+                }
+            }
+        }
         if let raw = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_PERMISSION"] {
             permissionPrompt = Permission(rawValue: raw)
         }

@@ -39,9 +39,9 @@ private struct CanvasSettingsView: View {
                     get: { "\(model.profile.output.width)x\(model.profile.output.height)" },
                     set: { value in
                         let parts = value.split(separator: "x").compactMap { Int($0) }
+                        // One edit, so captures restart once rather than twice.
                         if parts.count == 2 {
-                            model.profile.output.width = parts[0]
-                            model.profile.output.height = parts[1]
+                            model.profile.output = OutputSettings(width: parts[0], height: parts[1], fps: model.profile.output.fps)
                         }
                     })) {
                     ForEach(OutputSettings.presets, id: \.height) { w, h in
