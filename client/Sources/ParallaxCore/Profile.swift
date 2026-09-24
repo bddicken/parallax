@@ -16,15 +16,63 @@ public struct RGBAColor: Codable, Hashable, Sendable {
 }
 
 public enum VideoSourceKind: Codable, Hashable, Sendable {
-    case camera(uniqueID: String)
-    case display(displayID: UInt32)
-    case window(windowID: UInt32)
+    /// `name`/`modelID` let a camera be found again if macOS gives it a new
+    /// uniqueID (e.g. plugged into a different port).
+    case camera(uniqueID: String, name: String? = nil, modelID: String? = nil)
+    /// `uuid` is the display's hardware identity, stable across restarts;
+    /// `displayID` is only valid for the current login session.
+    case display(displayID: UInt32, uuid: String? = nil, name: String? = nil)
+    /// Window IDs change whenever the app relaunches, so the owning app and
+    /// title are kept to find the window again.
+    case window(windowID: UInt32, bundleID: String? = nil, title: String? = nil)
     case image(path: String)
     case color(RGBAColor)
     /// Rolling feed of recent chat messages.
     case chatFeed
     /// A single chat message the host has chosen to feature on screen.
     case featuredChat
+}
+
+extension VideoSourceKind {
+    /// Identifies the physical thing captured, ignoring descriptive metadata,
+    /// so the same monitor or camera isn't added as two sources.
+    public var deviceKey: String? {
+        switch self {
+        case .camera(let uniqueID, _, _): "camera:\(uniqueID)"
+        case .display(let id, let uuid, _): "display:\(uuid ?? String(id))"
+        case .window(let id, _, _): "window:\(id)"
+        default: nil
+        }
+    }
+}
+
+extension VideoSourceKind {
+    /// Sources saved by older builds have no device name in their kind; the
+    /// source's own name (which defaults to the device name) stands in so the
+    /// device can still be matched after its ID changes.
+    public func withNameHint(_ sourceName: String) -> VideoSourceKind {
+        switch self {
+        case .camera(let uniqueID, nil, let modelID): .camera(uniqueID: uniqueID, name: sourceName, modelID: modelID)
+        case .display(let id, nil, nil): .display(displayID: id, uuid: nil, name: sourceName)
+        default: self
+        }
+    }
+}
+
+extension AudioSourceKind {
+    public func withNameHint(_ sourceName: String) -> AudioSourceKind {
+        switch self {
+        case .device(let uniqueID, nil, let modelID): .device(uniqueID: uniqueID, name: sourceName, modelID: modelID)
+        default: self
+        }
+    }
+
+    public var deviceKey: String {
+        switch self {
+        case .device(let uniqueID, _, _): "device:\(uniqueID)"
+        case .systemAudio: "system"
+        }
+    }
 }
 
 /// A video input. Sources are global; scenes place them via `SceneItem`s, so
@@ -141,7 +189,7 @@ public struct StudioScene: Identifiable, Codable, Hashable, Sendable {
 }
 
 public enum AudioSourceKind: Codable, Hashable, Sendable {
-    case device(uniqueID: String)
+    case device(uniqueID: String, name: String? = nil, modelID: String? = nil)
     /// Everything the Mac is playing, via ScreenCaptureKit (minus Parallax itself).
     case systemAudio
 }

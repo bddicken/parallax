@@ -39,7 +39,7 @@ private struct AddAudioMenu: View {
         Menu {
             Section("Inputs") {
                 ForEach(model.devices.microphones) { mic in
-                    Button(mic.name) { model.addAudioSource(kind: .device(uniqueID: mic.id), name: mic.name) }
+                    Button(mic.name) { model.addAudioSource(kind: mic.microphoneKind, name: mic.name) }
                 }
             }
             Button("System Audio") { model.addAudioSource(kind: .systemAudio, name: "System Audio") }

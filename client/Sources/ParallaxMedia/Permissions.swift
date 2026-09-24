@@ -101,6 +101,10 @@ public enum SourceIssue: Sendable {
     /// declined it, so we shouldn't immediately ask again.
     case permissionDenied(Permission, askedJustNow: Bool)
     case failed(String)
+    /// The device isn't there right now; the source reconnects on its own.
+    case waiting(String)
+    /// A source that was waiting or failing is working again.
+    case recovered
 }
 
 extension VideoSourceKind {

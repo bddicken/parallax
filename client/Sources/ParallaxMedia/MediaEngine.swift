@@ -26,6 +26,11 @@ public final class MediaEngine {
     /// Why monitoring isn't playing, if it should be (e.g. device unplugged).
     public private(set) var monitorError: String?
     public var onMonitorStateChanged: (() -> Void)?
+    /// A source re-found its device under a new identity (display renumbered
+    /// after a restart, camera replugged into another port, window reopened).
+    /// Save it so next launch goes straight to the right device.
+    public var onVideoSourceResolved: ((UUID, VideoSourceKind) -> Void)?
+    public var onAudioSourceResolved: ((UUID, AudioSourceKind) -> Void)?
 
     private var feedImage = ChatOverlayRenderer.feed([])
     private var featuredImage: CIImage?
@@ -186,18 +191,33 @@ public final class MediaEngine {
 
     // MARK: Nodes
 
+    // Record the new identity as what's running before the app saves it, so
+    // the resulting profile change doesn't restart a capture that's working.
+    private func videoSourceResolved(_ id: UUID, _ kind: VideoSourceKind) {
+        guard videoSources[id] != nil else { return }
+        videoSources[id]?.kind = kind
+        onVideoSourceResolved?(id, kind)
+    }
+
+    private func audioSourceResolved(_ id: UUID, _ kind: AudioSourceKind) {
+        guard let entry = audioNodes[id] else { return }
+        audioNodes[id] = (kind, entry.node)
+        onAudioSourceResolved?(id, kind)
+    }
+
     private func makeVideoNode(_ source: VideoSource) -> VideoSourceNode {
         let id = source.id
         let onError: SourceErrorHandler = { [weak self] issue in
             Task { @MainActor in self?.onSourceIssue?(id, issue) }
         }
-        switch source.kind {
-        case .camera(let uniqueID):
-            return CameraNode(uniqueID: uniqueID, onError: onError)
-        case .display(let displayID):
-            return ScreenNode(target: .display(displayID), fps: captureFPS, onError: onError)
-        case .window(let windowID):
-            return ScreenNode(target: .window(windowID), fps: captureFPS, onError: onError)
+        let onResolved: @Sendable (VideoSourceKind) -> Void = { [weak self] kind in
+            Task { @MainActor in self?.videoSourceResolved(id, kind) }
+        }
+        switch source.kind.withNameHint(source.name) {
+        case .camera(let uniqueID, let name, let modelID):
+            return CameraNode(uniqueID: uniqueID, name: name, modelID: modelID, onError: onError, onResolved: onResolved)
+        case .display, .window:
+            return ScreenNode(kind: source.kind.withNameHint(source.name), fps: captureFPS, onError: onError, onResolved: onResolved)
         case .image(let path):
             let image = CIImage(contentsOf: URL(filePath: path))
             if image == nil { onError(.failed("Could not open image at \(path).")) }
@@ -218,8 +238,13 @@ public final class MediaEngine {
         let onError: SourceErrorHandler = { [weak self] issue in
             Task { @MainActor in self?.onSourceIssue?(id, issue) }
         }
-        switch source.kind {
-        case .device(let uniqueID): return DeviceAudioNode(uniqueID: uniqueID, onBuffer: onBuffer, onError: onError)
+        let onResolved: @Sendable (AudioSourceKind) -> Void = { [weak self] kind in
+            Task { @MainActor in self?.audioSourceResolved(id, kind) }
+        }
+        switch source.kind.withNameHint(source.name) {
+        case .device(let uniqueID, let name, let modelID):
+            return DeviceAudioNode(uniqueID: uniqueID, name: name, modelID: modelID, onBuffer: onBuffer,
+                                   onError: onError, onResolved: onResolved)
         case .systemAudio: return SystemAudioNode(onBuffer: onBuffer, onError: onError)
         }
     }

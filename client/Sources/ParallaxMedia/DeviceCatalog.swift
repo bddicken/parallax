@@ -1,22 +1,33 @@
 import AppKit
 import AVFoundation
 import Observation
+import ParallaxCore
 import ScreenCaptureKit
 
 public struct CaptureDeviceInfo: Identifiable, Hashable, Sendable {
     public let id: String
     public let name: String
+    public let modelID: String
+
+    public var cameraKind: VideoSourceKind { .camera(uniqueID: id, name: name, modelID: modelID) }
+    public var microphoneKind: AudioSourceKind { .device(uniqueID: id, name: name, modelID: modelID) }
 }
 
 public struct DisplayInfo: Identifiable, Hashable, Sendable {
     public let id: UInt32
     public let name: String
+    public let uuid: String?
+
+    public var kind: VideoSourceKind { .display(displayID: id, uuid: uuid, name: name) }
 }
 
 public struct WindowInfo: Identifiable, Hashable, Sendable {
     public let id: UInt32
     public let title: String
     public let appName: String
+    public let bundleID: String?
+
+    public var kind: VideoSourceKind { .window(windowID: id, bundleID: bundleID, title: title) }
 }
 
 /// What can be captured right now. Cameras and mics update on hot-plug;
@@ -63,10 +74,10 @@ public final class DeviceCatalog {
         cameras = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.builtInWideAngleCamera, .external, .continuityCamera, .deskViewCamera],
             mediaType: .video, position: .unspecified
-        ).devices.map { CaptureDeviceInfo(id: $0.uniqueID, name: $0.localizedName) }
+        ).devices.map { CaptureDeviceInfo(id: $0.uniqueID, name: $0.localizedName, modelID: $0.modelID) }
         microphones = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified
-        ).devices.map { CaptureDeviceInfo(id: $0.uniqueID, name: $0.localizedName) }
+        ).devices.map { CaptureDeviceInfo(id: $0.uniqueID, name: $0.localizedName, modelID: $0.modelID) }
     }
 
     private func refreshOutputs() {
@@ -79,7 +90,7 @@ public final class DeviceCatalog {
     public func refreshDisplays() {
         displays = NSScreen.screens.compactMap { screen in
             guard let n = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
-            return DisplayInfo(id: n.uint32Value, name: screen.localizedName)
+            return DisplayInfo(id: n.uint32Value, name: screen.localizedName, uuid: displayUUID(n.uint32Value))
         }
     }
 
@@ -96,11 +107,16 @@ public final class DeviceCatalog {
                 guard let n = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
                 return (n.uint32Value, screen.localizedName)
             }, uniquingKeysWith: { a, _ in a })
-            displays = content.displays.map { DisplayInfo(id: $0.displayID, name: names[$0.displayID] ?? "Display \($0.displayID)") }
+            displays = content.displays.map {
+                DisplayInfo(id: $0.displayID, name: names[$0.displayID] ?? "Display \($0.displayID)", uuid: displayUUID($0.displayID))
+            }
             let ownPID = ProcessInfo.processInfo.processIdentifier
             windows = content.windows
                 .filter { $0.windowLayer == 0 && $0.frame.width > 64 && $0.owningApplication?.processID != ownPID }
-                .map { WindowInfo(id: $0.windowID, title: $0.title ?? "", appName: $0.owningApplication?.applicationName ?? "") }
+                .map {
+                    WindowInfo(id: $0.windowID, title: $0.title ?? "", appName: $0.owningApplication?.applicationName ?? "",
+                               bundleID: $0.owningApplication?.bundleIdentifier)
+                }
                 .sorted { ($0.appName, $0.title) < ($1.appName, $1.title) }
             screenCaptureError = nil
             needsScreenRecordingPermission = false

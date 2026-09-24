@@ -60,7 +60,7 @@ struct AddSourceSheet: View {
 
     private var cameraList: some View {
         pickList(model.devices.cameras.map { ($0.id, $0.name) }, empty: "No cameras found.") { id, name in
-            add(.camera(uniqueID: id), name)
+            if let camera = model.devices.cameras.first(where: { $0.id == id }) { add(camera.cameraKind, name) }
         }
     }
 
@@ -72,7 +72,7 @@ struct AddSourceSheet: View {
             Text(error).foregroundStyle(.secondary)
         } else {
             pickList(model.devices.displays.map { ($0.id, $0.name) }, empty: "Loading displays…") { id, name in
-                add(.display(displayID: id), name)
+                if let display = model.devices.displays.first(where: { $0.id == id }) { add(display.kind, name) }
             }
         }
     }
@@ -86,7 +86,7 @@ struct AddSourceSheet: View {
         } else {
             pickList(model.devices.windows.map { ($0.id, $0.title.isEmpty ? $0.appName : "\($0.appName) — \($0.title)") },
                      empty: "Loading windows…") { id, name in
-                add(.window(windowID: id), name)
+                if let window = model.devices.windows.first(where: { $0.id == id }) { add(window.kind, name) }
             }
         }
     }

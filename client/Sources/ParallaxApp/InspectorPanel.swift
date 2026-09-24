@@ -262,17 +262,17 @@ private struct SourceSwapMenu: View {
             switch source.kind {
             case .camera:
                 ForEach(model.devices.cameras) { camera in
-                    option(camera.name, .camera(uniqueID: camera.id))
+                    option(camera.name, camera.cameraKind)
                 }
             case .display, .window:
                 Section("Displays") {
                     ForEach(model.devices.displays) { display in
-                        option(display.name, .display(displayID: display.id))
+                        option(display.name, display.kind)
                     }
                 }
                 Section("Windows") {
                     ForEach(model.devices.windows.prefix(30)) { window in
-                        option(window.title.isEmpty ? window.appName : "\(window.appName) — \(window.title)", .window(windowID: window.id))
+                        option(window.title.isEmpty ? window.appName : "\(window.appName) — \(window.title)", window.kind)
                     }
                 }
             default:
@@ -293,7 +293,7 @@ private struct SourceSwapMenu: View {
         Button {
             model.replaceSource(of: item.id, with: kind, name: name)
         } label: {
-            if kind == source.kind { Label(name, systemImage: "checkmark") } else { Text(name) }
+            if kind.deviceKey == source.kind.deviceKey { Label(name, systemImage: "checkmark") } else { Text(name) }
         }
     }
 }

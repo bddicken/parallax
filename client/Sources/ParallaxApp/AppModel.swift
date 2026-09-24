@@ -74,9 +74,25 @@ final class AppModel {
             case .failed(let message):
                 sourceErrors[id] = message
                 banner = message
+            case .waiting(let message):
+                // Not an error: the source reconnects by itself. Show it on
+                // the source's row only.
+                sourceErrors[id] = message
+            case .recovered:
+                sourceErrors[id] = nil
             }
         }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
+        // Save identities that sources re-found (renumbered display, replugged
+        // camera) so the next launch goes straight to the right device.
+        engine.onVideoSourceResolved = { [weak self] id, kind in
+            guard let self, let i = profile.videoSources.firstIndex(where: { $0.id == id }) else { return }
+            profile.videoSources[i].kind = kind
+        }
+        engine.onAudioSourceResolved = { [weak self] id, kind in
+            guard let self, let i = profile.audioSources.firstIndex(where: { $0.id == id }) else { return }
+            profile.audioSources[i].kind = kind
+        }
         engine.onMonitorStateChanged = { [weak self] in self?.monitorError = self?.engine.monitorError }
         // Follow device changes: a plugged-in headset, a new system default.
         devices.onOutputsChanged = { [weak self] in
@@ -100,10 +116,11 @@ final class AppModel {
 
     private func addDefaultDevices() {
         if let mic = AVCaptureDevice.default(for: .audio) {
-            addAudioSource(kind: .device(uniqueID: mic.uniqueID), name: mic.localizedName)
+            addAudioSource(kind: .device(uniqueID: mic.uniqueID, name: mic.localizedName, modelID: mic.modelID), name: mic.localizedName)
         }
         if let camera = AVCaptureDevice.default(for: .video) {
-            addVideoSource(kind: .camera(uniqueID: camera.uniqueID), name: camera.localizedName)
+            addVideoSource(kind: .camera(uniqueID: camera.uniqueID, name: camera.localizedName, modelID: camera.modelID),
+                           name: camera.localizedName)
         }
         selectedItemID = nil
     }
@@ -195,7 +212,8 @@ final class AppModel {
             return existing.id
         }
         guard let device = AVCaptureDevice.default(for: .video) else { return nil }
-        let source = VideoSource(name: device.localizedName, kind: .camera(uniqueID: device.uniqueID))
+        let source = VideoSource(name: device.localizedName,
+                                 kind: .camera(uniqueID: device.uniqueID, name: device.localizedName, modelID: device.modelID))
         profile.videoSources.append(source)
         return source.id
     }
@@ -205,7 +223,9 @@ final class AppModel {
         if let existing = profile.videoSources.first(where: { if case .display = $0.kind { true } else { false } }) {
             return existing.id
         }
-        let source = VideoSource(name: NSScreen.main?.localizedName ?? "Display", kind: .display(displayID: CGMainDisplayID()))
+        let main = devices.displays.first { $0.id == CGMainDisplayID() }
+        let source = VideoSource(name: main?.name ?? NSScreen.main?.localizedName ?? "Display",
+                                 kind: main?.kind ?? .display(displayID: CGMainDisplayID()))
         profile.videoSources.append(source)
         return source.id
     }
@@ -255,7 +275,12 @@ final class AppModel {
 
     private func addVideoSourceWithoutUndo(kind: VideoSourceKind, name: String) {
         let source: VideoSource
-        if let existing = profile.videoSources.first(where: { $0.kind == kind && !kind.allowsDuplicates }) {
+        // Same physical device (or same overlay kind) reuses the existing source.
+        let reusable = { (existing: VideoSource) -> Bool in
+            if let key = kind.deviceKey { return existing.kind.deviceKey == key }
+            return existing.kind == kind && !kind.allowsDuplicates
+        }
+        if let existing = profile.videoSources.first(where: reusable) {
             source = existing
         } else {
             source = VideoSource(name: name, kind: kind)
@@ -338,7 +363,7 @@ final class AppModel {
     func replaceSource(of itemID: UUID, with kind: VideoSourceKind, name: String) {
         edit("Change Source") {
             let sourceID: UUID
-            if let existing = profile.videoSources.first(where: { $0.kind == kind }) {
+            if let existing = profile.videoSources.first(where: { $0.kind.deviceKey != nil && $0.kind.deviceKey == kind.deviceKey }) {
                 sourceID = existing.id
             } else {
                 let source = VideoSource(name: name, kind: kind)
@@ -395,7 +420,7 @@ final class AppModel {
     // MARK: Audio
 
     func addAudioSource(kind: AudioSourceKind, name: String) {
-        guard !profile.audioSources.contains(where: { $0.kind == kind }) else { return }
+        guard !profile.audioSources.contains(where: { $0.kind.deviceKey == kind.deviceKey }) else { return }
         profile.audioSources.append(AudioSource(name: name, kind: kind, channelMode: kind == .systemAudio ? .stereo : .mono))
     }
 

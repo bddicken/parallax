@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import ParallaxCore
 import ScreenCaptureKit
 
 typealias AudioBufferHandler = @Sendable (AVAudioPCMBuffer) -> Void
@@ -70,53 +71,42 @@ private final class PendingInput: @unchecked Sendable {
 // MARK: - Microphones / interfaces
 
 final class DeviceAudioNode: NSObject, AudioInputNode, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
-    private let uniqueID: String
-    private let session = AVCaptureSession()
     private let queue = DispatchQueue(label: "parallax.audio-device", qos: .userInteractive)
     private let normalizer = PCMNormalizer()
     private let onBuffer: AudioBufferHandler
     private let onError: SourceErrorHandler
-    private var configured = false
+    private var link: ReconnectingCaptureSession!
 
-    init(uniqueID: String, onBuffer: @escaping AudioBufferHandler, onError: @escaping SourceErrorHandler) {
-        self.uniqueID = uniqueID
+    init(uniqueID: String, name: String?, modelID: String?, onBuffer: @escaping AudioBufferHandler,
+         onError: @escaping SourceErrorHandler, onResolved: @escaping @Sendable (AudioSourceKind) -> Void) {
         self.onBuffer = onBuffer
         self.onError = onError
+        super.init()
+        link = ReconnectingCaptureSession(
+            mediaType: .audio, target: .init(uniqueID: uniqueID, name: name, modelID: modelID), queue: queue,
+            configure: { [unowned self] session, device in
+                let input = try AVCaptureDeviceInput(device: device)
+                guard session.canAddInput(input) else { throw MediaError("Audio device is unavailable.") }
+                session.addInput(input)
+                let output = AVCaptureAudioDataOutput()
+                output.setSampleBufferDelegate(self, queue: queue)
+                guard session.canAddOutput(output) else { throw MediaError("Could not read from audio device.") }
+                session.addOutput(output)
+            },
+            onIssue: onError,
+            onResolved: { onResolved(.device(uniqueID: $0.uniqueID, name: $0.name, modelID: $0.modelID)) })
     }
 
     func start() {
         let askedJustNow = AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
         AVCaptureDevice.requestAccess(for: .audio) { [self] granted in
             guard granted else { return onError(.permissionDenied(.microphone, askedJustNow: askedJustNow)) }
-            queue.async { [self] in
-                if !configured { configure() }
-                if configured, !session.isRunning { session.startRunning() }
-            }
+            link.start()
         }
     }
 
     func stop() {
-        queue.async { [self] in
-            if session.isRunning { session.stopRunning() }
-        }
-    }
-
-    private func configure() {
-        guard let device = AVCaptureDevice(uniqueID: uniqueID) else { return onError(.failed("Audio device is disconnected.")) }
-        do {
-            session.beginConfiguration()
-            defer { session.commitConfiguration() }
-            let input = try AVCaptureDeviceInput(device: device)
-            guard session.canAddInput(input) else { return onError(.failed("Audio device is unavailable.")) }
-            session.addInput(input)
-            let output = AVCaptureAudioDataOutput()
-            output.setSampleBufferDelegate(self, queue: queue)
-            guard session.canAddOutput(output) else { return onError(.failed("Could not read from audio device.")) }
-            session.addOutput(output)
-            configured = true
-        } catch {
-            onError(.failed("Audio device failed: \(error.localizedDescription)"))
-        }
+        link.stop()
     }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {

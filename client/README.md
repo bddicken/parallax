@@ -22,6 +22,8 @@ What works now:
 - **Output**: 720p/1080p/1440p at 30/60 fps.
 - **Chat and Go Live** run against `MockBroadcastService` until `parallax-server` exists. Set a server URL in Settings to use the real HTTP client.
 
+Sources survive restarts and replugging. Displays are remembered by hardware UUID, cameras and mics by device ID with name and model as a fallback, and windows by app and title. A missing device shows a ⚠︎ "waiting…" on its source and reconnects by itself when it's back.
+
 Settings are saved to `~/Library/Application Support/Parallax/profile.json`. Set `PARALLAX_PROFILE=/some/path.json` to try things without touching it.
 
 ## Permissions and signing
