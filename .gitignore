@@ -1,1 +1,6 @@
 .DS_Store
+
+# Local secrets (e.g. server/.env)
+.env
+.env.*
+!.env.example
