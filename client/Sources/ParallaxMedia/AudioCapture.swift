@@ -76,6 +76,8 @@ final class DeviceAudioNode: NSObject, AudioInputNode, AVCaptureAudioDataOutputS
     private let onBuffer: AudioBufferHandler
     private let onError: SourceErrorHandler
     private var link: ReconnectingCaptureSession!
+    private let lock = NSLock()
+    private var wantsRunning = false
 
     init(uniqueID: String, name: String?, modelID: String?, onBuffer: @escaping AudioBufferHandler,
          onError: @escaping SourceErrorHandler, onResolved: @escaping @Sendable (AudioSourceKind) -> Void) {
@@ -84,7 +86,10 @@ final class DeviceAudioNode: NSObject, AudioInputNode, AVCaptureAudioDataOutputS
         super.init()
         link = ReconnectingCaptureSession(
             mediaType: .audio, target: .init(uniqueID: uniqueID, name: name, modelID: modelID), queue: queue,
-            configure: { [unowned self] session, device in
+            // Weak: a start queued by a node that has since been replaced
+            // (e.g. canvas switched to 4K) must not touch the old node.
+            configure: { [weak self] session, device in
+                guard let self else { throw ReconnectingCaptureSession.OwnerGone() }
                 let input = try AVCaptureDeviceInput(device: device)
                 guard session.canAddInput(input) else { throw MediaError("Audio device is unavailable.") }
                 session.addInput(input)
@@ -98,14 +103,17 @@ final class DeviceAudioNode: NSObject, AudioInputNode, AVCaptureAudioDataOutputS
     }
 
     func start() {
+        lock.withLock { wantsRunning = true }
         let askedJustNow = AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
-        AVCaptureDevice.requestAccess(for: .audio) { [self] granted in
+        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+            guard let self else { return }
             guard granted else { return onError(.permissionDenied(.microphone, askedJustNow: askedJustNow)) }
-            link.start()
+            if lock.withLock({ wantsRunning }) { link.start() }
         }
     }
 
     func stop() {
+        lock.withLock { wantsRunning = false }
         link.stop()
     }
 

@@ -36,8 +36,14 @@ final class AudioMonitor: MediaSink, @unchecked Sendable {
             guard status == noErr else { throw MediaError("Couldn't use that output device (\(status)).") }
         }
 
-        let node = AVAudioSourceNode(format: format) { [unowned self] _, _, frameCount, bufferList in
-            self.render(frames: Int(frameCount), into: UnsafeMutableAudioBufferListPointer(bufferList))
+        let node = AVAudioSourceNode(format: format) { [weak self] _, _, frameCount, bufferList in
+            let list = UnsafeMutableAudioBufferListPointer(bufferList)
+            if let self {
+                self.render(frames: Int(frameCount), into: list)
+            } else {
+                // Monitor is being torn down; output silence.
+                for buffer in list { if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) } }
+            }
             return noErr
         }
         sourceNode = node
