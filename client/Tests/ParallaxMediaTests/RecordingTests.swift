@@ -16,7 +16,9 @@ import Testing
         profile.output = OutputSettings(width: 1280, height: 720, fps: 30)
         let color = VideoSource(name: "Red", kind: .color(RGBAColor(red: 1, green: 0, blue: 0)))
         profile.videoSources = [color]
-        profile.scenes[0].items = [SceneItem(sourceID: color.id, frame: LayoutPreset.pipTopLeft.rect, contentMode: .stretch)]
+        let green = RGBAColor(red: 0, green: 1, blue: 0)
+        profile.scenes[0].items = [SceneItem(sourceID: color.id, frame: LayoutPreset.pipTopLeft.rect, contentMode: .stretch,
+                                             cornerRadius: 0.5, border: ItemBorder(isEnabled: true, width: 12, color: green))]
         profile.recording = RecordingSettings(directoryPath: dir.path)
 
         let engine = MediaEngine()
@@ -36,7 +38,8 @@ import Testing
         #expect(try await video.load(.naturalSize) == CGSize(width: 1280, height: 720))
         #expect(try await asset.loadTracks(withMediaType: .audio).count == 1)
 
-        // The PiP box should be red and the rest of the canvas black.
+        // The PiP should be red with a green border and fully rounded
+        // corners; the rest of the canvas black.
         let generator = AVAssetImageGenerator(asset: asset)
         generator.requestedTimeToleranceBefore = .positiveInfinity
         generator.requestedTimeToleranceAfter = .positiveInfinity
@@ -45,6 +48,10 @@ import Testing
         let outside = try pixel(frame, x: 0.7, y: 0.7)
         #expect(inside.r > 200 && inside.g < 60 && inside.b < 60)
         #expect(outside.r < 30 && outside.g < 30 && outside.b < 30)
+        let topEdge = try pixel(frame, x: 0.15, y: 0.025 + 1.0 / 720)
+        #expect(topEdge.g > 200 && topEdge.r < 60)
+        let cornerOutsideRounding = try pixel(frame, x: 0.028, y: 0.03)
+        #expect(cornerOutsideRounding.r < 30 && cornerOutsideRounding.g < 30)
     }
 
     private func pixel(_ image: CGImage, x: Double, y: Double) throws -> (r: Int, g: Int, b: Int) {

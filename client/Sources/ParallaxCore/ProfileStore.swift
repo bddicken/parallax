@@ -8,8 +8,13 @@ public struct ProfileStore: Sendable {
         self.url = url
     }
 
+    /// `PARALLAX_PROFILE` overrides the location, e.g. to try things without
+    /// touching your real setup.
     public static var defaultURL: URL {
-        URL.applicationSupportDirectory.appending(path: "Parallax/profile.json")
+        if let path = ProcessInfo.processInfo.environment["PARALLAX_PROFILE"], !path.isEmpty {
+            return URL(filePath: path)
+        }
+        return URL.applicationSupportDirectory.appending(path: "Parallax/profile.json")
     }
 
     /// Returns the saved profile, or a default one if none exists. An

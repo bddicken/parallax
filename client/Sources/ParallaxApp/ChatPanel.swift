@@ -76,10 +76,7 @@ private struct ChatRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: message.platform.symbol)
-                .font(.caption)
-                .foregroundStyle(message.platform.accent.color)
-                .frame(width: 16)
+            PlatformBadge(platform: message.platform)
                 .help(message.platform.displayName)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
@@ -101,5 +98,22 @@ private struct ChatRow: View {
         .padding(.vertical, 3)
         .listRowBackground(isFeatured ? Color.yellow.opacity(0.12) : Color.clear)
         .onHover { hovering = $0 }
+    }
+}
+
+/// SF Symbols has no X logo, so X gets a text glyph.
+struct PlatformBadge: View {
+    let platform: Platform
+
+    var body: some View {
+        Group {
+            if platform == .x {
+                Text("𝕏").font(.caption.bold())
+            } else {
+                Image(systemName: platform.symbol).font(.caption)
+            }
+        }
+        .foregroundStyle(platform.accent.color)
+        .frame(width: 16)
     }
 }

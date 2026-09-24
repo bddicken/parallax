@@ -105,7 +105,10 @@ struct GoLiveSheet: View {
                             get: { selected.contains(dest.id) },
                             set: { if $0 { selected.insert(dest.id) } else { selected.remove(dest.id) } }
                         )) {
-                            Label(dest.name, systemImage: dest.platform.symbol)
+                            HStack(spacing: 6) {
+                                PlatformBadge(platform: dest.platform)
+                                Text(dest.name)
+                            }
                         }
                         .disabled(broadcast.status.live)
                         Spacer()

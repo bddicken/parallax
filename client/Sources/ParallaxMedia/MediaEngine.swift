@@ -155,7 +155,7 @@ public final class MediaEngine {
 }
 
 extension VideoSourceKind {
-    var isScreen: Bool {
+    public var isScreen: Bool {
         switch self {
         case .display, .window: true
         default: false

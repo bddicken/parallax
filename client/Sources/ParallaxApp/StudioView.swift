@@ -2,6 +2,7 @@ import SwiftUI
 
 struct StudioView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         HSplitView {
@@ -12,21 +13,28 @@ struct StudioView: View {
             }
             .frame(minWidth: 220, idealWidth: 250, maxWidth: 340)
 
-            VStack(spacing: 0) {
-                PreviewPanel()
-                    .layoutPriority(1)
-                Divider()
-                HStack(alignment: .top, spacing: 0) {
-                    InspectorPanel()
-                        .frame(width: 320)
+            GeometryReader { geo in
+                // The preview gets just enough height for the canvas at this
+                // width; the inspector and mixer take the rest.
+                let aspect = Double(model.profile.output.height) / Double(model.profile.output.width)
+                let bottomMin: CGFloat = 250, controls: CGFloat = 52
+                let preview = min(max(260, geo.size.height - bottomMin - controls), geo.size.width * aspect + 32)
+                VStack(spacing: 0) {
+                    PreviewPanel()
+                        .frame(height: preview)
                     Divider()
-                    MixerPanel()
+                    HStack(alignment: .top, spacing: 0) {
+                        InspectorPanel()
+                            .frame(width: 340)
+                        Divider()
+                        MixerPanel()
+                    }
+                    .frame(maxHeight: .infinity)
+                    Divider()
+                    ControlBar()
                 }
-                .frame(height: 270)
-                Divider()
-                ControlBar()
             }
-            .frame(minWidth: 660)
+            .frame(minWidth: 680)
 
             ChatPanel()
                 .frame(minWidth: 260, idealWidth: 300, maxWidth: 440)
@@ -39,6 +47,8 @@ struct StudioView: View {
             }
         }
         .animation(.snappy, value: model.banner)
+        .onAppear { model.undoManager = undoManager }
+        .onChange(of: undoManager) { _, manager in model.undoManager = manager }
     }
 }
 

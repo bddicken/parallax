@@ -131,14 +131,43 @@ final class Compositor: @unchecked Sendable {
             let transform = CGAffineTransform(translationX: -src.minX, y: -src.minY)
                 .concatenating(CGAffineTransform(scaleX: dst.width / src.width, y: dst.height / src.height))
                 .concatenating(CGAffineTransform(translationX: dst.minX, y: dst.minY))
-            let placed = source
+            var placed = source
                 .cropped(to: src)
                 .clampedToExtent()
                 .transformed(by: transform, highQualityDownsample: true)
                 .cropped(to: dst)
+            placed = styled(placed, in: dst, item: item, canvasHeight: canvas.height)
             result = placed.composited(over: result)
         }
         return result
+    }
+
+    private func styled(_ image: CIImage, in rect: CGRect, item: SceneItem, canvasHeight: CGFloat) -> CIImage {
+        let radius = Float(min(rect.width, rect.height) * min(0.5, max(0, item.cornerRadius)))
+        var out = image
+        if radius > 0 {
+            let mask = CIFilter.roundedRectangleGenerator()
+            mask.extent = rect
+            mask.radius = radius
+            mask.color = .white
+            let blend = CIFilter.blendWithMask()
+            blend.inputImage = image
+            blend.backgroundImage = CIImage.empty()
+            blend.maskImage = mask.outputImage
+            out = blend.outputImage ?? image
+        }
+        if item.border.isEnabled, item.border.width > 0 {
+            let width = Float(item.border.width * canvasHeight / 1080)
+            // The generator strokes inward from the extent, so it hugs the image edge.
+            let stroke = CIFilter.roundedRectangleStrokeGenerator()
+            stroke.extent = rect
+            stroke.radius = radius
+            stroke.width = width
+            let c = item.border.color
+            stroke.color = CIColor(red: c.red, green: c.green, blue: c.blue, alpha: c.alpha)
+            if let border = stroke.outputImage { out = border.composited(over: out) }
+        }
+        return out
     }
 
     private func makeBuffer(width: Int, height: Int) -> CVPixelBuffer? {

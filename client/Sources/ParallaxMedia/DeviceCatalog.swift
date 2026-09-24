@@ -34,6 +34,12 @@ public final class DeviceCatalog {
 
     public init() {
         refreshDevices()
+        refreshDisplays()
+        observers.append(NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshDisplays() }
+        })
         for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
             observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.refreshDevices() }
@@ -49,6 +55,14 @@ public final class DeviceCatalog {
         microphones = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.microphone, .external], mediaType: .audio, position: .unspecified
         ).devices.map { CaptureDeviceInfo(id: $0.uniqueID, name: $0.localizedName) }
+    }
+
+    /// Displays from AppKit, which needs no Screen Recording permission.
+    public func refreshDisplays() {
+        displays = NSScreen.screens.compactMap { screen in
+            guard let n = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+            return DisplayInfo(id: n.uint32Value, name: screen.localizedName)
+        }
     }
 
     public func refreshShareableContent() async {

@@ -11,7 +11,11 @@ struct SourcesPanel: View {
             PanelHeader(title: "Sources") {
                 Button { showingAdd = true } label: { Image(systemName: "plus") }
                     .buttonStyle(.borderless)
-                    .help("Add source to this scene")
+                    .help("Add a source to this scene")
+                Button { if let id = model.selectedItemID { model.removeItem(id) } } label: { Image(systemName: "minus") }
+                    .buttonStyle(.borderless)
+                    .disabled(model.selectedItemID == nil)
+                    .help("Remove the selected source from this scene")
             }
             let items = Array((model.programScene?.items ?? []).reversed())
             if items.isEmpty {
@@ -24,11 +28,12 @@ struct SourcesPanel: View {
                 }
                 .frame(maxHeight: .infinity)
             } else {
-                // Listed top-of-stack first, like layers in a design tool.
+                // Listed top-of-stack first, like layers in a design tool. Drag to reorder.
                 List(selection: $model.selectedItemID) {
                     ForEach(items) { item in
                         SourceRow(item: item).tag(item.id)
                     }
+                    .onMove { model.moveItemsInList(from: $0, to: $1) }
                 }
                 .listStyle(.sidebar)
                 .onDeleteCommand {
@@ -62,7 +67,7 @@ private struct SourceRow: View {
             }
             Spacer()
             Button {
-                model.updateItem(item.id) { $0.isVisible.toggle() }
+                model.updateItem(item.id, undo: "Toggle Visibility") { $0.isVisible.toggle() }
             } label: {
                 Image(systemName: item.isVisible ? "eye" : "eye.slash")
             }

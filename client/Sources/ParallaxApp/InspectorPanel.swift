@@ -27,13 +27,14 @@ private struct ItemInspector: View {
     let item: SceneItem
     let source: VideoSource
 
-    private let presetColumns = [GridItem(.adaptive(minimum: 88), spacing: 6)]
-
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            TextField("Name", text: sourceBinding(\.name))
-                .textFieldStyle(.roundedBorder)
-                .font(.body.weight(.medium))
+            HStack {
+                TextField("Name", text: sourceBinding(\.name))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.body.weight(.medium))
+                SourceSwapMenu(item: item, source: source)
+            }
 
             if let error = model.sourceErrors[source.id] {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
@@ -42,12 +43,25 @@ private struct ItemInspector: View {
             }
 
             section("Layout") {
-                LazyVGrid(columns: presetColumns, alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
                     ForEach(LayoutPreset.allCases) { preset in
-                        Button(preset.title) { model.updateItem(item.id) { $0.frame = preset.rect } }
-                            .controlSize(.small)
+                        Button { model.updateItem(item.id, undo: "Apply Layout") { $0.frame = preset.rect } } label: {
+                            Image(systemName: preset.symbol)
+                                .frame(width: 22, height: 16)
+                        }
+                        .help(preset.title)
+                        .background(item.frame == preset.rect ? Color.accentColor.opacity(0.35) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 5))
                     }
                 }
+                HStack {
+                    Text("Size").foregroundStyle(.secondary).frame(width: 50, alignment: .leading)
+                    Slider(value: sizeBinding, in: 0.05...1)
+                    Text(item.frame.width, format: .percent.precision(.fractionLength(0)))
+                        .monospacedDigit().frame(width: 40, alignment: .trailing)
+                }
+                .controlSize(.small)
+                .help("Scales from the nearest corner, so a corner PiP stays put")
                 Picker("Fit", selection: itemBinding(\.contentMode)) {
                     ForEach(ContentMode.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
                 }
@@ -62,6 +76,24 @@ private struct ItemInspector: View {
                         percentField("H", itemBinding(\.frame.height))
                     }
                 }
+            }
+
+            section("Style") {
+                HStack {
+                    Text("Corners").foregroundStyle(.secondary).frame(width: 50, alignment: .leading)
+                    Slider(value: itemBinding(\.cornerRadius), in: 0...0.5)
+                    Text(item.cornerRadius == 0.5 ? "Round" : "\(Int(item.cornerRadius * 200))%")
+                        .monospacedDigit().frame(width: 44, alignment: .trailing)
+                }
+                .controlSize(.small)
+                HStack {
+                    Toggle("Border", isOn: itemBinding(\.border.isEnabled))
+                    if item.border.isEnabled {
+                        Stepper("\(Int(item.border.width)) px", value: itemBinding(\.border.width), in: 1...40)
+                        ColorPicker("", selection: borderColor).labelsHidden()
+                    }
+                }
+                .controlSize(.small)
             }
 
             section("Crop") {
@@ -133,11 +165,26 @@ private struct ItemInspector: View {
     }
 
     private func itemBinding<T>(_ path: WritableKeyPath<SceneItem, T>) -> Binding<T> {
-        Binding(get: { item[keyPath: path] }, set: { v in model.updateItem(item.id) { $0[keyPath: path] = v } })
+        Binding(get: { item[keyPath: path] }, set: { v in model.updateItem(item.id, undo: "Edit \(source.name)") { $0[keyPath: path] = v } })
     }
 
     private func sourceBinding<T>(_ path: WritableKeyPath<VideoSource, T>) -> Binding<T> {
         Binding(get: { source[keyPath: path] }, set: { v in model.updateVideoSource(source.id) { $0[keyPath: path] = v } })
+    }
+
+    private var sizeBinding: Binding<Double> {
+        Binding(get: { item.frame.width }, set: { w in
+            model.updateItem(item.id, undo: "Resize Source") { $0.frame = $0.frame.scaled(by: w / max(0.001, $0.frame.width)) }
+        })
+    }
+
+    private var borderColor: Binding<Color> {
+        Binding(get: { item.border.color.color }, set: { color in
+            let c = color.resolve(in: EnvironmentValues())
+            model.updateItem(item.id, undo: "Border Color") {
+                $0.border.color = RGBAColor(red: Double(c.red), green: Double(c.green), blue: Double(c.blue), alpha: Double(c.opacity))
+            }
+        })
     }
 
     private var delayBinding: Binding<Double> {
@@ -150,6 +197,67 @@ extension VideoSourceKind {
         switch self {
         case .camera, .display, .window: true
         default: false
+        }
+    }
+}
+
+extension LayoutPreset {
+    var symbol: String {
+        switch self {
+        case .fullscreen: "rectangle.fill"
+        case .leftHalf: "rectangle.lefthalf.filled"
+        case .rightHalf: "rectangle.righthalf.filled"
+        case .pipTopLeft: "rectangle.inset.topleft.filled"
+        case .pipTopRight: "rectangle.inset.topright.filled"
+        case .pipBottomLeft: "rectangle.inset.bottomleft.filled"
+        case .pipBottomRight: "rectangle.inset.bottomright.filled"
+        }
+    }
+}
+
+/// Swaps which camera, display, or window a layer shows.
+private struct SourceSwapMenu: View {
+    @Environment(AppModel.self) private var model
+    let item: SceneItem
+    let source: VideoSource
+
+    var body: some View {
+        Menu {
+            switch source.kind {
+            case .camera:
+                ForEach(model.devices.cameras) { camera in
+                    option(camera.name, .camera(uniqueID: camera.id))
+                }
+            case .display, .window:
+                Section("Displays") {
+                    ForEach(model.devices.displays) { display in
+                        option(display.name, .display(displayID: display.id))
+                    }
+                }
+                Section("Windows") {
+                    ForEach(model.devices.windows.prefix(30)) { window in
+                        option(window.title.isEmpty ? window.appName : "\(window.appName) — \(window.title)", .window(windowID: window.id))
+                    }
+                }
+            default:
+                Text("This source can't be swapped")
+            }
+        } label: {
+            Image(systemName: "arrow.triangle.swap")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Show a different camera or screen in this layer")
+        .task(id: source.id) {
+            if source.kind.isScreen { await model.devices.refreshShareableContent() }
+        }
+    }
+
+    private func option(_ name: String, _ kind: VideoSourceKind) -> some View {
+        Button {
+            model.replaceSource(of: item.id, with: kind, name: name)
+        } label: {
+            if kind == source.kind { Label(name, systemImage: "checkmark") } else { Text(name) }
         }
     }
 }

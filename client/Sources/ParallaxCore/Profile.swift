@@ -42,6 +42,19 @@ public struct VideoSource: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public struct ItemBorder: Codable, Hashable, Sendable {
+    public var isEnabled = false
+    /// Stroke width in pixels at 1080p; scaled with the canvas.
+    public var width: Double = 6
+    public var color = RGBAColor(red: 1, green: 1, blue: 1)
+
+    public init(isEnabled: Bool = false, width: Double = 6, color: RGBAColor = RGBAColor(red: 1, green: 1, blue: 1)) {
+        self.isEnabled = isEnabled
+        self.width = width
+        self.color = color
+    }
+}
+
 public struct SceneItem: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var sourceID: UUID
@@ -49,10 +62,14 @@ public struct SceneItem: Identifiable, Codable, Hashable, Sendable {
     public var crop: CropInsets
     public var contentMode: ContentMode
     public var isVisible: Bool
+    /// Fraction of the drawn image's shorter side; 0.5 makes a circle or pill.
+    public var cornerRadius: Double
+    public var border: ItemBorder
 
     public init(
         id: UUID = UUID(), sourceID: UUID, frame: NormalizedRect = .full,
-        crop: CropInsets = .none, contentMode: ContentMode = .fit, isVisible: Bool = true
+        crop: CropInsets = .none, contentMode: ContentMode = .fit, isVisible: Bool = true,
+        cornerRadius: Double = 0, border: ItemBorder = ItemBorder()
     ) {
         self.id = id
         self.sourceID = sourceID
@@ -60,6 +77,21 @@ public struct SceneItem: Identifiable, Codable, Hashable, Sendable {
         self.crop = crop
         self.contentMode = contentMode
         self.isVisible = isVisible
+        self.cornerRadius = cornerRadius
+        self.border = border
+    }
+
+    // Decodes profiles saved before newer fields existed.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        sourceID = try c.decode(UUID.self, forKey: .sourceID)
+        frame = try c.decode(NormalizedRect.self, forKey: .frame)
+        crop = try c.decodeIfPresent(CropInsets.self, forKey: .crop) ?? .none
+        contentMode = try c.decodeIfPresent(ContentMode.self, forKey: .contentMode) ?? .fit
+        isVisible = try c.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true
+        cornerRadius = try c.decodeIfPresent(Double.self, forKey: .cornerRadius) ?? 0
+        border = try c.decodeIfPresent(ItemBorder.self, forKey: .border) ?? ItemBorder()
     }
 }
 
