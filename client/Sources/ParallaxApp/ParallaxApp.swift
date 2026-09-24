@@ -39,8 +39,16 @@ struct ParallaxApp: App {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     weak var model: AppModel?
+    private var termSignal: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Treat SIGTERM (e.g. `kill`, scripts) like ⌘Q so recordings get finished.
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler { NSApp.terminate(nil) }
+        source.resume()
+        termSignal = source
+
         // Needed when launched as a bare executable (`swift run`).
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
@@ -50,6 +58,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Finish any recording before quitting so the file is playable.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // An attached sheet can make AppKit veto quitting; close them first.
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
         guard let model else { return .terminateNow }
         model.saveNow()
         guard model.isRecording else { return .terminateNow }

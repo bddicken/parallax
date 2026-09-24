@@ -47,8 +47,9 @@ final class CameraNode: NSObject, VideoSourceNode, AVCaptureVideoDataOutputSampl
     }
 
     func start() {
+        let askedJustNow = AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined
         AVCaptureDevice.requestAccess(for: .video) { [self] granted in
-            guard granted else { return onError(.permissionDenied(.camera)) }
+            guard granted else { return onError(.permissionDenied(.camera, askedJustNow: askedJustNow)) }
             queue.async { [self] in
                 if !configured { configure() }
                 if configured, !session.isRunning { session.startRunning() }
@@ -141,7 +142,7 @@ final class ScreenNode: NSObject, VideoSourceNode, SCStreamOutput, SCStreamDeleg
 
     private func startStream() async {
         // Check first: calling ScreenCaptureKit without access makes macOS prompt.
-        guard CGPreflightScreenCaptureAccess() else { return onError(.permissionDenied(.screenRecording)) }
+        guard CGPreflightScreenCaptureAccess() else { return onError(.permissionDenied(.screenRecording, askedJustNow: false)) }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             let filter: SCContentFilter
@@ -183,7 +184,7 @@ final class ScreenNode: NSObject, VideoSourceNode, SCStreamOutput, SCStreamDeleg
         } catch {
             onError(CGPreflightScreenCaptureAccess()
                 ? .failed("Screen capture failed: \(error.localizedDescription)")
-                : .permissionDenied(.screenRecording))
+                : .permissionDenied(.screenRecording, askedJustNow: false))
         }
     }
 

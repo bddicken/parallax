@@ -30,7 +30,14 @@ struct PermissionCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             HStack {
-                Button("Open System Settings") { permission.openSystemSettings() }
+                Button("Open System Settings") {
+                    // Make sure Parallax is listed in the pane; macOS only adds
+                    // it after the app has asked once.
+                    if permission == .screenRecording, !Permission.hasRequestedScreenRecording {
+                        Task { await permission.request() }
+                    }
+                    permission.openSystemSettings()
+                }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
                 if permission.mayNeedRelaunch {
@@ -39,8 +46,7 @@ struct PermissionCard: View {
             }
         }
         .task(id: permission) {
-            // Let macOS show its own prompt when it still will (first ask only).
-            if permission.status != .granted { await permission.request() }
+            // Only watch for the grant; never trigger macOS's prompt alongside this card.
             while !Task.isCancelled {
                 if permission.status == .granted {
                     model.permissionGranted(permission)
@@ -61,20 +67,17 @@ struct PermissionCard: View {
 }
 
 struct PermissionSheet: View {
-    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let permission: Permission
 
     var body: some View {
         VStack(spacing: 16) {
             PermissionCard(permission: permission) { dismiss() }
-            Button("Not Now") { model.snooze(permission) }
+            Button("Not Now") { dismiss() }
                 .buttonStyle(.link)
         }
         .padding(24)
         .frame(width: 420)
-        // Dismiss only via "Not Now", so the choice is remembered.
-        .interactiveDismissDisabled()
     }
 }
 

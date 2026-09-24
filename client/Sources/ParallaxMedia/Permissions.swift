@@ -20,6 +20,14 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Whether Parallax has ever asked macOS to show its screen recording
+    /// prompt. macOS only shows that prompt once, so after that we show our
+    /// own guidance instead of calling it again.
+    public static var hasRequestedScreenRecording: Bool {
+        get { UserDefaults.standard.bool(forKey: "requestedScreenRecording") }
+        set { UserDefaults.standard.set(newValue, forKey: "requestedScreenRecording") }
+    }
+
     /// Shows the system prompt if access isn't granted and macOS still allows
     /// one (only the first time for each permission). Returns whether access
     /// is granted now.
@@ -29,7 +37,9 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .camera: return await AVCaptureDevice.requestAccess(for: .video)
         case .microphone: return await AVCaptureDevice.requestAccess(for: .audio)
-        case .screenRecording: return CGRequestScreenCaptureAccess()
+        case .screenRecording:
+            Self.hasRequestedScreenRecording = true
+            return CGRequestScreenCaptureAccess()
         }
     }
 
@@ -80,7 +90,9 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum SourceIssue: Sendable {
-    case permissionDenied(Permission)
+    /// `askedJustNow` means macOS showed its own prompt for this and the user
+    /// declined it, so we shouldn't immediately ask again.
+    case permissionDenied(Permission, askedJustNow: Bool)
     case failed(String)
 }
 

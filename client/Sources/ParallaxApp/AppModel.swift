@@ -28,7 +28,9 @@ final class AppModel {
     var sourceErrors: [UUID: String] = [:]
     var banner: String?
     /// A permission the user needs to grant; drives the permission sheet.
-    var permissionPrompt: Permission?
+    var permissionPrompt: Permission? {
+        didSet { if let permissionPrompt { shownPermission = permissionPrompt } }
+    }
     @ObservationIgnored private var isRelaunching = false
     /// Permissions the user said "Not Now" to; not prompted again until they ask.
     @ObservationIgnored private var snoozedPermissions: Set<Permission> = []
@@ -50,14 +52,24 @@ final class AppModel {
         engine.onSourceIssue = { [weak self] id, issue in
             guard let self else { return }
             switch issue {
-            case .permissionDenied(let permission):
+            case .permissionDenied(let permission, let askedJustNow):
                 // A source can fail for a moment around a grant; don't nag if access is there now.
                 if permission.status == .granted {
                     permissionGranted(permission)
                     return
                 }
                 sourceErrors[id] = "\(permission.title) access is off. Click to fix."
-                if permissionPrompt == nil, !snoozedPermissions.contains(permission) { permissionPrompt = permission }
+                if askedJustNow {
+                    // The user just answered macOS's own prompt; don't pile on.
+                    snoozedPermissions.insert(permission)
+                } else if permission == .screenRecording, !Permission.hasRequestedScreenRecording {
+                    // First time: let macOS show its prompt (it has its own
+                    // Open System Settings button) instead of ours.
+                    snoozedPermissions.insert(permission)
+                    Task { await permission.request() }
+                } else if permissionPrompt == nil, !snoozedPermissions.contains(permission) {
+                    permissionPrompt = permission
+                }
             case .failed(let message):
                 sourceErrors[id] = message
                 banner = message
@@ -394,9 +406,13 @@ final class AppModel {
 
     /// Called once macOS reports the permission granted: restart the captures
     /// that failed without it.
-    func snooze(_ permission: Permission) {
-        snoozedPermissions.insert(permission)
-        if permissionPrompt == permission { permissionPrompt = nil }
+    @ObservationIgnored private var shownPermission: Permission?
+
+    /// However the sheet closed (Not Now, Esc, granted), don't reopen it on
+    /// its own this session unless access is still missing and the user asks.
+    func permissionSheetDismissed() {
+        if let shown = shownPermission, shown.status != .granted { snoozedPermissions.insert(shown) }
+        shownPermission = nil
     }
 
     /// Opens the permission sheet on request (e.g. from a source's warning icon).

@@ -85,8 +85,9 @@ final class DeviceAudioNode: NSObject, AudioInputNode, AVCaptureAudioDataOutputS
     }
 
     func start() {
+        let askedJustNow = AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
         AVCaptureDevice.requestAccess(for: .audio) { [self] granted in
-            guard granted else { return onError(.permissionDenied(.microphone)) }
+            guard granted else { return onError(.permissionDenied(.microphone, askedJustNow: askedJustNow)) }
             queue.async { [self] in
                 if !configured { configure() }
                 if configured, !session.isRunning { session.startRunning() }
@@ -155,7 +156,7 @@ final class SystemAudioNode: NSObject, AudioInputNode, SCStreamOutput, SCStreamD
     }
 
     private func startStream() async {
-        guard CGPreflightScreenCaptureAccess() else { return onError(.permissionDenied(.screenRecording)) }
+        guard CGPreflightScreenCaptureAccess() else { return onError(.permissionDenied(.screenRecording, askedJustNow: false)) }
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             guard let display = content.displays.first else { return onError(.failed("No display available for system audio.")) }
@@ -180,7 +181,7 @@ final class SystemAudioNode: NSObject, AudioInputNode, SCStreamOutput, SCStreamD
         } catch {
             onError(CGPreflightScreenCaptureAccess()
                 ? .failed("System audio failed: \(error.localizedDescription)")
-                : .permissionDenied(.screenRecording))
+                : .permissionDenied(.screenRecording, askedJustNow: false))
         }
     }
 

@@ -48,7 +48,7 @@ struct StudioView: View {
             }
         }
         .animation(.snappy, value: model.banner)
-        .sheet(item: $model.permissionPrompt) { permission in
+        .sheet(item: $model.permissionPrompt, onDismiss: model.permissionSheetDismissed) { permission in
             PermissionSheet(permission: permission).environment(model)
         }
         .onAppear { model.undoManager = undoManager }
