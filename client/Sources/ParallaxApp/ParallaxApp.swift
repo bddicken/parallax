@@ -9,9 +9,14 @@ enum Main {
         // before any capture starts, so checking never triggers a prompt.
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--permission-report"), i + 1 < args.count {
-            let report = Permission.allCases.map { "\($0.rawValue): \($0.status)" }.joined(separator: "\n")
-            try? (report + "\n").write(toFile: args[i + 1], atomically: true, encoding: .utf8)
-            exit(0)
+            let path = args[i + 1]
+            Task {
+                var lines = Permission.allCases.map { "\($0.rawValue): \($0.status)" }
+                lines.append("screenCaptureKit: \(await Permission.screenCaptureKitWorks() ? "works" : "fails")")
+                try? (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+                exit(0)
+            }
+            RunLoop.main.run()
         }
         ParallaxApp.main()
     }

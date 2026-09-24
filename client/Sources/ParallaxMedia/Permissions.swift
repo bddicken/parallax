@@ -1,6 +1,7 @@
 import AppKit
 import AVFoundation
 import CoreGraphics
+import ScreenCaptureKit
 import ParallaxCore
 
 /// The privacy permissions Parallax needs, with the System Settings pane for each.
@@ -18,6 +19,12 @@ public enum Permission: String, CaseIterable, Identifiable, Sendable {
         // macOS doesn't expose "not asked yet" for screen recording.
         case .screenRecording: CGPreflightScreenCaptureAccess() ? .granted : .denied
         }
+    }
+
+    /// Ground truth for screen recording: whether ScreenCaptureKit will list
+    /// shareable content. Doesn't prompt once macOS has asked before.
+    public static func screenCaptureKitWorks() async -> Bool {
+        (try? await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)) != nil
     }
 
     /// Whether Parallax has ever asked macOS to show its screen recording
