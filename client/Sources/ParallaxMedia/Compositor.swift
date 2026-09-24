@@ -37,10 +37,16 @@ final class Compositor: @unchecked Sendable {
     init(registry: SourceRegistry, sinks: SinkHub) {
         self.registry = registry
         self.sinks = sinks
+        // Blend in sRGB (gamma) space like design tools and OBS do, so a 50%
+        // shadow or a mid-fade looks 50% rather than washed out.
+        let options: [CIContextOption: Any] = [
+            .cacheIntermediates: false,
+            .workingColorSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+        ]
         if let device = MTLCreateSystemDefaultDevice() {
-            context = CIContext(mtlDevice: device, options: [.cacheIntermediates: false])
+            context = CIContext(mtlDevice: device, options: options)
         } else {
-            context = CIContext()
+            context = CIContext(options: options)
         }
     }
 
@@ -137,6 +143,9 @@ final class Compositor: @unchecked Sendable {
                 .transformed(by: transform, highQualityDownsample: true)
                 .cropped(to: dst)
             placed = styled(placed, in: dst, item: item, canvasHeight: canvas.height)
+            if let shadow = shadow(of: placed, item.shadow, canvasHeight: canvas.height) {
+                result = shadow.composited(over: result)
+            }
             result = placed.composited(over: result)
         }
         return result
@@ -168,6 +177,31 @@ final class Compositor: @unchecked Sendable {
             if let border = stroke.outputImage { out = border.composited(over: out) }
         }
         return out
+    }
+
+    /// A blurred, tinted copy of the item's alpha, so the shadow follows
+    /// rounded corners and transparent overlays rather than the box.
+    private func shadow(of image: CIImage, _ settings: ItemShadow, canvasHeight: CGFloat) -> CIImage? {
+        guard settings.isEnabled, settings.opacity > 0 else { return nil }
+        let c = settings.color
+        let tint = CIFilter.colorMatrix()
+        tint.inputImage = image
+        tint.rVector = CIVector(x: 0, y: 0, z: 0, w: 0)
+        tint.gVector = CIVector(x: 0, y: 0, z: 0, w: 0)
+        tint.bVector = CIVector(x: 0, y: 0, z: 0, w: 0)
+        tint.aVector = CIVector(x: 0, y: 0, z: 0, w: CGFloat(settings.opacity * c.alpha))
+        tint.biasVector = CIVector(x: c.red, y: c.green, z: c.blue, w: 0)
+        guard var shadow = tint.outputImage else { return nil }
+        let blur = settings.blur * canvasHeight / 1080
+        if blur > 0.5 {
+            let gaussian = CIFilter.gaussianBlur()
+            gaussian.inputImage = shadow
+            gaussian.radius = Float(blur)
+            shadow = gaussian.outputImage ?? shadow
+        }
+        // Offset is top-left origin; Core Image's y axis points up.
+        let offset = settings.offset(canvasHeight: canvasHeight)
+        return shadow.transformed(by: CGAffineTransform(translationX: offset.width, y: -offset.height))
     }
 
     private func makeBuffer(width: Int, height: Int) -> CVPixelBuffer? {

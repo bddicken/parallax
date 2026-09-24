@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public struct RGBAColor: Codable, Hashable, Sendable {
@@ -55,6 +56,34 @@ public struct ItemBorder: Codable, Hashable, Sendable {
     }
 }
 
+public struct ItemShadow: Codable, Hashable, Sendable {
+    public var isEnabled = false
+    /// How far the shadow is offset, in pixels at 1080p.
+    public var distance: Double = 12
+    /// Direction the shadow falls, in degrees clockwise from right (90 = straight down).
+    public var angle: Double = 90
+    /// Blur radius in pixels at 1080p.
+    public var blur: Double = 24
+    public var opacity: Double = 0.5
+    public var color = RGBAColor(red: 0, green: 0, blue: 0)
+
+    public init(isEnabled: Bool = false, distance: Double = 12, angle: Double = 90, blur: Double = 24,
+                opacity: Double = 0.5, color: RGBAColor = RGBAColor(red: 0, green: 0, blue: 0)) {
+        self.isEnabled = isEnabled
+        self.distance = distance
+        self.angle = angle
+        self.blur = blur
+        self.opacity = opacity
+        self.color = color
+    }
+
+    /// Offset in canvas pixels, top-left origin (+y is down).
+    public func offset(canvasHeight: Double) -> CGSize {
+        let scale = canvasHeight / 1080, radians = angle * .pi / 180
+        return CGSize(width: cos(radians) * distance * scale, height: sin(radians) * distance * scale)
+    }
+}
+
 public struct SceneItem: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var sourceID: UUID
@@ -65,11 +94,12 @@ public struct SceneItem: Identifiable, Codable, Hashable, Sendable {
     /// Fraction of the drawn image's shorter side; 0.5 makes a circle or pill.
     public var cornerRadius: Double
     public var border: ItemBorder
+    public var shadow: ItemShadow
 
     public init(
         id: UUID = UUID(), sourceID: UUID, frame: NormalizedRect = .full,
         crop: CropInsets = .none, contentMode: ContentMode = .fit, isVisible: Bool = true,
-        cornerRadius: Double = 0, border: ItemBorder = ItemBorder()
+        cornerRadius: Double = 0, border: ItemBorder = ItemBorder(), shadow: ItemShadow = ItemShadow()
     ) {
         self.id = id
         self.sourceID = sourceID
@@ -79,6 +109,7 @@ public struct SceneItem: Identifiable, Codable, Hashable, Sendable {
         self.isVisible = isVisible
         self.cornerRadius = cornerRadius
         self.border = border
+        self.shadow = shadow
     }
 
     // Decodes profiles saved before newer fields existed.
@@ -92,6 +123,7 @@ public struct SceneItem: Identifiable, Codable, Hashable, Sendable {
         isVisible = try c.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true
         cornerRadius = try c.decodeIfPresent(Double.self, forKey: .cornerRadius) ?? 0
         border = try c.decodeIfPresent(ItemBorder.self, forKey: .border) ?? ItemBorder()
+        shadow = try c.decodeIfPresent(ItemShadow.self, forKey: .shadow) ?? ItemShadow()
     }
 }
 

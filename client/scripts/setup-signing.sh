@@ -15,8 +15,15 @@ set -euo pipefail
 NAME="Parallax Local Signing"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
+allow_codesign() {
+  # Without this, macOS asks "codesign wants to sign using key…" on every build.
+  echo "Letting codesign use the key without asking each build (enter your login password)…"
+  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -l "$NAME" "$KEYCHAIN" >/dev/null
+}
+
 if security find-identity -v -p codesigning | grep -q "$NAME"; then
   echo "\"$NAME\" is already set up."
+  allow_codesign
   exit 0
 fi
 
@@ -47,5 +54,6 @@ security import "$TMP/id.p12" -k "$KEYCHAIN" -P "$PASS" -T /usr/bin/codesign
 echo "Trusting the certificate for code signing (macOS will ask for your password)…"
 security add-trusted-cert -p codeSign -k "$KEYCHAIN" "$TMP/cert.pem"
 
+allow_codesign
 security find-identity -v -p codesigning | grep "$NAME"
 echo "Done. Rebuild with scripts/build-app.sh, then grant Camera/Microphone/Screen Recording one last time."

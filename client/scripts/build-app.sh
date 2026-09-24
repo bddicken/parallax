@@ -15,7 +15,11 @@ source scripts/env.sh
 swift build -c "$CONFIG" --product Parallax
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/Parallax"
 
-APP=build/Parallax.app
+# Assemble and sign in a temp bundle; only replace build/Parallax.app once
+# signing succeeds, so a failed or cancelled signature never leaves behind a
+# differently signed app (which macOS would treat as new and re-prompt for).
+FINAL=build/Parallax.app
+APP=build/Parallax.app.partial
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Parallax"
@@ -27,6 +31,7 @@ plutil -replace CFBundleVersion -string "$(date +%Y%m%d.%H%M%S)" "$APP/Contents/
 IDENTITY="${PARALLAX_SIGN_IDENTITY:-}"
 if [[ -z "$IDENTITY" ]] && security find-identity -v -p codesigning | grep -q "Parallax Local Signing"; then
   IDENTITY="Parallax Local Signing"
+  echo "Signing with \"$IDENTITY\". If macOS asks to use the key, enter your login password and click Always Allow."
 fi
 REQUIREMENTS=()
 if [[ -z "$IDENTITY" ]]; then
@@ -37,6 +42,13 @@ if [[ -z "$IDENTITY" ]]; then
   REQUIREMENTS=(--requirements '=designated => identifier "com.bddicken.parallax"')
 fi
 codesign --force --sign "$IDENTITY" ${REQUIREMENTS[@]+"${REQUIREMENTS[@]}"} --entitlements Support/Parallax.entitlements "$APP"
+if ! codesign --verify --strict "$APP"; then
+  echo "error: signature verification failed; left $FINAL untouched" >&2
+  exit 1
+fi
+rm -rf "$FINAL"
+mv "$APP" "$FINAL"
+APP="$FINAL"
 echo "Built $APP (signed with: $IDENTITY)"
 
 if [[ "$OPEN" == "--open" ]]; then

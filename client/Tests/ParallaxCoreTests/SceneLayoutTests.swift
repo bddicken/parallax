@@ -59,7 +59,7 @@ import Testing
          "crop":{"top":0,"left":0,"bottom":0,"right":0},"contentMode":"fit","isVisible":true}
         """
         let item = try JSONDecoder().decode(SceneItem.self, from: Data(json.utf8))
-        #expect(item.cornerRadius == 0 && !item.border.isEnabled)
+        #expect(item.cornerRadius == 0 && !item.border.isEnabled && !item.shadow.isEnabled)
     }
 }
 
@@ -99,6 +99,15 @@ import Testing
         #expect(snapped.guides.contains(.vertical(Snapper.margin)))
         let free = drag.frame(translation: CGSize(width: dx, height: 0), canvas: canvas, snapping: false)
         #expect(abs(free.frame.x - Snapper.margin) > 1e-3)
+    }
+}
+
+@Suite struct ShadowTests {
+    @Test func offsetFollowsAngleAndScalesWithCanvas() {
+        let down = ItemShadow(distance: 10, angle: 90).offset(canvasHeight: 2160)
+        #expect(abs(down.width) < 1e-9 && abs(down.height - 20) < 1e-9)
+        let right = ItemShadow(distance: 10, angle: 0).offset(canvasHeight: 1080)
+        #expect(abs(right.width - 10) < 1e-9 && abs(right.height) < 1e-9)
     }
 }
 

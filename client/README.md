@@ -12,7 +12,7 @@ What works now:
 - **Layout editing** in the preview:
   - Click or drag any source. Drag a corner handle to resize (aspect kept; Shift for free resize).
   - Edges snap to the canvas, safe margins, and other sources (⌘ disables snapping). Arrow keys nudge (Shift for bigger steps). Delete removes. Right-click for presets and layer order.
-  - Inspector: preset buttons, a size slider that keeps corner PiPs anchored, fit/fill/stretch, rounded corners (up to circle/pill), border, and crop. Crop trims edges in place: the rest of the image doesn't move or zoom, and the box shrinks to match. The ⇄ button swaps which camera, display, or window a layer shows.
+  - Inspector: preset buttons, a size slider that keeps corner PiPs anchored, fit/fill/stretch, rounded corners (up to circle/pill), border, drop shadow (distance, direction, blur, opacity, color), and crop. Crop trims edges in place: the rest of the image doesn't move or zoom, and the box shrinks to match. The ⇄ button swaps which camera, display, or window a layer shows.
   - Every edit is undoable (⌘Z). A whole drag is one undo step.
 - **Layers**: the sources list shows the top layer first. Drag to reorder, + / − to add or remove, and the eye button hides a layer.
 - **Audio**: any mic or interface (pick mono or stereo channels) plus system audio. Each input has a gain fader, mute, meter, sync delay (0–2 s), 80 Hz high-pass, and noise gate. The master bus has a limiter.

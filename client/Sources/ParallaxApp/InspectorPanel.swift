@@ -96,6 +96,24 @@ private struct ItemInspector: View {
                 .controlSize(.small)
             }
 
+            section("Shadow") {
+                Toggle("Drop shadow", isOn: itemBinding(\.shadow.isEnabled))
+                    .controlSize(.small)
+                if item.shadow.isEnabled {
+                    styleSlider("Distance", \.shadow.distance, 0...100, "\(Int(item.shadow.distance)) px")
+                    styleSlider("Direction", \.shadow.angle, 0...360, "\(Int(item.shadow.angle))°")
+                    styleSlider("Blur", \.shadow.blur, 0...100, "\(Int(item.shadow.blur)) px")
+                    styleSlider("Opacity", \.shadow.opacity, 0...1, "\(Int(item.shadow.opacity * 100))%")
+                    HStack {
+                        Text("Color").foregroundStyle(.secondary).frame(width: 60, alignment: .leading)
+                        ColorPicker("", selection: shadowColor).labelsHidden()
+                        Spacer()
+                        Button("Reset") { model.updateItem(item.id, undo: "Reset Shadow") { $0.shadow = ItemShadow(isEnabled: true) } }
+                    }
+                    .controlSize(.small)
+                }
+            }
+
             section("Crop") {
                 cropSlider("Top", \.top)
                 cropSlider("Bottom", \.bottom)
@@ -175,6 +193,24 @@ private struct ItemInspector: View {
     private var sizeBinding: Binding<Double> {
         Binding(get: { item.frame.width }, set: { w in
             model.updateItem(item.id, undo: "Resize Source") { $0.frame = $0.frame.scaled(by: w / max(0.001, $0.frame.width)) }
+        })
+    }
+
+    private func styleSlider(_ label: String, _ path: WritableKeyPath<SceneItem, Double>, _ range: ClosedRange<Double>, _ value: String) -> some View {
+        HStack {
+            Text(label).foregroundStyle(.secondary).frame(width: 60, alignment: .leading)
+            Slider(value: itemBinding(path), in: range)
+            Text(value).monospacedDigit().frame(width: 44, alignment: .trailing)
+        }
+        .controlSize(.small)
+    }
+
+    private var shadowColor: Binding<Color> {
+        Binding(get: { item.shadow.color.color }, set: { color in
+            let c = color.resolve(in: EnvironmentValues())
+            model.updateItem(item.id, undo: "Shadow Color") {
+                $0.shadow.color = RGBAColor(red: Double(c.red), green: Double(c.green), blue: Double(c.blue), alpha: Double(c.opacity))
+            }
         })
     }
 
