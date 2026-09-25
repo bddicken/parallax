@@ -185,7 +185,7 @@ public final class MediaEngine {
     /// the canvas and the chosen text size.
     private func resizeChatFeed() {
         let size = chatFeedBoxSize() ?? feedSize
-        let scale = CGFloat(max(canvas.height, 1)) / 1080 * chatTextSize.scale
+        let scale = CGFloat(Double(max(canvas.height, 1)) / 1080 * chatTextSize.scale)
         guard size != feedSize || scale != feedScale else { return }
         feedSize = size
         feedScale = scale
