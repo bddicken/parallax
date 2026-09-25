@@ -21,6 +21,7 @@ pub struct Config {
     pub ffmpeg_bin: String,
     pub twitch: Option<TwitchConfig>,
     pub youtube: Option<YouTubeConfig>,
+    pub x: Option<XConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +41,13 @@ pub struct YouTubeConfig {
     pub client_secret: String,
 }
 
+/// An RTMP source from X Media Studio › Producer › Sources.
+#[derive(Clone, Debug)]
+pub struct XConfig {
+    pub rtmp_url: String,
+    pub stream_key: String,
+}
+
 impl Config {
     pub fn from_env() -> Result<Config> {
         let var = |name: &str| env::var(name).ok().filter(|v| !v.trim().is_empty());
@@ -57,6 +65,17 @@ impl Config {
             (None, None) => None,
             _ => anyhow::bail!("Set both YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET, or neither"),
         };
+        let x = match (var("X_RTMP_URL"), var("X_STREAM_KEY")) {
+            (Some(rtmp_url), Some(stream_key)) => {
+                anyhow::ensure!(
+                    rtmp_url.starts_with("rtmp://") || rtmp_url.starts_with("rtmps://"),
+                    "X_RTMP_URL must start with rtmp:// or rtmps://"
+                );
+                Some(XConfig { rtmp_url: rtmp_url.trim().into(), stream_key: stream_key.trim().into() })
+            }
+            (None, None) => None,
+            _ => anyhow::bail!("Set both X_RTMP_URL and X_STREAM_KEY, or neither"),
+        };
         Ok(Config {
             addr: var("PARALLAX_ADDR")
                 .unwrap_or_else(|| "127.0.0.1:8080".into())
@@ -72,6 +91,7 @@ impl Config {
             ffmpeg_bin: var("PARALLAX_FFMPEG").unwrap_or_else(|| "ffmpeg".into()),
             twitch,
             youtube,
+            x,
         })
     }
 }

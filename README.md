@@ -58,4 +58,5 @@ Requires macOS 15+ and either Xcode or the Command Line Tools (the scripts handl
 2. Set up each platform you want to stream to. Each guide walks through the one-time account and app registration steps:
    - [Twitch setup](docs/setup/twitch.md)
    - [YouTube setup](docs/setup/youtube.md)
+   - [X setup](docs/setup/x.md)
 3. In the app, open **Settings › Server**, enter the server's URL and token, and connect your accounts.
