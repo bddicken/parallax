@@ -97,8 +97,9 @@ impl Twitch {
         match result {
             Ok(token) => self.signed_in(token).await,
             Err(e) => {
-                tracing::warn!("couldn't restore Twitch sign-in: {e}");
-                self.inner.lock().await.error = Some("Twitch sign-in expired. Connect again.".into());
+                let why = explain(&e);
+                tracing::warn!("couldn't restore Twitch sign-in: {why}");
+                self.inner.lock().await.error = Some(why);
                 self.publish().await;
             }
         }
@@ -213,7 +214,9 @@ impl Twitch {
         let mut inner = self.inner.lock().await;
         let token = inner.token.as_mut().ok_or_else(|| anyhow!("Twitch isn't connected."))?;
         if token.expires_in() < Duration::from_secs(10 * 60) {
-            token.refresh_token(&self.http).await.context("Couldn't refresh the Twitch sign-in")?;
+            if let Err(e) = token.refresh_token(&self.http).await {
+                bail!("Couldn't refresh the Twitch sign-in: {}", explain(&e));
+            }
             // Refresh tokens can be single-use, so save the new one right away.
             self.save(token)?;
         }
@@ -330,6 +333,24 @@ impl Twitch {
             .await
             .context("subscribing to Twitch chat")?;
         Ok(())
+    }
+}
+
+/// Twitch's errors are buried a few sources deep; surface the useful ones.
+fn explain(e: &(dyn std::error::Error + 'static)) -> String {
+    let mut chain = Vec::new();
+    let mut next = Some(e);
+    while let Some(err) = next {
+        chain.push(err.to_string());
+        next = err.source();
+    }
+    let all = chain.join(": ");
+    if all.contains("missing client secret") {
+        "Your Twitch app is \"Confidential\", so the server needs its secret: set TWITCH_CLIENT_SECRET, restart, and connect again.".into()
+    } else if all.contains("Invalid refresh token") || all.contains("invalid refresh token") {
+        "Twitch sign-in expired. Connect again.".into()
+    } else {
+        format!("Twitch sign-in failed ({all}). Connect again.")
     }
 }
 

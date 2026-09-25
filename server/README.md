@@ -39,7 +39,7 @@ Register an app at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/ap
 
 - **OAuth Redirect URL:** `http://localhost` (required by the form, but not used: sign-in uses the device code flow).
 - **Category:** Broadcaster Suite.
-- **Client Type:** Public. Then only `TWITCH_CLIENT_ID` is needed.
+- **Client Type:** Public, so only `TWITCH_CLIENT_ID` is needed. If the app is Confidential, also set `TWITCH_CLIENT_SECRET` (sign-ins can't refresh without it).
 
 Scopes requested: `channel:read:stream_key`, `user:read:chat`, `user:write:chat`.
 
