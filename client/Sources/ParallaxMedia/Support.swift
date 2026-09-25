@@ -26,14 +26,32 @@ public protocol MediaSink: AnyObject, Sendable {
     func appendAudio(_ samples: UnsafeBufferPointer<Float>, frameCount: Int, pts: CMTime)
 }
 
-/// Thread-safe list of sinks that the compositor and mixer fan out to.
+/// Thread-safe list of sinks that the compositor and mixer fan out to. Every
+/// sink gets the audio mix; each gets the video of the program or of one scene.
 final class SinkHub: @unchecked Sendable {
     private let lock = NSLock()
-    private var sinks: [ObjectIdentifier: MediaSink] = [:]
+    private var sinks: [ObjectIdentifier: (sink: MediaSink, sceneID: UUID?)] = [:]
 
-    func add(_ sink: MediaSink) { lock.withLock { sinks[ObjectIdentifier(sink)] = sink } }
-    func remove(_ sink: MediaSink) { lock.withLock { _ = sinks.removeValue(forKey: ObjectIdentifier(sink)) } }
-    var all: [MediaSink] { lock.withLock { Array(sinks.values) } }
+    /// `sceneID` nil for the program.
+    func add(_ sink: MediaSink, sceneID: UUID? = nil) { add([(sink, sceneID)]) }
+    func remove(_ sink: MediaSink) { remove([sink]) }
+
+    /// Adds several at once, so they all receive the same first frame.
+    func add(_ entries: [(sink: MediaSink, sceneID: UUID?)]) {
+        lock.withLock { for e in entries { sinks[ObjectIdentifier(e.sink)] = e } }
+    }
+
+    /// Removes several at once, so they all receive the same last frame.
+    func remove(_ entries: [MediaSink]) {
+        lock.withLock { for s in entries { _ = sinks.removeValue(forKey: ObjectIdentifier(s)) } }
+    }
+
+    var all: [MediaSink] { lock.withLock { sinks.values.map(\.sink) } }
+
+    /// Sinks grouped by the video they want; the nil key is the program.
+    var byScene: [UUID?: [MediaSink]] {
+        lock.withLock { Dictionary(grouping: sinks.values, by: \.sceneID).mapValues { $0.map(\.sink) } }
+    }
 }
 
 public struct MediaError: LocalizedError, Sendable {

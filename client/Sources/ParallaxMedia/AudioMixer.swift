@@ -103,6 +103,11 @@ final class AudioMixer: @unchecked Sendable {
         }
     }
 
+    /// Returns once any audio being mixed has been handed to the sinks.
+    func flush() async {
+        await withCheckedContinuation { cont in queue.async { cont.resume() } }
+    }
+
     private func tick() {
         let now = hostNow()
         let due = Int64((now - startTime) * AudioFormat.sampleRate)

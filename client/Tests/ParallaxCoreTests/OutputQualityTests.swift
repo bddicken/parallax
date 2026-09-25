@@ -29,10 +29,40 @@ import Testing
         #expect(abs(Bitrates.gigabytesPerHour(videoKbps: 50_000, audioKbps: 0) - 22.5) < 0.01)
     }
 
+    @Test func turningRecordingOutputsOnAndOff() {
+        var r = RecordingSettings()
+        r.outputs[0].videoBitrateKbps = 40_000
+        let camera = UUID(), screen = UUID()
+        r.setRecording(camera, true)
+        r.setRecording(screen, true)
+        r.setRecording(camera, true)
+        #expect(r.outputs.map(\.sceneID) == [nil, camera, screen], "no duplicates, in the order turned on")
+        #expect(r.output(for: screen)?.videoBitrateKbps == 40_000, "starts at the program's settings")
+        r.setRecording(nil, false)
+        r.setRecording(nil, true)
+        #expect(r.outputs.first?.isProgram == true, "the program stays first")
+        r.setRecording(camera, false)
+        #expect(r.output(for: camera) == nil)
+    }
+
+    @Test func recordingFileNames() {
+        #expect(RecordingSettings.fileNames(stamp: "S", scenes: [nil]) == ["Parallax S"])
+        #expect(RecordingSettings.fileNames(stamp: "S", scenes: [nil, "Camera", "Screen: Left/Right", "Camera", " "])
+            == ["Parallax S - Program", "Parallax S - Camera", "Parallax S - Screen- Left-Right", "Parallax S - Camera 2", "Parallax S - Scene"])
+        #expect(RecordingSettings.fileNames(stamp: "S", scenes: ["Camera"]) == ["Parallax S - Camera"])
+    }
+
     @Test func olderSettingsDecodeWithNewDefaults() throws {
         let recording = #"{"directoryPath":"/tmp/x","codec":"hevc","container":"mov","videoBitrateKbps":20000,"audioBitrateKbps":256}"#
         let r = try JSONDecoder().decode(RecordingSettings.self, from: Data(recording.utf8))
-        #expect(r.resolution == .canvas && r.codec == .hevc && r.videoBitrateKbps == 20_000)
+        #expect(r.outputs == [RecordingOutput(resolution: .canvas, videoBitrateKbps: 20_000)] && r.codec == .hevc)
+        let scaled = #"{"resolution":"p1080","videoBitrateKbps":30000}"#
+        #expect(try JSONDecoder().decode(RecordingSettings.self, from: Data(scaled.utf8)).outputs
+            == [RecordingOutput(resolution: .p1080, videoBitrateKbps: 30_000)], "old settings become the program output")
+        var many = RecordingSettings()
+        many.outputs = [RecordingOutput(sceneID: UUID(), resolution: .p720)]
+        let roundTrip = try JSONDecoder().decode(RecordingSettings.self, from: JSONEncoder().encode(many))
+        #expect(roundTrip == many, "no outputs from new settings are mistaken for old ones")
         let broadcast = #"{"serverURL":"","uplinkVideoBitrateKbps":8000}"#
         let b = try JSONDecoder().decode(BroadcastSettings.self, from: Data(broadcast.utf8))
         #expect(b.stream == StreamSettings())

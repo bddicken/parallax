@@ -87,30 +87,46 @@ private struct RecordingSettingsView: View {
     var body: some View {
         @Bindable var model = model
         let rec = model.profile.recording
-        let size = rec.resolution.size(for: model.profile.output)
-        let recommended = Bitrates.recording(height: size.height, fps: model.profile.output.fps, codec: rec.codec)
         Form {
             Section {
-                ResolutionPicker(canvas: model.profile.output, selection: $model.profile.recording.resolution)
+                Toggle(isOn: outputOn(nil)) {
+                    Text("Program")
+                    Text("What's live, including transitions")
+                }
+                ForEach(model.profile.scenes) { scene in
+                    Toggle(isOn: outputOn(scene.id)) {
+                        Text(scene.name)
+                        Text("This scene on its own, whatever is live")
+                    }
+                }
+            } header: {
+                Text("Record")
+            } footer: {
+                Text("Each one is saved to its own file. They all start and stop on the same frame and share time-of-day timecode, so they line up in your editor. For example, record a full-frame camera scene and a screen scene to cut between later.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(rec.outputs, id: \.sceneID) { output in
+                Section(model.recordingLabel(output)) {
+                    ResolutionPicker(canvas: model.profile.output, selection: outputSetting(output.sceneID, \.resolution))
+                    bitrate(output)
+                }
+            }
+            Section {
                 Picker("Codec", selection: $model.profile.recording.codec) {
                     Text("H.264").tag(VideoCodec.h264)
                     Text("HEVC (smaller files, recommended for 4K)").tag(VideoCodec.hevc)
-                }
-                LabeledContent("Video bitrate") {
-                    HStack {
-                        Stepper("\(rec.videoBitrateKbps / 1000) Mbps",
-                                value: $model.profile.recording.videoBitrateKbps, in: 2_000...150_000, step: 2_000)
-                        Button("Use recommended (\(recommended / 1000) Mbps)") {
-                            model.profile.recording.videoBitrateKbps = recommended
-                        }
-                        .disabled(rec.videoBitrateKbps == recommended)
-                    }
                 }
                 Picker("Audio bitrate", selection: $model.profile.recording.audioBitrateKbps) {
                     ForEach([128, 192, 256, 320], id: \.self) { Text("\($0) kbps").tag($0) }
                 }
             } footer: {
-                Text(summary(size: size, rec: rec)).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(summary(rec)).foregroundStyle(.secondary)
+                    if rec.outputs.count > 1, rec.outputs.contains(where: { $0.resolution.size(for: model.profile.output).height >= 2160 }) {
+                        Text("Several files with 4K among them is a lot for one video encoder. Base M-series chips may drop frames; Pro, Max, and Ultra chips have more encoders.")
+                            .foregroundStyle(.orange)
+                    }
+                }
             }
             Section {
                 LabeledContent("Folder") {
@@ -123,15 +139,57 @@ private struct RecordingSettingsView: View {
                     Text("QuickTime (.mov)").tag(RecordingContainer.mov)
                     Text("MPEG-4 (.mp4)").tag(RecordingContainer.mp4)
                 }
+            } footer: {
+                if rec.outputs.count > 1, rec.container == .mp4 {
+                    Text("Only QuickTime files carry timecode. With MPEG-4, line the files up by their audio instead.")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .formStyle(.grouped)
         .disabled(model.isRecording)
     }
 
-    private func summary(size: (width: Int, height: Int), rec: RecordingSettings) -> String {
-        let gb = Bitrates.gigabytesPerHour(videoKbps: rec.videoBitrateKbps, audioKbps: rec.audioBitrateKbps)
-        return "Records \(size.width) × \(size.height) at \(model.profile.output.fps) fps, \(rec.codec == .hevc ? "HEVC" : "H.264") \(rec.videoBitrateKbps / 1000) Mbps: about \(String(format: "%.0f", gb)) GB per hour."
+    private func bitrate(_ output: RecordingOutput) -> some View {
+        let size = output.resolution.size(for: model.profile.output)
+        let recommended = Bitrates.recording(height: size.height, fps: model.profile.output.fps, codec: model.profile.recording.codec)
+        return LabeledContent("Video bitrate") {
+            HStack {
+                Stepper("\(output.videoBitrateKbps / 1000) Mbps",
+                        value: outputSetting(output.sceneID, \.videoBitrateKbps), in: 2_000...150_000, step: 2_000)
+                Button("Use recommended (\(recommended / 1000) Mbps)") {
+                    outputSetting(output.sceneID, \.videoBitrateKbps).wrappedValue = recommended
+                }
+                .disabled(output.videoBitrateKbps == recommended)
+            }
+        }
+    }
+
+    private func outputOn(_ sceneID: UUID?) -> Binding<Bool> {
+        Binding(get: { model.isRecordingOutput(sceneID) }, set: { model.setRecordingOutput(sceneID, $0) })
+    }
+
+    /// A setting of the output recording `sceneID`, looked up by scene rather
+    /// than index so it stays put as outputs are turned on and off.
+    private func outputSetting<T>(_ sceneID: UUID?, _ path: WritableKeyPath<RecordingOutput, T>) -> Binding<T> {
+        Binding(
+            get: { model.profile.recording.output(for: sceneID)?[keyPath: path] ?? RecordingOutput()[keyPath: path] },
+            set: { value in
+                guard let i = model.profile.recording.outputs.firstIndex(where: { $0.sceneID == sceneID }) else { return }
+                model.profile.recording.outputs[i][keyPath: path] = value
+            })
+    }
+
+    private func summary(_ rec: RecordingSettings) -> String {
+        guard !rec.outputs.isEmpty else { return "Nothing is recorded. Turn on the program or a scene above." }
+        let fps = model.profile.output.fps, codec = rec.codec == .hevc ? "HEVC" : "H.264"
+        let gb = rec.outputs.reduce(0) { $0 + Bitrates.gigabytesPerHour(videoKbps: $1.videoBitrateKbps, audioKbps: rec.audioBitrateKbps) }
+        let perHour = "about \(String(format: "%.0f", gb)) GB per hour"
+        if let only = rec.outputs.first, rec.outputs.count == 1 {
+            let size = only.resolution.size(for: model.profile.output)
+            return "Records \(size.width) × \(size.height) at \(fps) fps, \(codec) \(only.videoBitrateKbps / 1000) Mbps: \(perHour)."
+        }
+        return "Records \(rec.outputs.count) files at \(fps) fps, \(codec): \(perHour) in total."
     }
 
     private func chooseFolder() {

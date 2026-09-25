@@ -376,27 +376,103 @@ public enum RecordingContainer: String, Codable, CaseIterable, Sendable {
     case mov, mp4
 }
 
+/// One file written per take. The program is what's live, fades included;
+/// a scene is recorded on its own whatever is live, e.g. the camera full
+/// frame in one file and the screen in another, to edit together later.
+public struct RecordingOutput: Codable, Hashable, Sendable {
+    /// nil records the program.
+    public var sceneID: UUID?
+    public var resolution: OutputResolution = .canvas
+    public var videoBitrateKbps: Int = 16_000
+
+    public init(sceneID: UUID? = nil, resolution: OutputResolution = .canvas, videoBitrateKbps: Int = 16_000) {
+        self.sceneID = sceneID
+        self.resolution = resolution
+        self.videoBitrateKbps = videoBitrateKbps
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = RecordingOutput()
+        sceneID = try c.decodeIfPresent(UUID.self, forKey: .sceneID)
+        resolution = try c.decodeIfPresent(OutputResolution.self, forKey: .resolution) ?? d.resolution
+        videoBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .videoBitrateKbps) ?? d.videoBitrateKbps
+    }
+
+    public var isProgram: Bool { sceneID == nil }
+}
+
 public struct RecordingSettings: Codable, Hashable, Sendable {
     public var directoryPath: String
-    public var resolution: OutputResolution = .canvas
+    /// Every file recorded at once, all starting and stopping on the same frame.
+    public var outputs: [RecordingOutput] = [RecordingOutput()]
     public var codec: VideoCodec = .h264
     public var container: RecordingContainer = .mov
-    public var videoBitrateKbps: Int = 16_000
     public var audioBitrateKbps: Int = 256
 
     public init(directoryPath: String = RecordingSettings.defaultDirectory) {
         self.directoryPath = directoryPath
     }
 
+    /// Settings from before multiple outputs, which recorded only the program.
+    private enum LegacyKeys: String, CodingKey { case resolution, videoBitrateKbps }
+
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = RecordingSettings()
         directoryPath = try c.decodeIfPresent(String.self, forKey: .directoryPath) ?? d.directoryPath
-        resolution = try c.decodeIfPresent(OutputResolution.self, forKey: .resolution) ?? d.resolution
         codec = try c.decodeIfPresent(VideoCodec.self, forKey: .codec) ?? d.codec
         container = try c.decodeIfPresent(RecordingContainer.self, forKey: .container) ?? d.container
-        videoBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .videoBitrateKbps) ?? d.videoBitrateKbps
         audioBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? d.audioBitrateKbps
+        if let outputs = try c.decodeIfPresent([RecordingOutput].self, forKey: .outputs) {
+            self.outputs = outputs
+        } else {
+            let legacy = try decoder.container(keyedBy: LegacyKeys.self)
+            let program = RecordingOutput()
+            outputs = [RecordingOutput(
+                resolution: try legacy.decodeIfPresent(OutputResolution.self, forKey: .resolution) ?? program.resolution,
+                videoBitrateKbps: try legacy.decodeIfPresent(Int.self, forKey: .videoBitrateKbps) ?? program.videoBitrateKbps)]
+        }
+    }
+
+    /// The output recording `sceneID` (nil for the program), if it's on.
+    public func output(for sceneID: UUID?) -> RecordingOutput? {
+        outputs.first { $0.sceneID == sceneID }
+    }
+
+    /// Turns recording `sceneID` (nil for the program) on or off, keeping its
+    /// place and settings stable. New outputs start at the program's settings.
+    public mutating func setRecording(_ sceneID: UUID?, _ on: Bool) {
+        let index = outputs.firstIndex { $0.sceneID == sceneID }
+        if on, index == nil {
+            var output = outputs.first(where: \.isProgram) ?? outputs.first ?? RecordingOutput()
+            output.sceneID = sceneID
+            if sceneID == nil { outputs.insert(output, at: 0) } else { outputs.append(output) }
+        } else if !on, let index {
+            outputs.remove(at: index)
+        }
+    }
+
+    /// File names (without extension) for one take, given each output's
+    /// scene name (nil for the program). The program on its own keeps the
+    /// plain "Parallax <stamp>"; otherwise each name ends with what it
+    /// records, made safe for Finder and unique within the take.
+    public static func fileNames(stamp: String, scenes: [String?]) -> [String] {
+        let base = "Parallax \(stamp)"
+        if scenes == [nil] { return [base] }
+        var used: Set<String> = []
+        return scenes.map { scene in
+            var label = (scene ?? "Program")
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+                .trimmingCharacters(in: .whitespaces)
+            if label.isEmpty { label = "Scene" }
+            let unique = used.contains(label)
+                ? (2...).lazy.map { "\(label) \($0)" }.first { !used.contains($0) }!
+                : label
+            used.insert(unique)
+            return "\(base) - \(unique)"
+        }
     }
 
     public static var defaultDirectory: String {
