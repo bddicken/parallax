@@ -16,8 +16,8 @@ import Testing
 
     @Test func decodesDestinationsAndIngest() throws {
         let destinations = try decode([Destination].self, "destinations")
-        #expect(destinations.map(\.platform) == [.twitch, .custom])
-        #expect(destinations[1].rtmpURL == "rtmp://127.0.0.1:1935/test")
+        #expect(destinations.map(\.platform) == [.twitch, .youtube, .custom])
+        #expect(destinations[2].rtmpURL == "rtmp://127.0.0.1:1935/test")
         #expect(try decode(IngestInfo.self, "ingest").srtURL.hasPrefix("srt://"))
     }
 
@@ -38,6 +38,14 @@ import Testing
         #expect(status.startedAt != nil)
 
         guard case .accounts(let accounts) = try decode(ServerEvent.self, "event-accounts") else { Issue.record("not accounts"); return }
-        #expect(accounts.first?.login == "parallaxdev")
+        #expect(accounts.map(\.platform) == [.twitch, .youtube])
+        #expect(accounts[1].displayName == "Parallax Dev")
+    }
+
+    @Test func encodesStartRequestLikeTheFixture() throws {
+        let request = StartBroadcastRequest(destinationIDs: ["twitch", "youtube"], title: "Building Parallax", privacy: "public")
+        let encoded = try JSONSerialization.jsonObject(with: WireCoding.encoder().encode(request)) as? NSDictionary
+        let expected = try JSONSerialization.jsonObject(with: fixture("start-broadcast")) as? NSDictionary
+        #expect(encoded == expected)
     }
 }

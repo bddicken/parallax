@@ -96,6 +96,10 @@ struct GoLiveSheet: View {
 
     private var broadcast: BroadcastModel { model.broadcast }
 
+    private var youTubeSelected: Bool {
+        broadcast.destinations.contains { $0.platform == .youtube && selected.contains($0.id) }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(broadcast.status.live ? "You're live" : "Go Live").font(.title2.bold())
@@ -152,6 +156,10 @@ struct GoLiveSheet: View {
             .padding(12)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
 
+            if youTubeSelected {
+                YouTubeOptions().disabled(broadcast.status.live)
+            }
+
             if let error = broadcast.connectionError {
                 Text(error).font(.callout).foregroundStyle(.red)
             }
@@ -175,6 +183,34 @@ struct GoLiveSheet: View {
             await broadcast.refreshDestinations()
             selected = Set(broadcast.destinations.filter(\.enabled).map(\.id))
         }
+    }
+}
+
+/// YouTube makes a new video for each broadcast, so it needs a title and
+/// visibility. Remembered for next time.
+private struct YouTubeOptions: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        Grid(alignment: .leading, verticalSpacing: 8) {
+            GridRow {
+                Text("Title")
+                TextField("Title", text: $model.profile.broadcast.title, prompt: Text("What's this stream about?"))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+            }
+            GridRow {
+                Text("YouTube")
+                Picker("Visibility", selection: $model.profile.broadcast.privacy) {
+                    ForEach(BroadcastPrivacy.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+        }
+        .font(.callout)
     }
 }
 

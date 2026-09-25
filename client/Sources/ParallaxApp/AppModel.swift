@@ -543,7 +543,11 @@ final class AppModel {
         if broadcast.service.mode == .server {
             guard await startUplink() else { return }
         }
-        if await !broadcast.start(destinationIDs) {
+        let settings = profile.broadcast
+        let request = StartBroadcastRequest(destinationIDs: destinationIDs,
+                                            title: settings.title.trimmingCharacters(in: .whitespaces),
+                                            privacy: settings.privacy.rawValue)
+        if await !broadcast.start(request) {
             stopUplink()
         }
     }

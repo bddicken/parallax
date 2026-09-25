@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{
-        Request, State,
+        Path, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode, header},
@@ -25,6 +25,7 @@ use crate::{
     },
     store::Store,
     twitch::Twitch,
+    youtube::YouTube,
 };
 
 pub struct AppState {
@@ -34,6 +35,7 @@ pub struct AppState {
     pub ingest: Arc<Ingest>,
     pub broadcaster: Arc<Broadcaster>,
     pub twitch: Option<Arc<Twitch>>,
+    pub youtube: Option<Arc<YouTube>>,
 }
 
 type AppResult<T> = Result<T, ApiError>;
@@ -47,8 +49,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/broadcast/stop", post(stop))
         .route("/chat/send", post(send_chat))
         .route("/accounts", get(accounts))
-        .route("/accounts/twitch/connect", post(connect_twitch))
-        .route("/accounts/twitch", delete(disconnect_twitch))
+        .route("/accounts/{platform}/connect", post(connect_account))
+        .route("/accounts/{platform}", delete(disconnect_account))
         .route("/events", get(events))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new().route("/healthz", get(|| async { "ok" })).nest("/v1", v1).with_state(state)
@@ -104,6 +106,18 @@ async fn all_destinations(state: &AppState) -> Vec<Destination> {
             stream_key: None,
         });
     }
+    if let Some(youtube) = &state.youtube
+        && let Some(title) = youtube.channel_title().await
+    {
+        list.push(Destination {
+            id: "youtube".into(),
+            platform: Platform::Youtube,
+            name: format!("YouTube ({title})"),
+            enabled: true,
+            rtmp_url: None,
+            stream_key: None,
+        });
+    }
     list.extend(state.store.get().custom_destinations);
     list
 }
@@ -119,7 +133,7 @@ async fn destinations(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 async fn put_destinations(State(state): State<Arc<AppState>>, Json(list): Json<Vec<Destination>>) -> AppResult<StatusCode> {
     let mut custom = Vec::new();
     for mut d in list.into_iter().filter(|d| d.platform == Platform::Custom) {
-        if d.id.is_empty() || d.id == "twitch" {
+        if d.id.is_empty() || d.id == "twitch" || d.id == "youtube" {
             return Err(ApiError::bad_request("Each custom destination needs its own id."));
         }
         if !d.rtmp_url.as_deref().is_some_and(|u| u.starts_with("rtmp://") || u.starts_with("rtmps://")) {
@@ -140,7 +154,7 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
     }
     let all = all_destinations(&state).await;
     let mut targets = Vec::new();
-    for id in req.destination_ids {
+    for id in req.destination_ids.clone() {
         let Some(dest) = all.iter().find(|d| d.id == id) else {
             return Err(ApiError::bad_request(format!("Unknown destination {id}.")));
         };
@@ -148,6 +162,13 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
             Platform::Twitch => match &state.twitch {
                 Some(twitch) => twitch.ingest_url().await.map_err(|e| format!("{e:#}")),
                 None => Err("Twitch isn't set up on the server.".into()),
+            },
+            Platform::Youtube => match &state.youtube {
+                Some(youtube) => youtube
+                    .start_broadcast(req.title.as_deref().unwrap_or_default(), req.privacy.unwrap_or_default())
+                    .await
+                    .map_err(|e| format!("{e:#}")),
+                None => Err("YouTube isn't set up on the server.".into()),
             },
             Platform::Custom => {
                 let base = dest.rtmp_url.clone().unwrap_or_default();
@@ -158,6 +179,9 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
             }
             other => Err(format!("{other:?} isn't supported yet.")),
         };
+        if let Err(error) = &url {
+            tracing::warn!("can't go live on {id}: {error}");
+        }
         targets.push(Target { id, url });
     }
     state.broadcaster.start(targets).await;
@@ -166,6 +190,9 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
 
 async fn stop(State(state): State<Arc<AppState>>) -> StatusCode {
     state.broadcaster.stop().await;
+    if let Some(youtube) = &state.youtube {
+        youtube.end_broadcast().await;
+    }
     StatusCode::NO_CONTENT
 }
 
@@ -176,46 +203,88 @@ async fn send_chat(State(state): State<Arc<AppState>>, Json(req): Json<SendChatR
     }
     let platforms = req.platforms.filter(|p| !p.is_empty());
     let wants = |p: Platform| platforms.as_ref().is_none_or(|list| list.contains(&p));
-    let mut sent = false;
+    // Send everywhere that can take it, then report what failed.
+    let mut attempted = false;
+    let mut failures = Vec::new();
     if let Some(twitch) = &state.twitch
         && wants(Platform::Twitch)
         && twitch.is_connected().await
     {
-        twitch.send_chat(text).await?;
-        sent = true;
+        attempted = true;
+        if let Err(e) = twitch.send_chat(text).await {
+            failures.push(format!("{e:#}"));
+        }
     }
-    if !sent {
-        return Err(ApiError::bad_request("No connected platform to send to. Connect Twitch in Settings › Server."));
+    if let Some(youtube) = &state.youtube
+        && wants(Platform::Youtube)
+        && youtube.has_chat().await
+    {
+        attempted = true;
+        if let Err(e) = youtube.send_chat(text).await {
+            failures.push(format!("{e:#}"));
+        }
+    }
+    if !attempted {
+        return Err(ApiError::bad_request(
+            "No chat to send to. Connect Twitch in Settings › Server; YouTube chat opens when you go live there.",
+        ));
+    }
+    if !failures.is_empty() {
+        return Err(ApiError(StatusCode::BAD_GATEWAY, failures.join("\n")));
     }
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn account_list(state: &AppState) -> Vec<Account> {
-    vec![match &state.twitch {
-        Some(twitch) => twitch.account().await,
-        None => Account {
-            platform: Platform::Twitch,
-            state: AccountState::Disconnected,
-            login: None,
-            display_name: None,
-            pending: None,
-            error: Some("The server has no Twitch app configured (set TWITCH_CLIENT_ID).".into()),
+    let unconfigured = |platform, setting: &str| Account {
+        platform,
+        state: AccountState::Disconnected,
+        login: None,
+        display_name: None,
+        pending: None,
+        error: Some(format!("The server isn't set up for this yet (set {setting}).")),
+    };
+    vec![
+        match &state.twitch {
+            Some(twitch) => twitch.account().await,
+            None => unconfigured(Platform::Twitch, "TWITCH_CLIENT_ID"),
         },
-    }]
+        match &state.youtube {
+            Some(youtube) => youtube.account().await,
+            None => unconfigured(Platform::Youtube, "YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET"),
+        },
+    ]
+}
+
+/// Sends the full account list whenever any platform's sign-in changes.
+pub async fn publish_accounts(state: Arc<AppState>) {
+    loop {
+        state.events.wait_for_account_change().await;
+        state.events.accounts(account_list(&state).await);
+    }
 }
 
 async fn accounts(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(account_list(&state).await)
 }
 
-async fn connect_twitch(State(state): State<Arc<AppState>>) -> AppResult<impl IntoResponse> {
-    let twitch = state.twitch.as_ref().ok_or_else(|| ApiError::bad_request("Set TWITCH_CLIENT_ID on the server first."))?;
-    Ok(Json(twitch.connect().await?))
+async fn connect_account(State(state): State<Arc<AppState>>, Path(platform): Path<Platform>) -> AppResult<impl IntoResponse> {
+    let not_set_up = |setting: &str| ApiError::bad_request(format!("Set {setting} on the server first."));
+    let code = match platform {
+        Platform::Twitch => state.twitch.as_ref().ok_or_else(|| not_set_up("TWITCH_CLIENT_ID"))?.connect().await?,
+        Platform::Youtube => {
+            state.youtube.as_ref().ok_or_else(|| not_set_up("YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET"))?.connect().await?
+        }
+        other => return Err(ApiError::bad_request(format!("{other:?} accounts aren't supported yet."))),
+    };
+    Ok(Json(code))
 }
 
-async fn disconnect_twitch(State(state): State<Arc<AppState>>) -> AppResult<StatusCode> {
-    if let Some(twitch) = &state.twitch {
-        twitch.disconnect().await?;
+async fn disconnect_account(State(state): State<Arc<AppState>>, Path(platform): Path<Platform>) -> AppResult<StatusCode> {
+    match platform {
+        Platform::Twitch if let Some(twitch) = &state.twitch => twitch.disconnect().await?,
+        Platform::Youtube if let Some(youtube) = &state.youtube => youtube.disconnect().await?,
+        _ => {}
     }
     Ok(StatusCode::NO_CONTENT)
 }

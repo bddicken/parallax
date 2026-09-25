@@ -213,6 +213,7 @@ private struct ServerSettingsView: View {
             if model.broadcast.service.mode == .server {
                 Section("Accounts") {
                     AccountRow(platform: .twitch)
+                    AccountRow(platform: .youtube)
                 }
             }
             if let error = model.broadcast.connectionError {

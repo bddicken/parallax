@@ -84,8 +84,8 @@ final class BroadcastModel {
 
     /// Returns false (with `connectionError` set) if the server refused.
     @discardableResult
-    func start(_ destinationIDs: [String]) async -> Bool {
-        await perform { try await $0.startBroadcast(destinationIDs: destinationIDs) }
+    func start(_ request: StartBroadcastRequest) async -> Bool {
+        await perform { try await $0.startBroadcast(request) }
     }
 
     func stop() async {
