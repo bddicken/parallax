@@ -12,19 +12,7 @@ struct ChatPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader(title: "Chat") {
-                Button {
-                    Task {
-                        await broadcast.refreshDestinations()
-                        await BrowserWindows.open(broadcast.chatPages)
-                    }
-                } label: {
-                    Image(systemName: "arrow.up.forward.app")
-                }
-                .buttonStyle(.borderless)
-                .disabled(broadcast.chatPages.isEmpty)
-                .help(broadcast.chatPages.isEmpty
-                      ? "Pop out each platform's chat in your browser. Twitch works once connected, YouTube once you go live there, and X once the server has X_USERNAME."
-                      : "Pop out each platform's chat in its own browser window.")
+                PopOutChatMenu()
                 Toggle(isOn: mockBinding) { Text("Mock") }
                     .toggleStyle(.button)
                     .controlSize(.small)
@@ -99,6 +87,39 @@ struct ChatPanel: View {
         let text = draft
         draft = ""
         Task { await broadcast.send(text, to: target.map { [$0] }) }
+    }
+}
+
+/// Opens each platform's own chat page in the browser the user picks.
+private struct PopOutChatMenu: View {
+    @Environment(AppModel.self) private var model
+
+    private var broadcast: BroadcastModel { model.broadcast }
+
+    var body: some View {
+        Menu {
+            Section("Open Chats In") {
+                ForEach(BrowserWindows.browsers()) { browser in
+                    Button {
+                        Task {
+                            await broadcast.refreshDestinations()
+                            await BrowserWindows.open(broadcast.chatPages, in: browser)
+                        }
+                    } label: {
+                        Label { Text(browser.isDefault ? "\(browser.name) (Default)" : browser.name) } icon: { Image(nsImage: browser.icon) }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "arrow.up.forward.app")
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(broadcast.chatPages.isEmpty)
+        .help(broadcast.chatPages.isEmpty
+              ? "Pop out each platform's chat in your browser. Twitch works once connected, YouTube once you go live there, and X once the server has X_USERNAME."
+              : "Pop out each platform's chat in a browser you pick.")
     }
 }
 
