@@ -32,11 +32,17 @@ final class VideoFrameBuffer: @unchecked Sendable {
         }
     }
 
-    /// The newest frame at least `delay` old, or nil if there isn't one yet.
+    /// The newest frame at least `delay` old, or nil if none has been yet.
     func frame(at time: Double) -> CVPixelBuffer? {
         lock.withLock {
             let target = time - delay
-            return frames.last { $0.time <= target }?.buffer
+            if let match = frames.last(where: { $0.time <= target }) { return match.buffer }
+            // A frame can land between the compositor reading the clock and
+            // asking here. It's newer than `time`, and push() has already
+            // dropped the one before it, so show the oldest frame that was
+            // due as of the newest push rather than nothing (a black flash).
+            guard let first = frames.first, let newest = frames.last, first.time <= newest.time - delay else { return nil }
+            return first.buffer
         }
     }
 
