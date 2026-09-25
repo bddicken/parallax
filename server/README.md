@@ -21,7 +21,13 @@ It leans on existing tools for media: [MediaMTX](https://mediamtx.org) receives 
 | `src/x.rs` | X ingest URL from `.env` (switched to RTMPS). Video only for now |
 | `src/store.rs` | `data/state.json`: API token, ingest key, platform sign-ins, custom destinations |
 
-## Run locally
+## Built into the app
+
+Parallax runs this server itself when Settings › Server is set to **This Mac** (the default); `client/scripts/build-app.sh` bundles it into the app. It runs while the app is open, listens on localhost only with ports and a token picked at each launch, and keeps its state in `~/Library/Application Support/Parallax/Server/` (with `server.log`). Platform settings are entered in Settings › Server instead of `.env`. You still need `brew install mediamtx ffmpeg`.
+
+## Run it yourself
+
+For a remote host, or to work on the server:
 
 ```bash
 brew install mediamtx ffmpeg
@@ -32,7 +38,7 @@ cp .env.example .env   # then fill in the platforms you use (see below)
 cargo run
 ```
 
-It prints the API token on startup. In Parallax, open Settings › Server, enter `http://127.0.0.1:8080` and the token, then connect Twitch and YouTube.
+It prints the API token on startup. In Parallax, open Settings › Server, choose **Another machine**, enter the server's URL (`http://127.0.0.1:8080` here) and the token, then connect Twitch and YouTube.
 
 ### Platforms
 
@@ -65,9 +71,11 @@ Environment variables (a `.env` file works too):
 | `PARALLAX_DATA_DIR` | `data` | Saved state and the generated MediaMTX config |
 | `PARALLAX_TOKEN` | generated | API token |
 | `PARALLAX_PUBLIC_HOST` | host the client connected to | Host name given to the client for sending video |
+| `PARALLAX_INGEST_BIND` | all interfaces | IP the ingest listens on (e.g. `127.0.0.1`) |
 | `PARALLAX_SRT_PORT` / `PARALLAX_RTMP_PORT` | `8890` / `1935` | Ingest ports (SRT is UDP) |
 | `PARALLAX_MEDIAMTX_API_PORT` | `9997` | MediaMTX API, localhost only |
 | `PARALLAX_MEDIAMTX` / `PARALLAX_FFMPEG` | from `PATH` | Binaries |
+| `PARALLAX_PARENT_PID` | | Exit when this process exits (the app sets it when running the server itself) |
 | `TWITCH_CLIENT_ID` | | Enables Twitch |
 | `TWITCH_CLIENT_SECRET` | | Only for Confidential apps |
 | `TWITCH_INGEST_URL` | `rtmps://ingest.global-contribute.live-video.net:443/app` | Twitch ingest (auto-picks the nearest region) |

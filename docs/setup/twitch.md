@@ -14,18 +14,22 @@ One-time setup, about 5 minutes. You need a running [`parallax-server`](../../se
 
 ## 2. Configure the server
 
-Add to `server/.env` (or your host's environment) and restart the server:
+In Parallax, open **Settings › Server**, paste it into **Twitch client ID**, and click **Save & Restart Server**.
+
+If you chose **Confidential**, also click **New Secret** and paste it into **Twitch client secret**. Without it, sign-in expires after a few hours.
+
+Running the server yourself (**Another machine**)? Add to `server/.env` (or your host's environment) and restart it instead:
 
 ```
 TWITCH_CLIENT_ID=your-client-id
 ```
 
-If you chose **Confidential**, also click **New Secret** and add `TWITCH_CLIENT_SECRET`. Without it, sign-in expires after a few hours.
+plus `TWITCH_CLIENT_SECRET` for Confidential apps.
 
 ## 3. Connect in Parallax
 
-1. **Settings › Server:** enter the server URL and the token it printed at startup, then click **Save & Reconnect**.
-2. Click **Connect Twitch…**, check the code matches, and click **Activate**, then **Authorize**.
+1. With your own server, first enter its URL and the token it printed at startup in **Settings › Server**, then click **Save & Reconnect**.
+2. In **Settings › Server**, click **Connect Twitch…**, check the code matches, and click **Activate**, then **Authorize**.
 
 ## 4. Go live
 

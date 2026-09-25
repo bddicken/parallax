@@ -26,7 +26,9 @@ In **Clients**, click **Create client**, choose **TVs and Limited Input devices*
 
 ## 5. Configure the server
 
-Add to `server/.env` (or your host's environment) and restart the server:
+In Parallax, open **Settings › Server**, paste them into **YouTube client ID** and **YouTube client secret**, and click **Save & Restart Server**.
+
+Running the server yourself (**Another machine**)? Add to `server/.env` (or your host's environment) and restart it instead:
 
 ```
 YOUTUBE_CLIENT_ID=your-client-id.apps.googleusercontent.com
@@ -35,8 +37,8 @@ YOUTUBE_CLIENT_SECRET=your-client-secret
 
 ## 6. Connect in Parallax
 
-1. **Settings › Server:** enter the server URL and the token it printed at startup, then click **Save & Reconnect**.
-2. Click **Connect YouTube…**, enter the code at google.com/device, and pick your channel's account.
+1. With your own server, first enter its URL and the token it printed at startup in **Settings › Server**, then click **Save & Reconnect**.
+2. In **Settings › Server**, click **Connect YouTube…**, enter the code at google.com/device, and pick your channel's account.
 3. At "Google hasn't verified this app", click **Advanced › Go to (app name)**, then **Allow**.
 
 ## 7. Go live

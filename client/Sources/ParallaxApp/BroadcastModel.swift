@@ -50,17 +50,31 @@ final class BroadcastModel {
         if let xChatPage { xChat.show(xChatPage) }
     }
 
-    func connect(_ settings: BroadcastSettings) {
+    /// What to talk to; `AppModel` decides from the settings and the
+    /// built-in server's state.
+    enum Connection: Equatable {
+        /// With why, if there's more to say than "no server is set up".
+        case offline(reason: String?)
+        case mock
+        case server(URL, token: String)
+    }
+
+    private(set) var connection = Connection.offline(reason: nil)
+
+    /// Switches to `connection`. Does nothing if it's the current one, unless
+    /// `force` (which also retries a dropped connection right away).
+    func connect(_ connection: Connection, force: Bool = false) {
+        guard force || connection != self.connection else { return }
+        self.connection = connection
         eventsTask?.cancel()
         eventsTask = nil
         connectionError = nil
         let previousMode = service.mode
-        if let url = URL(string: settings.serverURL), url.scheme != nil {
-            service = HTTPBroadcastService(baseURL: url, token: Self.serverToken)
-        } else if settings.useMockServer {
-            service = MockBroadcastService()
-        } else {
-            service = OfflineBroadcastService()
+        switch connection {
+        case .server(let url, let token): service = HTTPBroadcastService(baseURL: url, token: token)
+        case .mock: service = MockBroadcastService()
+        case .offline(let reason?): service = OfflineBroadcastService(reason: reason)
+        case .offline(nil): service = OfflineBroadcastService()
         }
         // Don't mix fake and real chat when switching.
         if service.mode != previousMode {
@@ -92,10 +106,11 @@ final class BroadcastModel {
         }
     }
 
-    private static var serverToken: String {
+    /// The token for a remote server (Settings › Server).
+    static var remoteServerToken: String {
         #if DEBUG
-        // Lets a scratch profile (PARALLAX_PROFILE) talk to a local server
-        // without touching the Keychain.
+        // Lets a scratch profile (PARALLAX_PROFILE) talk to a server without
+        // touching the Keychain.
         if let token = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_SERVER_TOKEN"] { return token }
         #endif
         return Keychain.read("server-token") ?? ""

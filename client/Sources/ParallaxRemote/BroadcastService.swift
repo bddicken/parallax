@@ -34,12 +34,14 @@ extension BroadcastService {
 /// Used when no server is set up and mock chat is off.
 public struct OfflineBroadcastService: BroadcastService {
     public let mode = BroadcastMode.offline
+    /// Why there's no server, shown when you try to use one.
+    public let reason: String
 
-    public init() {}
-
-    private var notConnected: ServerError {
-        ServerError(message: "No server is set up. Add one in Settings › Server, or turn on Mock in the chat panel to try this.")
+    public init(reason: String = "No server is set up. Add one in Settings › Server, or turn on Mock in the chat panel to try this.") {
+        self.reason = reason
     }
+
+    private var notConnected: ServerError { ServerError(message: reason) }
 
     public func destinations() async throws -> [Destination] { [] }
     public func status() async throws -> BroadcastStatus { BroadcastStatus() }

@@ -79,7 +79,7 @@ struct ChatPanel: View {
     private var mockBinding: Binding<Bool> {
         Binding(get: { broadcast.service.mode == .mock }, set: { on in
             model.profile.broadcast.useMockServer = on
-            broadcast.connect(model.profile.broadcast)
+            model.connectBroadcast()
         })
     }
 
