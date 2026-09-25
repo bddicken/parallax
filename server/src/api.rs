@@ -1,6 +1,6 @@
 //! The control API from docs/protocol.md: REST plus the `/v1/events` WebSocket.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
@@ -261,6 +261,37 @@ pub async fn publish_accounts(state: Arc<AppState>) {
     loop {
         state.events.wait_for_account_change().await;
         state.events.accounts(account_list(&state).await);
+    }
+}
+
+/// While live, checks each platform's viewer count every 30 seconds. Twitch
+/// only refreshes its count about once a minute anyway, and each YouTube check
+/// costs 1 quota unit.
+pub async fn poll_viewers(state: Arc<AppState>) {
+    let mut tick = tokio::time::interval(Duration::from_secs(30));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        let live = state.broadcaster.live_destinations().await;
+        let mut viewers = HashMap::new();
+        let mut record = |id: &str, count: anyhow::Result<Option<i64>>| match count {
+            Ok(Some(n)) => {
+                viewers.insert(id.to_owned(), n);
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!("{e:#}"),
+        };
+        if let Some(twitch) = &state.twitch
+            && live.iter().any(|id| id == "twitch")
+        {
+            record("twitch", twitch.viewers().await);
+        }
+        if let Some(youtube) = &state.youtube
+            && live.iter().any(|id| id == "youtube")
+        {
+            record("youtube", youtube.viewers().await);
+        }
+        state.broadcaster.set_viewers(viewers).await;
     }
 }
 

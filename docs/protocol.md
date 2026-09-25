@@ -22,7 +22,7 @@ Every `/v1` endpoint requires `Authorization: Bearer <token>`. Bodies are JSON, 
 Events:
 
 - `chat.message` → `ChatMessage` `{id, platform, author{id, displayName, avatarURL?, isOwner, isModerator}, text, timestamp}`
-- `broadcast.status` → `BroadcastStatus` `{live, ingestActive, startedAt?, destinations[{destinationID, state, bitrateKbps, error?}]}`
+- `broadcast.status` → `BroadcastStatus` `{live, ingestActive, startedAt?, destinations[{destinationID, state, bitrateKbps, error?, viewers?}]}`. `viewers` is how many people are watching now, where the platform reports it (Twitch, YouTube). While live, the server checks it every 30 s and sends a new status when it changes.
 - `accounts` → `[Account]` `{platform, state: disconnected|pending|connected, login?, displayName?, pending?: DeviceCode, error?}`
 
 Unknown event types must be ignored so either side can add events.

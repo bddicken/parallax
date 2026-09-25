@@ -22,6 +22,28 @@ final class BroadcastModel {
 
     var featuredMessage: ChatMessage? { messages.first { $0.id == featuredMessageID } }
 
+    struct ViewerCount: Identifiable {
+        let id: String
+        let platform: Platform
+        let name: String
+        let viewers: Int
+    }
+
+    /// Viewers on each destination that reports a count, in destination order.
+    var viewerCounts: [ViewerCount] {
+        guard status.live else { return [] }
+        return destinations.compactMap { dest in
+            guard let viewers = status.destinations.first(where: { $0.destinationID == dest.id })?.viewers else { return nil }
+            return ViewerCount(id: dest.id, platform: dest.platform, name: dest.name, viewers: viewers)
+        }
+    }
+
+    /// Everyone watching across platforms. Someone watching on two counts twice.
+    var totalViewers: Int? {
+        let counts = viewerCounts
+        return counts.isEmpty ? nil : counts.reduce(0) { $0 + $1.viewers }
+    }
+
     func connect(_ settings: BroadcastSettings) {
         eventsTask?.cancel()
         eventsTask = nil

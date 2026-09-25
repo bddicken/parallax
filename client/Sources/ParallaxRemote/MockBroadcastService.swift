@@ -29,7 +29,19 @@ public actor MockBroadcastService: BroadcastService {
         broadcast(.status(current))
         try? await Task.sleep(for: .seconds(1.5))
         guard current.live else { return }
-        current.destinations = current.destinations.map { DestinationStatus(destinationID: $0.destinationID, state: .live, bitrateKbps: 6000) }
+        current.destinations = current.destinations.map {
+            DestinationStatus(destinationID: $0.destinationID, state: .live, bitrateKbps: 6000, viewers: Int.random(in: 5...80))
+        }
+        broadcast(.status(current))
+    }
+
+    /// Nudges each live destination's audience up or down a little.
+    private func driftViewers() {
+        guard current.live else { return }
+        for i in current.destinations.indices {
+            guard let viewers = current.destinations[i].viewers else { continue }
+            current.destinations[i].viewers = max(0, viewers + Int.random(in: -3...5))
+        }
         broadcast(.status(current))
     }
 
@@ -77,6 +89,7 @@ public actor MockBroadcastService: BroadcastService {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(Double.random(in: 2...6)))
                     await self?.broadcast(.chat(Self.randomMessage()))
+                    await self?.driftViewers()
                 }
             }
         }

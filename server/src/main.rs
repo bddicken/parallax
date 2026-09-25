@@ -55,6 +55,7 @@ async fn main() -> Result<()> {
     let broadcaster = Broadcaster::new(config.ffmpeg_bin.clone(), ingest.clone(), events.clone());
     let state = Arc::new(AppState { config: config.clone(), store, events, ingest, broadcaster, twitch, youtube });
     tokio::spawn(api::publish_accounts(state.clone()));
+    tokio::spawn(api::poll_viewers(state.clone()));
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(config.addr).await.with_context(|| format!("listening on {}", config.addr))?;

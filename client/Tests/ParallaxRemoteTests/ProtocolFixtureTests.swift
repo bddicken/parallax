@@ -35,6 +35,7 @@ import Testing
 
         guard case .status(let status) = try decode(ServerEvent.self, "event-status") else { Issue.record("not status"); return }
         #expect(status.destinations.map(\.state) == [.live, .error])
+        #expect(status.destinations.map(\.viewers) == [90, nil])
         #expect(status.startedAt != nil)
 
         guard case .accounts(let accounts) = try decode(ServerEvent.self, "event-accounts") else { Issue.record("not accounts"); return }
