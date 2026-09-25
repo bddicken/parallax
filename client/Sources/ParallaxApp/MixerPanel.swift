@@ -57,6 +57,7 @@ private struct ChannelStrip: View {
     let source: AudioSource
     let level: AudioLevel
     @State private var showingOptions = false
+    @State private var showingEQ = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -68,6 +69,15 @@ private struct ChannelStrip: View {
                     SourceWarning(message: error, permission: source.kind.permission)
                 }
                 Spacer()
+                Button { showingEQ.toggle() } label: {
+                    Text("EQ").font(.caption.weight(.semibold))
+                        .foregroundStyle(source.eq.isEnabled && !source.eq.isFlat ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Equalizer")
+                .popover(isPresented: $showingEQ, arrowEdge: .bottom) {
+                    EQEditor(source: source).padding().frame(width: 360)
+                }
                 Button { showingOptions.toggle() } label: { Image(systemName: "slider.horizontal.3") }
                     .buttonStyle(.borderless)
                     .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
@@ -153,6 +163,156 @@ private struct ChannelOptions: View {
 
     private func binding<T>(_ path: WritableKeyPath<AudioSource, T>) -> Binding<T> {
         Binding(get: { source[keyPath: path] }, set: { v in model.updateAudioSource(source.id) { $0[keyPath: path] = v } })
+    }
+}
+
+private struct EQEditor: View {
+    @Environment(AppModel.self) private var model
+    let source: AudioSource
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Toggle("Equalizer", isOn: Binding(get: { source.eq.isEnabled },
+                                                  set: { v in model.updateAudioSource(source.id) { $0.eq.isEnabled = v } }))
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                Spacer()
+                Button("Flat") { model.updateAudioSource(source.id) { $0.eq.gainsDB = EQSettings().gainsDB } }
+                    .controlSize(.small)
+                    .disabled(source.eq.isFlat)
+            }
+            EQCurve(settings: source.eq)
+                .frame(height: 64)
+            HStack(spacing: 0) {
+                ForEach(EQSettings.frequencies.indices, id: \.self) { i in
+                    VStack(spacing: 4) {
+                        Text(String(format: "%+.0f", source.eq.gain(band: i)))
+                            .font(.caption2).monospacedDigit()
+                            .foregroundStyle(source.eq.gain(band: i) == 0 ? .secondary : .primary)
+                        EQFader(value: band(i), label: "\(Self.label(EQSettings.frequencies[i])) Hz")
+                            .frame(height: 120)
+                        Text(Self.label(EQSettings.frequencies[i]))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            .opacity(source.eq.isEnabled ? 1 : 0.5)
+            Text("Drag a band to adjust. Double-click to reset it.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Adjusting any band also turns the EQ on.
+    private func band(_ i: Int) -> Binding<Double> {
+        Binding(get: { source.eq.gain(band: i) }, set: { v in
+            model.updateAudioSource(source.id) { src in
+                if src.eq.gainsDB.count != EQSettings.frequencies.count { src.eq.gainsDB = EQSettings().gainsDB }
+                src.eq.gainsDB[i] = v
+                src.eq.isEnabled = true
+            }
+        })
+    }
+
+    private static func label(_ hz: Double) -> String {
+        hz >= 1000 ? "\(Int(hz / 1000))k" : "\(Int(hz))"
+    }
+}
+
+/// The EQ's combined frequency response from 20 Hz to 20 kHz.
+private struct EQCurve: View {
+    let settings: EQSettings
+    private static let range = 15.0
+
+    var body: some View {
+        Canvas { context, size in
+            let x = { (hz: Double) in size.width * log10(hz / 20) / 3 }
+            let y = { (db: Double) in size.height / 2 * (1 - min(max(db, -Self.range), Self.range) / Self.range) }
+            for hz in EQSettings.frequencies {
+                context.stroke(Path { $0.move(to: CGPoint(x: x(hz), y: 0)); $0.addLine(to: CGPoint(x: x(hz), y: size.height)) },
+                               with: .color(.secondary.opacity(0.15)), lineWidth: 1)
+            }
+            context.stroke(Path { $0.move(to: CGPoint(x: 0, y: y(0))); $0.addLine(to: CGPoint(x: size.width, y: y(0))) },
+                           with: .color(.secondary.opacity(0.4)), lineWidth: 1)
+            let steps = max(2, Int(size.width / 2))
+            let curve = Path { p in
+                for step in 0...steps {
+                    let fraction = Double(step) / Double(steps)
+                    let hz = 20 * pow(1000, fraction)
+                    let point = CGPoint(x: size.width * fraction,
+                                        y: settings.isEnabled ? y(GraphicEQ.responseDB(settings, at: hz)) : y(0))
+                    if step == 0 { p.move(to: point) } else { p.addLine(to: point) }
+                }
+            }
+            var fill = curve
+            fill.addLine(to: CGPoint(x: size.width, y: y(0)))
+            fill.addLine(to: CGPoint(x: 0, y: y(0)))
+            fill.closeSubpath()
+            context.fill(fill, with: .color(.accentColor.opacity(0.15)))
+            context.stroke(curve, with: .color(settings.isEnabled ? .accentColor : .secondary), lineWidth: 1.5)
+        }
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// Vertical fader over `EQSettings.gainRange`. Drags are relative, so a
+/// click doesn't jump the value; double-click resets to 0.
+private struct EQFader: View {
+    @Binding var value: Double
+    let label: String
+    @State private var dragStart: Double?
+
+    private static let range = EQSettings.gainRange
+    private static let step = 0.5
+
+    var body: some View {
+        GeometryReader { geo in
+            let h = geo.size.height, mid = geo.size.width / 2
+            let y = { (v: Double) in h * (1 - (v - Self.range.lowerBound) / (Self.range.upperBound - Self.range.lowerBound)) }
+            ZStack(alignment: .topLeading) {
+                Capsule().fill(.quaternary)
+                    .frame(width: 4, height: h)
+                    .offset(x: mid - 2)
+                Rectangle().fill(.secondary.opacity(0.5))
+                    .frame(width: 10, height: 1)
+                    .offset(x: mid - 5, y: y(0))
+                Rectangle().fill(Color.accentColor)
+                    .frame(width: 4, height: abs(y(value) - y(0)))
+                    .offset(x: mid - 2, y: min(y(value), y(0)))
+                Capsule().fill(.white)
+                    .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
+                    .frame(width: 18, height: 8)
+                    .offset(x: mid - 9, y: y(value) - 4)
+            }
+            .frame(width: geo.size.width, height: h)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { drag in
+                        let start = dragStart ?? value
+                        dragStart = start
+                        let span = Self.range.upperBound - Self.range.lowerBound
+                        let raw = start - drag.translation.height / h * span
+                        let snapped = (raw / Self.step).rounded() * Self.step
+                        let clamped = min(max(snapped, Self.range.lowerBound), Self.range.upperBound)
+                        if clamped != value { value = clamped }
+                    }
+                    .onEnded { _ in dragStart = nil }
+            )
+            .onTapGesture(count: 2) { value = 0 }
+        }
+        .accessibilityElement()
+        .accessibilityLabel(label)
+        .accessibilityValue(String(format: "%+.1f dB", value))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: value = min(value + 1, Self.range.upperBound)
+            case .decrement: value = max(value - 1, Self.range.lowerBound)
+            @unknown default: break
+            }
+        }
     }
 }
 

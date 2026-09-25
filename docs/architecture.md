@@ -32,7 +32,7 @@ Image / Color / Chat overlays ────────────────�
                                                               Metal, 30/60)  └─▶ Uplink        (HaishinKit: H.264 + AAC → SRT)
 Mic / interface ─┐
 System audio ────┴─▶ PCMNormalizer ─▶ DelayBuffer ─▶ ChannelStrip ─▶ AudioMixer ─▶ same sinks
-                     (48 kHz float)   (sync delay,   (HPF, gate,     (10 ms chunks,
+                     (48 kHz float)   (sync delay,   (HPF, gate, EQ, (10 ms chunks,
                                       jitter, drift) gain, mute)     host clock, limiter)
 ```
 

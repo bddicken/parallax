@@ -211,6 +211,28 @@ public struct NoiseGateSettings: Codable, Hashable, Sendable {
     }
 }
 
+/// Ten-band graphic EQ at the ISO octave centers.
+public struct EQSettings: Codable, Hashable, Sendable {
+    public static let frequencies: [Double] = [31, 62, 125, 250, 500, 1_000, 2_000, 4_000, 8_000, 16_000]
+    public static let gainRange: ClosedRange<Double> = -12...12
+
+    public var isEnabled: Bool = false
+    /// One gain per entry in `frequencies`.
+    public var gainsDB: [Double] = Array(repeating: 0, count: EQSettings.frequencies.count)
+
+    public init(isEnabled: Bool = false, gainsDB: [Double] = Array(repeating: 0, count: EQSettings.frequencies.count)) {
+        self.isEnabled = isEnabled
+        self.gainsDB = gainsDB
+    }
+
+    public var isFlat: Bool { gainsDB.allSatisfy { $0 == 0 } }
+
+    /// Gain for band `i`, clamped to `gainRange`; 0 for a missing band.
+    public func gain(band i: Int) -> Double {
+        gainsDB.indices.contains(i) ? min(max(gainsDB[i], Self.gainRange.lowerBound), Self.gainRange.upperBound) : 0
+    }
+}
+
 public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var name: String
@@ -223,11 +245,12 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
     public var firstChannel: Int
     public var highPassEnabled: Bool
     public var gate: NoiseGateSettings
+    public var eq: EQSettings
 
     public init(
         id: UUID = UUID(), name: String, kind: AudioSourceKind, gainDB: Double = 0, isMuted: Bool = false,
         delayMs: Int = 0, channelMode: ChannelMode = .mono, firstChannel: Int = 0,
-        highPassEnabled: Bool = false, gate: NoiseGateSettings = NoiseGateSettings()
+        highPassEnabled: Bool = false, gate: NoiseGateSettings = NoiseGateSettings(), eq: EQSettings = EQSettings()
     ) {
         self.id = id
         self.name = name
@@ -239,6 +262,23 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
         self.firstChannel = firstChannel
         self.highPassEnabled = highPassEnabled
         self.gate = gate
+        self.eq = eq
+    }
+
+    // Decodes profiles saved before newer fields existed.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        kind = try c.decode(AudioSourceKind.self, forKey: .kind)
+        gainDB = try c.decode(Double.self, forKey: .gainDB)
+        isMuted = try c.decode(Bool.self, forKey: .isMuted)
+        delayMs = try c.decode(Int.self, forKey: .delayMs)
+        channelMode = try c.decode(ChannelMode.self, forKey: .channelMode)
+        firstChannel = try c.decode(Int.self, forKey: .firstChannel)
+        highPassEnabled = try c.decode(Bool.self, forKey: .highPassEnabled)
+        gate = try c.decode(NoiseGateSettings.self, forKey: .gate)
+        eq = try c.decodeIfPresent(EQSettings.self, forKey: .eq) ?? EQSettings()
     }
 }
 
