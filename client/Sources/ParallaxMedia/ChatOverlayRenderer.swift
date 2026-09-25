@@ -26,17 +26,20 @@ enum ChatOverlayRenderer {
     /// times the text size.
     static func feed(_ lines: [ChatOverlayLine], size: CGSize = feedSize, scale: CGFloat = 1) -> CIImage {
         draw(size: size) { size in
-            let pad = 14 * scale, gap = 8 * scale, radius = 12 * scale
+            // Left, top, and bottom are a bit tighter than the right edge.
+            let pad = 10.5 * scale, padRight = 14 * scale, gap = 4 * scale, radius = 12 * scale
             var y: CGFloat = 0
             for line in lines.reversed() {
                 let text = attributed(line, authorSize: 18 * scale, textSize: 21 * scale)
-                let bounds = text.boundingRect(with: CGSize(width: size.width - pad * 2, height: .greatestFiniteMagnitude),
+                let bounds = text.boundingRect(with: CGSize(width: size.width - pad - padRight, height: .greatestFiniteMagnitude),
                                                options: [.usesLineFragmentOrigin, .usesFontLeading])
                 let card = CGRect(x: 0, y: y, width: size.width, height: ceil(bounds.height) + pad * 2)
                 guard card.maxY <= size.height else { break }
                 NSColor(white: 0, alpha: 0.65).setFill()
                 NSBezierPath(roundedRect: card, xRadius: radius, yRadius: radius).fill()
-                text.draw(with: card.insetBy(dx: pad, dy: pad), options: [.usesLineFragmentOrigin, .usesFontLeading])
+                let textRect = CGRect(x: card.minX + pad, y: card.minY + pad,
+                                      width: card.width - pad - padRight, height: card.height - pad * 2)
+                text.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading])
                 y = card.maxY + gap
             }
         }
