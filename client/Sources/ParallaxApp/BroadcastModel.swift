@@ -123,6 +123,20 @@ final class BroadcastModel {
         await refreshDestinations()
     }
 
+    /// Saves (or with an empty key, removes) the LinkedIn destination, keeping
+    /// the other URL-and-key destinations. The server keeps their saved keys.
+    @discardableResult
+    func saveLinkedIn(rtmpURL: String, streamKey: String) async -> Bool {
+        var list = destinations.filter { $0.platform == .custom }
+        if !streamKey.isEmpty {
+            list.append(Destination(id: "linkedin", platform: .linkedin, name: "LinkedIn", enabled: true,
+                                    rtmpURL: rtmpURL, streamKey: streamKey))
+        }
+        let saved = await perform { try await $0.saveDestinations(list) }
+        await refreshDestinations()
+        return saved
+    }
+
     func send(_ text: String, to platforms: [Platform]?) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -175,6 +189,7 @@ extension Platform {
         case .youtube: RGBAColor(red: 1, green: 0.2, blue: 0.2)
         case .x: RGBAColor(red: 0.85, green: 0.85, blue: 0.9)
         case .twitch: RGBAColor(red: 0.64, green: 0.4, blue: 1)
+        case .linkedin: RGBAColor(red: 0.04, green: 0.4, blue: 0.76)
         case .custom: RGBAColor(red: 0.5, green: 0.8, blue: 1)
         }
     }
@@ -184,6 +199,7 @@ extension Platform {
         case .youtube: "play.rectangle.fill"
         case .x: "xmark"
         case .twitch: "gamecontroller.fill"
+        case .linkedin: "briefcase.fill"
         case .custom: "antenna.radiowaves.left.and.right"
         }
     }

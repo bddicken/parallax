@@ -16,8 +16,8 @@ import Testing
 
     @Test func decodesDestinationsAndIngest() throws {
         let destinations = try decode([Destination].self, "destinations")
-        #expect(destinations.map(\.platform) == [.twitch, .youtube, .custom])
-        #expect(destinations[2].rtmpURL == "rtmp://127.0.0.1:1935/test")
+        #expect(destinations.map(\.platform) == [.twitch, .youtube, .linkedin, .custom])
+        #expect(destinations[3].rtmpURL == "rtmp://127.0.0.1:1935/test")
         #expect(try decode(IngestInfo.self, "ingest").srtURL.hasPrefix("srt://"))
     }
 

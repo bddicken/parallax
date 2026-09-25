@@ -177,7 +177,10 @@ private struct StreamingSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Streams \(String(size.width)) × \(String(size.height)) at \(model.profile.output.fps) fps, H.264 \(String(format: "%.1f", Double(stream.videoBitrateKbps) / 1000)) Mbps. Parallax uploads this once; the server relays it unchanged to every platform, so pick a bitrate your upload can sustain (aim for under ~70% of it).")
                     if stream.videoBitrateKbps > 6_000 || stream.keyframeIntervalSeconds != 2 {
-                        Text("Twitch needs 2 s keyframes and at most 6 Mbps.").foregroundStyle(.orange)
+                        Text("Twitch and LinkedIn need 2 s keyframes and at most 6 Mbps.").foregroundStyle(.orange)
+                    }
+                    if model.profile.output.fps > 30 {
+                        Text("LinkedIn takes at most 30 fps.").foregroundStyle(.orange)
                     }
                 }
                 .foregroundStyle(.secondary)
@@ -215,6 +218,7 @@ private struct ServerSettingsView: View {
                     AccountRow(platform: .twitch)
                     AccountRow(platform: .youtube)
                 }
+                LinkedInSection()
             }
             if let error = model.broadcast.connectionError {
                 Text(error).foregroundStyle(.red)
@@ -224,6 +228,51 @@ private struct ServerSettingsView: View {
         .onAppear {
             url = model.profile.broadcast.serverURL
             token = Keychain.read("server-token") ?? ""
+        }
+    }
+}
+
+/// LinkedIn has no sign-in (its Live API is partner-only), so the server
+/// pushes to the stream URL and key from LinkedIn Live Studio. The key is
+/// per event, so it's pasted in again for each one.
+private struct LinkedInSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var url = ""
+    @State private var key = ""
+
+    private var saved: Destination? { model.broadcast.destinations.first { $0.platform == .linkedin } }
+
+    var body: some View {
+        Section {
+            TextField("Stream URL", text: $url, prompt: Text("rtmps://…"))
+            SecureField("Stream key", text: $key, prompt: Text(saved == nil ? "" : "Saved. Paste a new one for each event"))
+            HStack {
+                if saved != nil {
+                    Button("Remove") { save(url: "", key: "") }
+                }
+                Spacer()
+                Button("Save") { save(url: url, key: key) }
+                    .disabled(url.trimmingCharacters(in: .whitespaces).isEmpty || key.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        } header: {
+            HStack {
+                PlatformBadge(platform: .linkedin)
+                Text("LinkedIn")
+            }
+        } footer: {
+            Text("In LinkedIn Live Studio, schedule an event, choose Prepare to go live › Get URL, and paste the stream URL and key here. After going live in Parallax, click Go live in Live Studio too. Each event has its own key. LinkedIn takes up to 1080p, 30 fps, and 6 Mbps, and has no chat.")
+                .foregroundStyle(.secondary)
+        }
+        .onAppear { url = saved?.rtmpURL ?? "" }
+        .onChange(of: saved?.rtmpURL) { url = saved?.rtmpURL ?? url }
+    }
+
+    private func save(url: String, key: String) {
+        Task {
+            if await model.broadcast.saveLinkedIn(rtmpURL: url.trimmingCharacters(in: .whitespaces),
+                                                  streamKey: key.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                self.key = ""
+            }
         }
     }
 }

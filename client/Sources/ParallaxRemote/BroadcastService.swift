@@ -14,6 +14,9 @@ public enum BroadcastMode: Sendable {
 public protocol BroadcastService: Sendable {
     var mode: BroadcastMode { get }
     func destinations() async throws -> [Destination]
+    /// Replaces the destinations set up by URL and key (`custom`, `linkedin`).
+    /// A nil `streamKey` keeps the saved one.
+    func saveDestinations(_ destinations: [Destination]) async throws
     func status() async throws -> BroadcastStatus
     func ingest() async throws -> IngestInfo
     func startBroadcast(_ request: StartBroadcastRequest) async throws
@@ -42,6 +45,7 @@ public struct OfflineBroadcastService: BroadcastService {
     }
 
     public func destinations() async throws -> [Destination] { [] }
+    public func saveDestinations(_ destinations: [Destination]) async throws { throw notConnected }
     public func status() async throws -> BroadcastStatus { BroadcastStatus() }
     public func ingest() async throws -> IngestInfo { throw notConnected }
     public func startBroadcast(_ request: StartBroadcastRequest) async throws { throw notConnected }
@@ -73,6 +77,10 @@ public final class HTTPBroadcastService: BroadcastService {
     }
 
     public func destinations() async throws -> [Destination] { try await get("v1/destinations") }
+
+    public func saveDestinations(_ destinations: [Destination]) async throws {
+        try await send("v1/destinations", method: "PUT", body: destinations)
+    }
     public func status() async throws -> BroadcastStatus { try await get("v1/status") }
     public func ingest() async throws -> IngestInfo { try await get("v1/ingest") }
 
@@ -141,7 +149,11 @@ public final class HTTPBroadcastService: BroadcastService {
     }
 
     private func post(_ path: String, body: some Encodable) async throws {
-        var r = request(path, method: "POST")
+        try await send(path, method: "POST", body: body)
+    }
+
+    private func send(_ path: String, method: String, body: some Encodable) async throws {
+        var r = request(path, method: method)
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
         r.httpBody = try WireCoding.encoder().encode(body)
         _ = try await perform(r)

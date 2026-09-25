@@ -4,18 +4,20 @@ import Foundation
 // docs/protocol-fixtures are decoded by tests on both sides.
 
 public enum Platform: String, Codable, CaseIterable, Sendable {
-    case youtube, x, twitch, custom
+    case youtube, x, twitch, linkedin, custom
 
     public var displayName: String {
         switch self {
         case .youtube: "YouTube"
         case .x: "X"
         case .twitch: "Twitch"
+        case .linkedin: "LinkedIn"
         case .custom: "Custom RTMP"
         }
     }
 
-    public var supportsChat: Bool { self != .custom }
+    /// LinkedIn Live has no chat API open to us, so it's video only.
+    public var supportsChat: Bool { self != .custom && self != .linkedin }
 }
 
 public struct Destination: Codable, Identifiable, Hashable, Sendable {

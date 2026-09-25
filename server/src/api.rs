@@ -20,6 +20,7 @@ use crate::{
     config::Config,
     events::Events,
     ingest::Ingest,
+    linkedin,
     protocol::{
         Account, AccountState, Destination, IngestInfo, Platform, SendChatRequest, ServerEvent, StartBroadcastRequest,
     },
@@ -127,20 +128,24 @@ async fn destinations(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(list.into_iter().map(|d| Destination { stream_key: None, ..d }).collect::<Vec<_>>())
 }
 
-/// Replaces the custom RTMP destinations. Platform destinations come from
-/// connected accounts, so they're ignored here. A missing stream key keeps
-/// the saved one.
+/// Replaces the destinations set up by URL and stream key (`custom` and
+/// `linkedin`). Twitch and YouTube come from connected accounts, so they're
+/// ignored here. A missing stream key keeps the saved one.
 async fn put_destinations(State(state): State<Arc<AppState>>, Json(list): Json<Vec<Destination>>) -> AppResult<StatusCode> {
     let mut custom = Vec::new();
-    for mut d in list.into_iter().filter(|d| d.platform == Platform::Custom) {
+    for mut d in list.into_iter().filter(|d| matches!(d.platform, Platform::Custom | Platform::Linkedin)) {
         if d.id.is_empty() || d.id == "twitch" || d.id == "youtube" {
             return Err(ApiError::bad_request("Each custom destination needs its own id."));
         }
+        d.rtmp_url = d.rtmp_url.map(|u| u.trim().to_owned());
         if !d.rtmp_url.as_deref().is_some_and(|u| u.starts_with("rtmp://") || u.starts_with("rtmps://")) {
             return Err(ApiError::bad_request(format!("{}: rtmpURL must start with rtmp:// or rtmps://", d.name)));
         }
         if d.stream_key.is_none() {
             d.stream_key = state.store.get().custom_destinations.into_iter().find(|old| old.id == d.id).and_then(|old| old.stream_key);
+        }
+        if d.platform == Platform::Linkedin {
+            linkedin::prepare(&mut d).map_err(ApiError::bad_request)?;
         }
         custom.push(d);
     }
@@ -170,7 +175,7 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
                     .map_err(|e| format!("{e:#}")),
                 None => Err("YouTube isn't set up on the server.".into()),
             },
-            Platform::Custom => {
+            Platform::Custom | Platform::Linkedin => {
                 let base = dest.rtmp_url.clone().unwrap_or_default();
                 Ok(match &dest.stream_key {
                     Some(key) if !key.is_empty() => format!("{}/{key}", base.trim_end_matches('/')),

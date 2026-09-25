@@ -12,6 +12,13 @@
     "enabled": true
   },
   {
+    "id": "linkedin",
+    "platform": "linkedin",
+    "name": "LinkedIn",
+    "enabled": true,
+    "rtmpURL": "rtmps://live-ingest.linkedin.com:443/live"
+  },
+  {
     "id": "local-test",
     "platform": "custom",
     "name": "Local test",

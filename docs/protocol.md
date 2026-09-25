@@ -10,7 +10,7 @@ Every `/v1` endpoint requires `Authorization: Bearer <token>`. Bodies are JSON, 
 | GET | `/v1/status` | → `BroadcastStatus` |
 | GET | `/v1/ingest` | → `IngestInfo` (`srtURL`, `rtmpURL`) |
 | GET | `/v1/destinations` | → `[Destination]` (stream keys omitted) |
-| PUT | `/v1/destinations` | `[Destination]` → 204. Replaces the `custom` destinations; a missing `streamKey` keeps the saved one. Platform destinations come from connected accounts. |
+| PUT | `/v1/destinations` | `[Destination]` → 204. Replaces the destinations set by URL and key (`custom` and `linkedin`); a missing `streamKey` keeps the saved one. `linkedin` needs a key, which is per event. Twitch and YouTube come from connected accounts. |
 | POST | `/v1/broadcast/start` | `{destinationIDs: [..], title?, privacy?: public\|unlisted\|private}` → 204. `title` and `privacy` apply where a platform creates a video per broadcast (YouTube). |
 | POST | `/v1/broadcast/stop` | → 204 |
 | POST | `/v1/chat/send` | `{text, platforms?}` → 204 (no `platforms` means every platform with chat open; YouTube chat exists only while live there) |
@@ -27,4 +27,4 @@ Events:
 
 Unknown event types must be ignored so either side can add events.
 
-Media: the client pushes H.264 + AAC as MPEG-TS over SRT to `IngestInfo.srtURL` (the `streamid` carries the ingest key), or as FLV to `rtmpURL` as a fallback. The server relays it unchanged, so the client's encoder settings must suit every destination: Twitch needs H.264, a 2 s keyframe interval, and at most 6 Mbps; YouTube accepts that too.
+Media: the client pushes H.264 + AAC as MPEG-TS over SRT to `IngestInfo.srtURL` (the `streamid` carries the ingest key), or as FLV to `rtmpURL` as a fallback. The server relays it unchanged, so the client's encoder settings must suit every destination: Twitch needs H.264, a 2 s keyframe interval, and at most 6 Mbps; YouTube accepts that too, and LinkedIn does at up to 1080p and 30 fps.

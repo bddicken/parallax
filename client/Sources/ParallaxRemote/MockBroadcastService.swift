@@ -9,7 +9,7 @@ public actor MockBroadcastService: BroadcastService {
     private var subscribers: [UUID: AsyncThrowingStream<ServerEvent, Error>.Continuation] = [:]
     private var chatter: Task<Void, Never>?
 
-    private let catalog = [
+    private var catalog = [
         Destination(id: "yt", platform: .youtube, name: "YouTube", enabled: true),
         Destination(id: "x", platform: .x, name: "X", enabled: true),
         Destination(id: "twitch", platform: .twitch, name: "Twitch", enabled: false),
@@ -18,6 +18,11 @@ public actor MockBroadcastService: BroadcastService {
     public init() {}
 
     public func destinations() async throws -> [Destination] { catalog }
+
+    public func saveDestinations(_ destinations: [Destination]) async throws {
+        catalog.removeAll { $0.platform == .custom || $0.platform == .linkedin }
+        catalog += destinations.map { Destination(id: $0.id, platform: $0.platform, name: $0.name, enabled: $0.enabled) }
+    }
     public func status() async throws -> BroadcastStatus { current }
     public func ingest() async throws -> IngestInfo {
         IngestInfo(srtURL: "srt://127.0.0.1:9000?streamid=mock", rtmpURL: "rtmp://127.0.0.1/live/mock")
