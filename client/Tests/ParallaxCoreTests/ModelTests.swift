@@ -59,10 +59,13 @@ import Testing
     @Test func profilesFromOlderBuildsGetDefaultsForNewSettings() throws {
         var old = Profile.makeDefault()
         old.monitor = MonitorSettings(output: .device(uid: "x"), volume: 0.3)
+        old.chatTextSize = .large
         var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(old)) as! [String: Any]
         json["monitor"] = nil
+        json["chatTextSize"] = nil
         let decoded = try JSONDecoder().decode(Profile.self, from: JSONSerialization.data(withJSONObject: json))
         #expect(decoded.monitor == MonitorSettings())
+        #expect(decoded.chatTextSize == .small)
         #expect(decoded.scenes == old.scenes)
     }
 

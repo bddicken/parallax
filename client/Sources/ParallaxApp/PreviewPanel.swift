@@ -5,7 +5,8 @@ import SwiftUI
 
 /// The program output with direct manipulation:
 /// - click a source to select it, or drag any source to move it
-/// - drag a corner handle to resize (aspect kept; hold Shift for free resize)
+/// - drag a corner handle to resize (aspect kept; hold Shift for free resize;
+///   the chat feed is the reverse, since its text reflows)
 /// - edges snap to the canvas, safe margins, and other sources (hold ⌘ to disable)
 /// - arrow keys nudge (Shift for bigger steps), Delete removes
 struct PreviewPanel: View {
@@ -130,8 +131,10 @@ struct PreviewPanel: View {
                 }
                 guard let drag, value.translation != .zero else { return }
                 let flags = NSEvent.modifierFlags
+                // Chat reflows to any shape, so it resizes freely; Shift flips that.
+                let reflows = model.chatItem(.chatFeed)?.id == drag.itemID
                 let (frame, lines) = drag.frame(translation: value.translation, canvas: size,
-                                                keepAspect: !flags.contains(.shift), snapping: !flags.contains(.command))
+                                                keepAspect: flags.contains(.shift) == reflows, snapping: !flags.contains(.command))
                 guides = lines
                 let undoName = drag.mode == .move ? "Move Source" : "Resize Source"
                 model.updateItem(drag.itemID, undo: undoName) { $0.frame = frame }

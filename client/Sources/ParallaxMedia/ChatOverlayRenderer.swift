@@ -17,23 +17,29 @@ public struct ChatOverlayLine: Hashable, Sendable {
 /// Draws chat into images the compositor places like any other source.
 @MainActor
 enum ChatOverlayRenderer {
-    static let feedSize = CGSize(width: 640, height: 900)
+    static let feedSize = CGSize(width: 500, height: 990)
     static let bannerSize = CGSize(width: 1600, height: 240)
 
     /// Newest message at the bottom, older ones stacked above until full.
-    static func feed(_ lines: [ChatOverlayLine]) -> CIImage {
-        draw(size: feedSize) { size in
-            let pad: CGFloat = 18, gap: CGFloat = 10
+    /// Drawn at the pixel size of its box on the canvas so text keeps its
+    /// size and reflows as the box is resized; `scale` is canvas height / 1080
+    /// times the text size.
+    static func feed(_ lines: [ChatOverlayLine], size: CGSize = feedSize, scale: CGFloat = 1) -> CIImage {
+        draw(size: size) { size in
+            // Left, top, and bottom are a bit tighter than the right edge.
+            let pad = 10.5 * scale, padRight = 14 * scale, gap = 4 * scale, radius = 12 * scale
             var y: CGFloat = 0
             for line in lines.reversed() {
-                let text = attributed(line, authorSize: 22, textSize: 24)
-                let bounds = text.boundingRect(with: CGSize(width: size.width - pad * 2, height: .greatestFiniteMagnitude),
+                let text = attributed(line, authorSize: 18 * scale, textSize: 21 * scale)
+                let bounds = text.boundingRect(with: CGSize(width: size.width - pad - padRight, height: .greatestFiniteMagnitude),
                                                options: [.usesLineFragmentOrigin, .usesFontLeading])
                 let card = CGRect(x: 0, y: y, width: size.width, height: ceil(bounds.height) + pad * 2)
                 guard card.maxY <= size.height else { break }
                 NSColor(white: 0, alpha: 0.65).setFill()
-                NSBezierPath(roundedRect: card, xRadius: 14, yRadius: 14).fill()
-                text.draw(with: card.insetBy(dx: pad, dy: pad), options: [.usesLineFragmentOrigin, .usesFontLeading])
+                NSBezierPath(roundedRect: card, xRadius: radius, yRadius: radius).fill()
+                let textRect = CGRect(x: card.minX + pad, y: card.minY + pad,
+                                      width: card.width - pad - padRight, height: card.height - pad * 2)
+                text.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading])
                 y = card.maxY + gap
             }
         }
@@ -68,7 +74,7 @@ enum ChatOverlayRenderer {
     }
 
     private static func draw(size: CGSize, _ body: (CGSize) -> Void) -> CIImage {
-        let ctx = CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0,
+        let ctx = CGContext(data: nil, width: max(1, Int(size.width)), height: max(1, Int(size.height)), bitsPerComponent: 8, bytesPerRow: 0,
                             space: CGColorSpace(name: CGColorSpace.sRGB)!,
                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         NSGraphicsContext.saveGraphicsState()

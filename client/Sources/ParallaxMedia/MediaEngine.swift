@@ -34,8 +34,14 @@ public final class MediaEngine {
     public var onVideoSourceResolved: ((UUID, VideoSourceKind) -> Void)?
     public var onAudioSourceResolved: ((UUID, AudioSourceKind) -> Void)?
 
+    private var feedLines: [ChatOverlayLine] = []
+    private var feedSize = ChatOverlayRenderer.feedSize
+    private var feedScale: CGFloat = 1
+    private var chatTextSize = ChatTextSize.small
     private var feedImage = ChatOverlayRenderer.feed([])
     private var featuredImage: CIImage?
+    private var scenes: [StudioScene] = []
+    private var programID: UUID?
 
     public init() {
         compositor = Compositor(registry: registry, sinks: sinks)
@@ -88,6 +94,9 @@ public final class MediaEngine {
         }
 
         compositor.update(scenes: profile.scenes, output: profile.output)
+        scenes = profile.scenes
+        chatTextSize = profile.chatTextSize
+        resizeChatFeed()
         applyMonitor(profile.monitor)
     }
 
@@ -140,6 +149,8 @@ public final class MediaEngine {
 
     public func setProgram(_ sceneID: UUID?, transition: TransitionSettings) {
         compositor.setProgram(sceneID, transition: transition)
+        programID = sceneID
+        resizeChatFeed()
     }
 
     /// Pixel size of a source's current image, if it has produced one.
@@ -163,8 +174,39 @@ public final class MediaEngine {
     // MARK: Chat overlays
 
     public func updateChat(feed: [ChatOverlayLine], featured: ChatOverlayLine?) {
-        feedImage = ChatOverlayRenderer.feed(feed)
+        feedLines = feed
+        feedImage = renderFeed()
         featuredImage = featured.map(ChatOverlayRenderer.banner)
+        pushChatImages()
+    }
+
+    /// Draws the feed at its box's pixel size in the live scene, so resizing
+    /// the box reflows messages instead of scaling the text. Text scales with
+    /// the canvas and the chosen text size.
+    private func resizeChatFeed() {
+        let size = chatFeedBoxSize() ?? feedSize
+        let scale = CGFloat(max(canvas.height, 1)) / 1080 * chatTextSize.scale
+        guard size != feedSize || scale != feedScale else { return }
+        feedSize = size
+        feedScale = scale
+        feedImage = renderFeed()
+        pushChatImages()
+    }
+
+    private func chatFeedBoxSize() -> CGSize? {
+        guard canvas.width > 0, canvas.height > 0,
+              let scene = scenes.first(where: { $0.id == programID }) else { return nil }
+        let feedIDs = Set(videoSources.values.filter { $0.kind == .chatFeed }.map(\.id))
+        guard let item = scene.items.last(where: { feedIDs.contains($0.sourceID) }) else { return nil }
+        let rect = item.frame.denormalized(in: CGSize(width: canvas.width, height: canvas.height))
+        return CGSize(width: rect.width.rounded(), height: rect.height.rounded())
+    }
+
+    private func renderFeed() -> CIImage {
+        ChatOverlayRenderer.feed(feedLines, size: feedSize, scale: feedScale)
+    }
+
+    private func pushChatImages() {
         for (id, source) in videoSources {
             guard let node = registry[id] as? StaticImageNode else { continue }
             switch source.kind {
