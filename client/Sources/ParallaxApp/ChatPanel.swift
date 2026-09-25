@@ -98,6 +98,9 @@ private struct PopOutChatMenu: View {
 
     var body: some View {
         Menu {
+            if broadcast.xChatPage != nil {
+                Button("Read X Chat in Parallax…", action: broadcast.showXChat)
+            }
             Section("Open Chats In") {
                 ForEach(BrowserWindows.browsers()) { browser in
                     Button {
@@ -116,10 +119,10 @@ private struct PopOutChatMenu: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .disabled(broadcast.chatPages.isEmpty)
+        .disabled(broadcast.chatPages.isEmpty && broadcast.xChatPage == nil)
         .help(broadcast.chatPages.isEmpty
               ? "Pop out each platform's chat in your browser. Twitch works once connected, YouTube once you go live there, and X once the server has X_USERNAME."
-              : "Pop out each platform's chat in a browser you pick.")
+              : "Pop out each platform's chat in a browser you pick, or read X chat in Parallax.")
     }
 }
 
