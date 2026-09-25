@@ -20,6 +20,10 @@ final class AppModel {
 
     let devices = DeviceCatalog()
     let broadcast = BroadcastModel()
+    /// parallax-server run by the app, when Settings › Server says "This Mac".
+    let localServer: LocalServer
+    /// Platform settings for `localServer` (from the Keychain).
+    private(set) var localServerCredentials = LocalServerCredentials.load()
     var selectedItemID: UUID?
     var levels: [UUID: AudioLevel] = [:]
     var masterLevel = AudioLevel.silent
@@ -49,6 +53,8 @@ final class AppModel {
     init() {
         let firstRun = !FileManager.default.fileExists(atPath: store.url.path)
         profile = store.load()
+        // Next to the profile, so a scratch profile (PARALLAX_PROFILE) gets its own sign-ins.
+        localServer = LocalServer(directory: store.url.deletingLastPathComponent().appending(path: "Server"))
         engine.onLevels = { [weak self] levels in
             self?.levels = levels.inputs
             self?.masterLevel = levels.master
@@ -86,6 +92,7 @@ final class AppModel {
             }
         }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
+        localServer.onStateChanged = { [weak self] _ in self?.updateBroadcastConnection() }
         // Save identities that sources re-found (renumbered display, replugged
         // camera) so the next launch goes straight to the right device.
         engine.onVideoSourceResolved = { [weak self] id, kind in
@@ -105,7 +112,7 @@ final class AppModel {
         if firstRun { addDefaultDevices() }
         engine.apply(profile)
         engine.setProgram(profile.programSceneID, transition: TransitionSettings(kind: .cut))
-        broadcast.connect(profile.broadcast)
+        connectBroadcast()
         #if DEBUG
         // Lets screenshots show selection chrome without driving the mouse.
         if ProcessInfo.processInfo.environment["PARALLAX_DEBUG_SELECT_TOP"] != nil {
@@ -536,6 +543,44 @@ final class AppModel {
     }
 
     // MARK: Broadcasting
+
+    /// Connects to the server the settings name, starting (or stopping) the
+    /// built-in one as needed. `force` reconnects even if nothing changed.
+    func connectBroadcast(force: Bool = false) {
+        switch profile.broadcast.serverMode {
+        case .local: localServer.run(with: localServerCredentials)
+        case .remote: localServer.stop()
+        }
+        updateBroadcastConnection(force: force)
+    }
+
+    func saveLocalServerCredentials(_ credentials: LocalServerCredentials) {
+        credentials.save()
+        localServerCredentials = credentials
+        connectBroadcast()
+    }
+
+    private func updateBroadcastConnection(force: Bool = false) {
+        let settings = profile.broadcast
+        let connection: BroadcastModel.Connection
+        switch settings.serverMode {
+        case .local:
+            if let endpoint = localServer.state.endpoint {
+                connection = .server(endpoint.url, token: endpoint.token)
+            } else if settings.useMockServer {
+                connection = .mock
+            } else {
+                connection = .offline(reason: localServer.state.problem)
+            }
+        case .remote:
+            if let url = URL(string: settings.serverURL), url.scheme != nil {
+                connection = .server(url, token: BroadcastModel.remoteServerToken)
+            } else {
+                connection = settings.useMockServer ? .mock : .offline(reason: nil)
+            }
+        }
+        broadcast.connect(connection, force: force)
+    }
 
     /// Starts sending video to the server, then asks it to go live on
     /// `destinationIDs`. The mock server only pretends, so nothing is sent.

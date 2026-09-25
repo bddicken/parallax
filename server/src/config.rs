@@ -14,11 +14,17 @@ pub struct Config {
     /// Host name the client should send video to. Defaults to the host the
     /// client used to reach the API.
     pub public_host: Option<String>,
+    /// IP the ingest listens on. None means every interface; the app's
+    /// built-in server uses 127.0.0.1.
+    pub ingest_bind: Option<String>,
     pub srt_port: u16,
     pub rtmp_port: u16,
     pub mediamtx_api_port: u16,
     pub mediamtx_bin: String,
     pub ffmpeg_bin: String,
+    /// Exit when this process does. Set by the Parallax app when it runs the
+    /// server itself, so a crashed app doesn't leave the server behind.
+    pub parent_pid: Option<u32>,
     pub twitch: Option<TwitchConfig>,
     pub youtube: Option<YouTubeConfig>,
     pub x: Option<XConfig>,
@@ -90,11 +96,15 @@ impl Config {
             data_dir: var("PARALLAX_DATA_DIR").unwrap_or_else(|| "data".into()).into(),
             api_token: var("PARALLAX_TOKEN"),
             public_host: var("PARALLAX_PUBLIC_HOST"),
+            ingest_bind: var("PARALLAX_INGEST_BIND"),
             srt_port: port("PARALLAX_SRT_PORT", 8890)?,
             rtmp_port: port("PARALLAX_RTMP_PORT", 1935)?,
             mediamtx_api_port: port("PARALLAX_MEDIAMTX_API_PORT", 9997)?,
             mediamtx_bin: var("PARALLAX_MEDIAMTX").unwrap_or_else(|| "mediamtx".into()),
             ffmpeg_bin: var("PARALLAX_FFMPEG").unwrap_or_else(|| "ffmpeg".into()),
+            parent_pid: var("PARALLAX_PARENT_PID")
+                .map(|v| v.parse().context("PARALLAX_PARENT_PID must be a process ID"))
+                .transpose()?,
             twitch,
             youtube,
             x,

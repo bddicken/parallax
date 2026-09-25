@@ -64,16 +64,27 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(config.addr).await.with_context(|| format!("listening on {}", config.addr))?;
     tracing::info!("parallax-server on http://{}", config.addr);
     tracing::info!("API token: {} (paste into Parallax › Settings › Server)", saved.api_token);
-    axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
+    axum::serve(listener, app).with_graceful_shutdown(shutdown(config.parent_pid)).await?;
     Ok(())
 }
 
-async fn shutdown() {
+async fn shutdown(parent_pid: Option<u32>) {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
     #[cfg(unix)]
-    tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {} }
+    tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {}, _ = parent_exited(parent_pid) => {} }
     #[cfg(not(unix))]
     let _ = ctrl_c.await;
+}
+
+/// Resolves once `pid` is no longer our parent (it exited and we were
+/// reparented). Never resolves without a pid.
+#[cfg(unix)]
+async fn parent_exited(pid: Option<u32>) {
+    let Some(pid) = pid else { return std::future::pending().await };
+    while std::os::unix::process::parent_id() == pid {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    tracing::info!("the app that started this server exited; shutting down");
 }

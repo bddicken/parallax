@@ -37,5 +37,9 @@ import Testing
         let b = try JSONDecoder().decode(BroadcastSettings.self, from: Data(broadcast.utf8))
         #expect(b.stream == StreamSettings())
         #expect(!b.useMockServer, "mock chat is off unless turned on")
+        #expect(b.serverMode == .local, "no server set up, so use the built-in one")
+        let remote = #"{"serverURL":"https://relay.example.com"}"#
+        #expect(try JSONDecoder().decode(BroadcastSettings.self, from: Data(remote.utf8)).serverMode == .remote,
+                "keeps a server set up before the built-in one existed")
     }
 }

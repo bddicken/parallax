@@ -92,9 +92,9 @@ playback: no
 metrics: no
 pprof: no
 rtmp: yes
-rtmpAddress: :{rtmp}
+rtmpAddress: {rtmp_bind}:{rtmp}
 srt: yes
-srtAddress: 0.0.0.0:{srt}
+srtAddress: {srt_bind}:{srt}
 authMethod: internal
 authInternalUsers:
   - user: {USER}
@@ -114,6 +114,8 @@ paths:
 "#,
             api = c.mediamtx_api_port,
             rtmp = c.rtmp_port,
+            rtmp_bind = c.ingest_bind.as_deref().unwrap_or(""),
+            srt_bind = c.ingest_bind.as_deref().unwrap_or("0.0.0.0"),
             srt = c.srt_port,
             key = self.key,
         );

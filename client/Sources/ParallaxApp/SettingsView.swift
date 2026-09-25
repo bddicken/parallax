@@ -190,25 +190,32 @@ private struct StreamingSettingsView: View {
 
 private struct ServerSettingsView: View {
     @Environment(AppModel.self) private var model
-    @State private var url = ""
-    @State private var token = ""
 
     var body: some View {
+        let mode = model.profile.broadcast.serverMode
         Form {
             Section {
-                TextField("Server URL", text: $url, prompt: Text("https://relay.example.com"))
-                SecureField("Token", text: $token)
+                Picker("Run the server on", selection: Binding(
+                    get: { mode },
+                    set: { model.profile.broadcast.serverMode = $0; model.connectBroadcast() }
+                )) {
+                    Text("This Mac").tag(ServerMode.local)
+                    Text("Another machine").tag(ServerMode.remote)
+                }
+                .pickerStyle(.segmented)
+                .disabled(model.broadcast.status.live)
             } footer: {
-                Text("Leave the URL empty to stay offline (turn on Mock in the chat panel to try things with fake chat). The token is stored in your Keychain.")
+                Text(mode == .local
+                     ? "Parallax runs parallax-server for you while it's open. It relays your stream to each platform and brings their chat back."
+                     : "Use a parallax-server you run yourself, e.g. on a host with more upload bandwidth.")
                     .foregroundStyle(.secondary)
             }
-            HStack {
-                Spacer()
-                Button("Save & Reconnect") {
-                    Keychain.write(token.trimmingCharacters(in: .whitespacesAndNewlines), for: "server-token")
-                    model.profile.broadcast.serverURL = url.trimmingCharacters(in: .whitespaces)
-                    model.broadcast.connect(model.profile.broadcast)
-                }
+            switch mode {
+            case .local:
+                LocalServerStatusSection()
+                LocalServerPlatformsSection()
+            case .remote:
+                RemoteServerSection()
             }
             if model.broadcast.service.mode == .server {
                 Section("Accounts") {
@@ -221,6 +228,150 @@ private struct ServerSettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct LocalServerStatusSection: View {
+    @Environment(AppModel.self) private var model
+
+    private var server: LocalServer { model.localServer }
+
+    var body: some View {
+        Section {
+            LabeledContent("Status") {
+                HStack(spacing: 6) {
+                    Circle().fill(color).frame(width: 8, height: 8)
+                    Text(label)
+                }
+            }
+            switch server.state {
+            case .missingTools(let tools):
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("It needs \(tools.joined(separator: " and ")), which it uses to receive and relay video. Install \(tools.count == 1 ? "it" : "them") with Homebrew in Terminal:")
+                    HStack {
+                        Text(LocalServer.State.installCommand(tools))
+                            .font(.body.monospaced())
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(LocalServer.State.installCommand(tools), forType: .string)
+                        }
+                    }
+                    .padding(8)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                    Text("Parallax checks again when you come back to it.").foregroundStyle(.secondary)
+                }
+            case .failed(let message):
+                Text(message).foregroundStyle(.red).textSelection(.enabled)
+            default:
+                EmptyView()
+            }
+            HStack {
+                Button("Show Log") { NSWorkspace.shared.open(server.logURL) }
+                    .disabled(!FileManager.default.fileExists(atPath: server.logURL.path))
+                Spacer()
+                Button(server.state.endpoint == nil ? "Start Server" : "Restart Server") { server.restart() }
+                    .disabled(model.broadcast.status.live)
+            }
+        }
+    }
+
+    private var label: String {
+        switch server.state {
+        case .stopped: "Stopped"
+        case .starting: "Starting…"
+        case .running: "Running"
+        case .missingTools: "Needs setup"
+        case .failed: "Couldn't start"
+        }
+    }
+
+    private var color: Color {
+        switch server.state {
+        case .running: .green
+        case .starting: .yellow
+        case .stopped: .secondary
+        case .missingTools, .failed: .red
+        }
+    }
+}
+
+/// The one-time app registration each platform needs (see docs/setup/).
+private struct LocalServerPlatformsSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var draft = LocalServerCredentials()
+
+    var body: some View {
+        Section {
+            TextField("Twitch client ID", text: $draft.twitchClientID)
+            SecureField("Twitch client secret", text: $draft.twitchClientSecret, prompt: Text("Confidential apps only"))
+            TextField("YouTube client ID", text: $draft.youtubeClientID)
+            SecureField("YouTube client secret", text: $draft.youtubeClientSecret)
+            TextField("X server URL", text: $draft.xRTMPURL, prompt: Text("rtmps://…"))
+            SecureField("X stream key", text: $draft.xStreamKey)
+            TextField("X username", text: $draft.xUsername, prompt: Text("Optional, for chat"))
+        } header: {
+            Text("Platforms")
+        } footer: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 12) {
+                    Text("Setup guides:")
+                    Link("Twitch", destination: Self.guide("twitch"))
+                    Link("YouTube", destination: Self.guide("youtube"))
+                    Link("X", destination: Self.guide("x"))
+                }
+                Text("Kept in your Keychain. Fill in only the platforms you use.")
+            }
+            .foregroundStyle(.secondary)
+        }
+        HStack {
+            Button("Import .env…", action: importDotenv)
+                .help("Copy these from a parallax-server .env file, if you ran the server by hand before.")
+            Spacer()
+            Button("Save & Restart Server") { model.saveLocalServerCredentials(draft) }
+                .disabled(draft == model.localServerCredentials || model.broadcast.status.live)
+                .keyboardShortcut(.defaultAction)
+        }
+        .onAppear { draft = model.localServerCredentials }
+    }
+
+    private static func guide(_ name: String) -> URL {
+        URL(string: "https://github.com/bddicken/parallax/blob/main/docs/setup/\(name).md")!
+    }
+
+    private func importDotenv() {
+        let panel = NSOpenPanel()
+        panel.message = "Choose a parallax-server .env file"
+        panel.showsHiddenFiles = true
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url,
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        draft.merge(dotenv: text)
+    }
+}
+
+private struct RemoteServerSection: View {
+    @Environment(AppModel.self) private var model
+    @State private var url = ""
+    @State private var token = ""
+
+    var body: some View {
+        Section {
+            TextField("Server URL", text: $url, prompt: Text("https://relay.example.com"))
+            SecureField("Token", text: $token)
+        } footer: {
+            Text("Leave the URL empty to stay offline (turn on Mock in the chat panel to try things with fake chat). The token is stored in your Keychain.")
+                .foregroundStyle(.secondary)
+        }
+        HStack {
+            Spacer()
+            Button("Save & Reconnect") {
+                Keychain.write(token.trimmingCharacters(in: .whitespacesAndNewlines), for: "server-token")
+                model.profile.broadcast.serverURL = url.trimmingCharacters(in: .whitespaces)
+                model.connectBroadcast(force: true)
+            }
+        }
         .onAppear {
             url = model.profile.broadcast.serverURL
             token = Keychain.read("server-token") ?? ""

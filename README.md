@@ -57,9 +57,13 @@ Requires macOS 15+ and either Xcode or the Command Line Tools (the scripts handl
 
 ## Streaming setup
 
-1. Run `parallax-server`, on your Mac or your own host ([server setup](server/README.md#run-locally)).
-2. Set up each platform you want to stream to. Each guide walks through the one-time account and app registration steps:
+Parallax runs `parallax-server` for you on your Mac while the app is open (**Settings › Server › This Mac**, the default). `build-app.sh` bundles it if Rust is installed.
+
+1. Install the tools it uses for video: `brew install mediamtx ffmpeg`.
+2. Set up each platform you want to stream to. Each guide walks through the one-time account and app registration steps, then where to enter the IDs in **Settings › Server**:
    - [Twitch setup](docs/setup/twitch.md)
    - [YouTube setup](docs/setup/youtube.md)
    - [X setup](docs/setup/x.md)
-3. In the app, open **Settings › Server**, enter the server's URL and token, and connect your accounts.
+3. In **Settings › Server**, connect your accounts.
+
+To run the server on another machine instead (e.g. one with more upload bandwidth), see [server setup](server/README.md#run-it-yourself) and pick **Another machine** in Settings › Server.

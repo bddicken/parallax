@@ -15,6 +15,19 @@ source scripts/env.sh
 swift build -c "$CONFIG" --product Parallax
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/Parallax"
 
+# The app runs parallax-server itself (Settings › Server › This Mac), so
+# bundle it. Needs Rust; without it the app still builds, just without the
+# built-in server.
+SERVER=""
+if command -v cargo >/dev/null; then
+  CARGO_FLAGS=()
+  [[ "$CONFIG" == "release" ]] && CARGO_FLAGS+=(--release)
+  cargo build --manifest-path ../server/Cargo.toml ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"}
+  SERVER="../server/target/$([[ "$CONFIG" == "release" ]] && echo release || echo debug)/parallax-server"
+else
+  echo "warning: cargo not found, so the built-in server isn't bundled. Install Rust (https://rustup.rs) to include it." >&2
+fi
+
 # Assemble and sign in a temp bundle; only replace build/Parallax.app once
 # signing succeeds, so a failed or cancelled signature never leaves behind a
 # differently signed app (which macOS would treat as new and re-prompt for).
@@ -23,6 +36,7 @@ APP=build/Parallax.app.partial
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Parallax"
+[[ -n "$SERVER" ]] && cp "$SERVER" "$APP/Contents/MacOS/parallax-server"
 cp Support/Info.plist "$APP/Contents/Info.plist"
 cp Support/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # Unique build number, so each build is distinguishable (About box, crash logs).
@@ -41,6 +55,10 @@ if [[ -z "$IDENTITY" ]]; then
   # macOS forgets permission grants on every rebuild. Pin the requirement to
   # the bundle ID instead so rebuilt copies count as the same app.
   REQUIREMENTS=(--requirements '=designated => identifier "com.bddicken.parallax"')
+fi
+# Nested code is signed first, with the same identity, so the app's seal covers it.
+if [[ -n "$SERVER" ]]; then
+  codesign --force --sign "$IDENTITY" "$APP/Contents/MacOS/parallax-server"
 fi
 codesign --force --sign "$IDENTITY" ${REQUIREMENTS[@]+"${REQUIREMENTS[@]}"} --entitlements Support/Parallax.entitlements "$APP"
 if ! codesign --verify --strict "$APP"; then

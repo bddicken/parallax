@@ -12,7 +12,9 @@ X's API is approval-only, so Parallax sends video to a Media Studio source, and 
 
 ## 2. Configure the server
 
-Add to `server/.env` (or your host's environment) and restart the server:
+In Parallax, open **Settings › Server**, fill in **X server URL**, **X stream key**, and **X username** (your handle, for chat), and click **Save & Restart Server**.
+
+Running the server yourself (**Another machine**)? Add to `server/.env` (or your host's environment) and restart it instead:
 
 ```
 X_RTMP_URL=rtmps://va.pscp.tv:443/x

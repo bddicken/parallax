@@ -60,6 +60,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     }
 
+    /// Picks up tools installed while Parallax was in the background (the
+    /// built-in server's `brew install` hint).
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard let model, case .missingTools = model.localServer.state else { return }
+        model.connectBroadcast()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        model?.localServer.stopAndWait()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     /// Finish any recording before quitting so the file is playable.

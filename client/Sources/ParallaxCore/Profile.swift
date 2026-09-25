@@ -446,8 +446,17 @@ public enum BroadcastPrivacy: String, Codable, CaseIterable, Sendable {
     public var displayName: String { rawValue.capitalized }
 }
 
+/// Where parallax-server runs.
+public enum ServerMode: String, Codable, CaseIterable, Sendable {
+    /// Parallax runs it on this Mac while the app is open.
+    case local
+    /// One you run yourself, at `serverURL`.
+    case remote
+}
+
 public struct BroadcastSettings: Codable, Hashable, Sendable {
-    /// Base URL of parallax-server. Empty means use the built-in mock.
+    public var serverMode = ServerMode.local
+    /// Base URL of a remote parallax-server. Empty means offline (or mock).
     public var serverURL: String = ""
     /// Use the built-in fake server (generated chat) when no URL is set.
     public var useMockServer = false
@@ -466,6 +475,8 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         serverURL = try c.decodeIfPresent(String.self, forKey: .serverURL) ?? ""
+        // Profiles from before the built-in server keep the server they set up.
+        serverMode = try c.decodeIfPresent(ServerMode.self, forKey: .serverMode) ?? (serverURL.isEmpty ? .local : .remote)
         useMockServer = try c.decodeIfPresent(Bool.self, forKey: .useMockServer) ?? false
         stream = try c.decodeIfPresent(StreamSettings.self, forKey: .stream) ?? StreamSettings()
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
