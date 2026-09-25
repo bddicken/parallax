@@ -11,7 +11,7 @@ A macOS livestreaming studio in one app. It replaces an OBS + StreamYard + Loopb
 - **Scenes and layouts**: cameras, displays, windows, images, and chat overlays. Drag, resize, snap, crop, round corners, and add shadows. Switch scenes with ⌘1–9 using a cut or fade.
 - **Audio mixer**: any mic or interface plus system audio, with per-input gain, sync delay, high-pass, noise gate, and a master limiter.
 - **Local recording**: H.264/HEVC up to 4K, crash-safe, independent of the stream.
-- **Multistreaming**: upload one stream, and the server relays it to each platform (Twitch today).
+- **Multistreaming**: upload one stream, and the server relays it to each platform (Twitch and YouTube today).
 - **Unified chat**: read platform chat and reply from the app.
 
 ## How it works
@@ -34,7 +34,7 @@ More in [Architecture](docs/architecture.md) and the [client↔server protocol](
 | | What | Status |
 |---|---|---|
 | [`client/`](client/) | macOS app (Swift, SwiftUI, AVFoundation, ScreenCaptureKit, Core Image/Metal) | Capture, scenes, mixer, recording, Go Live, chat |
-| [`server/`](server/) | Relay (Rust, MediaMTX, ffmpeg) | Twitch; more platforms next |
+| [`server/`](server/) | Relay (Rust, MediaMTX, ffmpeg) | Twitch, YouTube; more platforms next |
 
 ## Quick start
 
@@ -52,4 +52,10 @@ client/scripts/test.sh
 
 Requires macOS 15+ and either Xcode or the Command Line Tools (the scripts handle the CLT-only quirks, see `client/scripts/env.sh`).
 
-To stream, run the server ([setup](server/README.md#run-locally)), then in the app open Settings › Server, enter its URL and token, and click **Connect Twitch**.
+## Streaming setup
+
+1. Run `parallax-server`, on your Mac or your own host ([server setup](server/README.md#run-locally)).
+2. Set up each platform you want to stream to. Each guide walks through the one-time account and app registration steps:
+   - [Twitch setup](docs/setup/twitch.md)
+   - [YouTube setup](docs/setup/youtube.md)
+3. In the app, open **Settings › Server**, enter the server's URL and token, and connect your accounts.
