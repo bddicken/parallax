@@ -1,8 +1,8 @@
 //! X (Twitter) live video. X's Livestream API is approval-only, so there's no
 //! sign-in: the user creates an RTMP source in Media Studio Producer
 //! (studio.x.com › Producer › Sources) and puts its URL and stream key in
-//! `.env`. The client reads chat from X's own chat page, found from
-//! `X_USERNAME`.
+//! `.env`. The client reads and sends chat through X's own chat page, found
+//! from `X_USERNAME`.
 
 use crate::config::XConfig;
 

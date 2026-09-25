@@ -38,7 +38,11 @@ final class BroadcastModel {
 
     /// X's chat page, which Parallax can read chat from (see `XChatReader`).
     var xChatPage: URL? {
-        destinations.first { $0.platform == .x }?.chatURL.flatMap(URL.init(string:))
+        #if DEBUG
+        // Lets you try X chat on someone else's live broadcast.
+        if let url = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_X_CHAT_URL"] { return URL(string: url) }
+        #endif
+        return destinations.first { $0.platform == .x }?.chatURL.flatMap(URL.init(string:))
     }
 
     /// Opens the X chat window, whose comments show up in `messages`.
@@ -147,10 +151,29 @@ final class BroadcastModel {
         await refreshDestinations()
     }
 
+    /// X goes through the X chat window; the rest through the server. `nil`
+    /// means everywhere that can take it.
     func send(_ text: String, to platforms: [Platform]?) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        await perform { try await $0.sendChat(SendChatRequest(text: text, platforms: platforms)) }
+        let toX = platforms.map { $0.contains(.x) } ?? xChat.isConnected
+        let others = platforms?.filter { $0 != .x }
+        // With only X to send to, skip the server's "No chat to send to".
+        let toServer = others.map { !$0.isEmpty } ?? (!toX || accounts.contains { $0.state == .connected })
+        isBusy = true
+        defer { isBusy = false }
+        var errors: [String] = []
+        if toX {
+            do { try await xChat.send(text) } catch { errors.append(error.localizedDescription) }
+        }
+        if toServer {
+            do {
+                try await service.sendChat(SendChatRequest(text: text, platforms: others))
+            } catch {
+                errors.append(error.localizedDescription)
+            }
+        }
+        connectionError = errors.isEmpty ? nil : errors.joined(separator: "\n")
     }
 
     func toggleFeatured(_ id: String) {

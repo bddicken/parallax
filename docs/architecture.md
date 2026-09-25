@@ -59,4 +59,4 @@ Key decisions:
 3. **Replace Loopback / virtual camera**: headphone monitoring output, a CoreMediaIO camera extension (needs Xcode and a signing identity), and possibly a virtual audio device.
 4. **Studio polish**: preview/program ("studio mode"), hotkeys, compressor and voice-isolation filters, per-scene audio.
 
-X's chat API is approval-only, so the client reads X chat from X's own chat page in a web view (`XChatReader`) instead of through the server. Sending to X isn't done yet.
+X's chat API is approval-only, so the client reads X chat from X's own chat page in a web view (`XChatReader`) instead of through the server. Sending types into that page's chat box and clicks Send.

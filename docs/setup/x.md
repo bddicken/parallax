@@ -46,5 +46,5 @@ In the Chat panel, click the pop-out button › **Read X Chat in Parallax…**. 
 
 - You can close the window. Parallax keeps reading chat until you quit.
 - Open it before or after you go live. Until your broadcast starts, the window says "Waiting for the broadcast" and checks every 30 seconds.
-- Replies from Parallax's chat box don't go to X yet. Type them in the X Chat window.
+- Replies from Parallax's chat box go to X too (pick **X** or **All** next to the box). Parallax types them into the X Chat window and clicks Send, so they post as you.
 - This depends on how X's page is built, so it can break when X changes it.

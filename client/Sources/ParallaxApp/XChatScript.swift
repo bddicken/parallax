@@ -59,6 +59,39 @@ enum XChatScript {
     })();
     """
 
+    /// Types `text` (an argument) into X's chat box and clicks Send. Returns
+    /// null once the box clears (X took it), otherwise what went wrong.
+    static let send = """
+    const box = document.querySelector('textarea[placeholder="Send a message"]')
+      ?? [...document.querySelectorAll('textarea')].find((t) => t.offsetParent);
+    if (!box) return "X's chat box isn't on the page.";
+    // Set the value the way typing does, so React sees the change.
+    const setValue = (value) => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(box, value);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    const sendButton = () => {
+      const labeled = document.querySelector('button[aria-label="Send"]');
+      if (labeled) return labeled;
+      let parent = box.parentElement;
+      while (parent && !parent.querySelector('button')) parent = parent.parentElement;
+      return parent && [...parent.querySelectorAll('button')].pop();
+    };
+    setValue(text);
+    let button = sendButton();
+    for (let i = 0; i < 10 && (!button || button.disabled); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      button = sendButton();
+    }
+    if (!button || button.disabled) {
+      setValue('');
+      return "X's Send button is off. Is your broadcast live?";
+    }
+    button.click();
+    for (let i = 0; i < 30 && box.value; i++) await new Promise((r) => setTimeout(r, 100));
+    return box.value ? "X didn't take the message; it's still in the X Chat window." : null;
+    """
+
     static let source = """
     (() => {
       const post = (comment) => window.webkit.messageHandlers.\(handlerName).postMessage(comment);

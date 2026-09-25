@@ -7,6 +7,8 @@ import WebKit
 /// sign in to X once (the web view keeps its cookies). A script in the page
 /// reports each new comment, which shows up in Parallax's chat.
 ///
+/// Sending types into the page's chat box and clicks Send.
+///
 /// The page only picks up a broadcast that's live when it loads, so until its
 /// chat stream is open the page is reloaded every 30 seconds.
 final class XChatReader: NSObject {
@@ -16,7 +18,8 @@ final class XChatReader: NSObject {
     private var window: NSWindow?
     private var webView: WKWebView?
     private var url: URL?
-    private var isConnected = false
+    /// Whether the page is receiving your broadcast's chat.
+    private(set) var isConnected = false
     private var urlObservation: NSKeyValueObservation?
     private var retryTask: Task<Void, Never>?
     /// Comments already passed on. X resends recent ones when the page loads.
@@ -39,6 +42,15 @@ final class XChatReader: NSObject {
             }
         }
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Sends `text` to X's chat as you.
+    func send(_ text: String) async throws {
+        guard let webView, isConnected else {
+            throw XChatError("To send to X, open X chat in Parallax (Chat › pop-out menu) while you're live.")
+        }
+        let result = try await webView.callAsyncJavaScript(XChatScript.send, arguments: ["text": text], contentWorld: .page)
+        if let problem = result as? String { throw XChatError(problem) }
     }
 
     private func load() {
@@ -125,4 +137,9 @@ private final class WeakHandler: NSObject, WKScriptMessageHandler {
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         reader?.receive(message)
     }
+}
+
+struct XChatError: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
 }
