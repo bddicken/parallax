@@ -415,6 +415,9 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
     /// Title for the next broadcast, where the platform asks for one (YouTube).
     public var title = ""
     public var privacy = BroadcastPrivacy.unlisted
+    /// Destinations checked last time. Nil until you pick, which means each
+    /// destination's own default.
+    public var destinationIDs: [String]?
 
     public init(serverURL: String = "") {
         self.serverURL = serverURL
@@ -427,6 +430,7 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
         stream = try c.decodeIfPresent(StreamSettings.self, forKey: .stream) ?? StreamSettings()
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
         privacy = try c.decodeIfPresent(BroadcastPrivacy.self, forKey: .privacy) ?? .unlisted
+        destinationIDs = try c.decodeIfPresent([String].self, forKey: .destinationIDs)
     }
 }
 
