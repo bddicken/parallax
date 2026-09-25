@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 216" width="320" height="216">
+<!-- README header: the app icon (client/Support/AppIcon.svg) with the title. Regenerate both variants if the icon changes. -->
+<g transform="translate(96 0) scale(0.125)">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#272A52"/><stop offset="1" stop-color="#15162D"/></linearGradient>
+<linearGradient id="c0" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5B86FF"/><stop offset="1" stop-color="#3A63F0"/></linearGradient>
+<linearGradient id="c1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF6259"/><stop offset="1" stop-color="#F23D3D"/></linearGradient>
+<linearGradient id="c2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFD23F"/><stop offset="1" stop-color="#FFB800"/></linearGradient>
+<clipPath id="sq"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+</defs>
+<rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+<g clip-path="url(#sq)">
+<g transform="rotate(-12 430 420)">
+<rect x="227.5" y="174.5" width="405.0" height="505.0" rx="62.5" fill="#1b1a3a" opacity="0.12"/>
+<rect x="225.0" y="179.0" width="410.0" height="510.0" rx="65.0" fill="#1b1a3a" opacity="0.12"/>
+<rect x="222.5" y="183.5" width="415.0" height="515.0" rx="67.5" fill="#1b1a3a" opacity="0.12"/>
+<rect x="220.0" y="188.0" width="420.0" height="520.0" rx="70.0" fill="#1b1a3a" opacity="0.12"/>
+<rect x="217.5" y="192.5" width="425.0" height="525.0" rx="72.5" fill="#1b1a3a" opacity="0.12"/>
+<rect x="215.0" y="197.0" width="430.0" height="530.0" rx="75.0" fill="#1b1a3a" opacity="0.12"/>
+<rect x="230.0" y="170.0" width="400" height="500" rx="60.0" fill="url(#c0)"/>
+</g>
+<g transform="rotate(-12 590 600)">
+<rect x="437.5" y="414.5" width="305.0" height="385.0" rx="47.5" fill="#1b1a3a" opacity="0.12"/>
+<rect x="435.0" y="419.0" width="310.0" height="390.0" rx="50.0" fill="#1b1a3a" opacity="0.12"/>
+<rect x="432.5" y="423.5" width="315.0" height="395.0" rx="52.5" fill="#1b1a3a" opacity="0.12"/>
+<rect x="430.0" y="428.0" width="320.0" height="400.0" rx="55.0" fill="#1b1a3a" opacity="0.12"/>
+<rect x="427.5" y="432.5" width="325.0" height="405.0" rx="57.5" fill="#1b1a3a" opacity="0.12"/>
+<rect x="425.0" y="437.0" width="330.0" height="410.0" rx="60.0" fill="#1b1a3a" opacity="0.12"/>
+<rect x="440.0" y="410.0" width="300" height="380" rx="45.0" fill="url(#c1)"/>
+</g>
+<g transform="rotate(-12 715 740)">
+<rect x="607.5" y="609.5" width="215.0" height="275.0" rx="34.0" fill="#1b1a3a" opacity="0.12"/>
+<rect x="605.0" y="614.0" width="220.0" height="280.0" rx="36.5" fill="#1b1a3a" opacity="0.12"/>
+<rect x="602.5" y="618.5" width="225.0" height="285.0" rx="39.0" fill="#1b1a3a" opacity="0.12"/>
+<rect x="600.0" y="623.0" width="230.0" height="290.0" rx="41.5" fill="#1b1a3a" opacity="0.12"/>
+<rect x="597.5" y="627.5" width="235.0" height="295.0" rx="44.0" fill="#1b1a3a" opacity="0.12"/>
+<rect x="595.0" y="632.0" width="240.0" height="300.0" rx="46.5" fill="#1b1a3a" opacity="0.12"/>
+<rect x="610.0" y="605.0" width="210" height="270" rx="31.5" fill="url(#c2)"/>
+</g>
+</g>
+</g>
+<text x="160" y="176" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="38" font-weight="600" fill="#F0F6FC">Parallax</text>
+</svg>
