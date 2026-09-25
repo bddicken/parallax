@@ -17,6 +17,7 @@ import Testing
     @Test func decodesDestinationsAndIngest() throws {
         let destinations = try decode([Destination].self, "destinations")
         #expect(destinations.map(\.platform) == [.twitch, .youtube, .custom])
+        #expect(destinations[0].chatURL == "https://www.twitch.tv/popout/parallaxdev/chat?popout=")
         #expect(destinations[2].rtmpURL == "rtmp://127.0.0.1:1935/test")
         #expect(try decode(IngestInfo.self, "ingest").srtURL.hasPrefix("srt://"))
     }

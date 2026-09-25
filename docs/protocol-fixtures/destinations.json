@@ -3,7 +3,8 @@
     "id": "twitch",
     "platform": "twitch",
     "name": "Twitch (parallaxdev)",
-    "enabled": true
+    "enabled": true,
+    "chatURL": "https://www.twitch.tv/popout/parallaxdev/chat?popout="
   },
   {
     "id": "youtube",

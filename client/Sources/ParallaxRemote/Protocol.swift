@@ -25,14 +25,18 @@ public struct Destination: Codable, Identifiable, Hashable, Sendable {
     public var enabled: Bool
     public var rtmpURL: String?
     public var streamKey: String?
+    /// Read-only: the platform's pop-out chat page, when there is one.
+    public var chatURL: String?
 
-    public init(id: String, platform: Platform, name: String, enabled: Bool, rtmpURL: String? = nil, streamKey: String? = nil) {
+    public init(id: String, platform: Platform, name: String, enabled: Bool, rtmpURL: String? = nil, streamKey: String? = nil,
+                chatURL: String? = nil) {
         self.id = id
         self.platform = platform
         self.name = name
         self.enabled = enabled
         self.rtmpURL = rtmpURL
         self.streamKey = streamKey
+        self.chatURL = chatURL
     }
 }
 

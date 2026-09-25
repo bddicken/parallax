@@ -27,6 +27,9 @@ pub struct Destination {
     pub rtmp_url: Option<String>,
     #[serde(rename = "streamKey", default, skip_serializing_if = "Option::is_none")]
     pub stream_key: Option<String>,
+    /// Read-only: the platform's pop-out chat page, when there is one to show.
+    #[serde(rename = "chatURL", default, skip_serializing_if = "Option::is_none")]
+    pub chat_url: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

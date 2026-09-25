@@ -365,6 +365,11 @@ impl Twitch {
     }
 }
 
+/// The channel's pop-out chat page.
+pub fn chat_url(login: &str) -> String {
+    format!("https://www.twitch.tv/popout/{login}/chat?popout=")
+}
+
 /// Twitch's errors are buried a few sources deep; surface the useful ones.
 fn explain(e: &(dyn std::error::Error + 'static)) -> String {
     let mut chain = Vec::new();

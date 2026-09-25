@@ -73,5 +73,6 @@ Environment variables (a `.env` file works too):
 | `TWITCH_INGEST_URL` | `rtmps://ingest.global-contribute.live-video.net:443/app` | Twitch ingest (auto-picks the nearest region) |
 | `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` | | Enables YouTube (both required) |
 | `X_RTMP_URL` / `X_STREAM_KEY` | | Enables X: a Media Studio source's server URL and stream key (both required) |
+| `X_USERNAME` | | Your X handle, so the app can open X's chat page (optional) |
 
 `data/state.json` holds tokens, so it's written with owner-only permissions.

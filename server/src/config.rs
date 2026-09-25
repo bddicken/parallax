@@ -46,6 +46,8 @@ pub struct YouTubeConfig {
 pub struct XConfig {
     pub rtmp_url: String,
     pub stream_key: String,
+    /// The account's handle, for its pop-out chat page. Optional.
+    pub username: Option<String>,
 }
 
 impl Config {
@@ -71,7 +73,11 @@ impl Config {
                     rtmp_url.starts_with("rtmp://") || rtmp_url.starts_with("rtmps://"),
                     "X_RTMP_URL must start with rtmp:// or rtmps://"
                 );
-                Some(XConfig { rtmp_url: rtmp_url.trim().into(), stream_key: stream_key.trim().into() })
+                Some(XConfig {
+                    rtmp_url: rtmp_url.trim().into(),
+                    stream_key: stream_key.trim().into(),
+                    username: var("X_USERNAME").map(|u| u.trim().trim_start_matches('@').into()),
+                })
             }
             (None, None) => None,
             _ => anyhow::bail!("Set both X_RTMP_URL and X_STREAM_KEY, or neither"),

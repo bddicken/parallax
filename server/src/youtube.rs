@@ -358,6 +358,11 @@ impl YouTube {
 
     // MARK: Chat
 
+    /// The pop-out chat page for our broadcast. A broadcast's ID is its video ID.
+    pub fn chat_url(&self) -> Option<String> {
+        self.store.get().youtube_broadcast.map(|b| format!("https://www.youtube.com/live_chat?is_popout=1&v={}", b.id))
+    }
+
     pub async fn has_chat(&self) -> bool {
         self.store.get().youtube_broadcast.is_some_and(|b| b.live_chat_id.is_some())
     }

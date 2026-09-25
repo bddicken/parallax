@@ -12,6 +12,19 @@ struct ChatPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader(title: "Chat") {
+                Button {
+                    Task {
+                        await broadcast.refreshDestinations()
+                        await BrowserWindows.open(broadcast.chatPages)
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.forward.app")
+                }
+                .buttonStyle(.borderless)
+                .disabled(broadcast.chatPages.isEmpty)
+                .help(broadcast.chatPages.isEmpty
+                      ? "Pop out each platform's chat in your browser. Twitch works once connected, YouTube once you go live there, and X once the server has X_USERNAME."
+                      : "Pop out each platform's chat in its own browser window.")
                 Toggle(isOn: mockBinding) { Text("Mock") }
                     .toggleStyle(.button)
                     .controlSize(.small)
