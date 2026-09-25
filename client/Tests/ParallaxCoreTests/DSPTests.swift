@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import ParallaxCore
 
@@ -92,6 +93,41 @@ private func read(_ buffer: inout DelayBuffer, _ n: Int) -> [Float] {
         var dc = [Float](repeating: 1, count: 48_000 * 2)
         dc.withUnsafeMutableBufferPointer { filter.process($0) }
         #expect(abs(dc.last!) < 0.001)
+    }
+
+    @Test func peakingFilterBoostsItsCenterFrequency() {
+        var filter = StereoBiquad.peaking(frequency: 1_000, gainDB: 6, q: GraphicEQ.q)
+        #expect(abs(filter.magnitudeDB(at: 1_000) - 6) < 0.01)
+        #expect(abs(filter.magnitudeDB(at: 16_000)) < 0.5)
+
+        // Measure a 1 kHz sine after the filter settles.
+        var sine = (0..<48_000).flatMap { i -> [Float] in
+            let s = Float(0.25 * sin(2 * Double.pi * 1_000 * Double(i) / AudioFormat.sampleRate))
+            return [s, s]
+        }
+        sine.withUnsafeMutableBufferPointer { filter.process($0) }
+        let tail = sine.suffix(4_800)
+        let peak = tail.map(abs).max()!
+        #expect(abs(Double(linearToDecibels(peak / 0.25)) - 6) < 0.1)
+    }
+
+    @Test func graphicEQResponseFollowsBands() {
+        var settings = EQSettings(isEnabled: true)
+        #expect(abs(GraphicEQ.responseDB(settings, at: 440)) < 0.001)
+        settings.gainsDB[5] = -9 // 1 kHz
+        #expect(abs(GraphicEQ.responseDB(settings, at: 1_000) + 9) < 0.5)
+        #expect(abs(GraphicEQ.responseDB(settings, at: 62)) < 0.5)
+        settings.gainsDB[0] = 40 // out of range is clamped
+        #expect(abs(GraphicEQ.responseDB(settings, at: 31) - EQSettings.gainRange.upperBound) < 1)
+    }
+
+    @Test func disabledEQLeavesSignalAlone() {
+        var source = AudioSource(name: "Mic", kind: .systemAudio)
+        source.eq.gainsDB[3] = 12
+        var strip = ChannelStripProcessor(source: source)
+        var buffer = [Float](repeating: 0.5, count: 960)
+        _ = buffer.withUnsafeMutableBufferPointer { strip.process($0) }
+        #expect(buffer.allSatisfy { $0 == 0.5 })
     }
 
     @Test func limiterHoldsCeiling() {

@@ -185,12 +185,46 @@ public struct StereoBiquad: Sendable {
         )
     }
 
+    /// Bell boost or cut of `gainDB` centered on `frequency`.
+    public static func peaking(frequency: Double, gainDB: Double, q: Double, sampleRate: Double = AudioFormat.sampleRate) -> StereoBiquad {
+        let a = pow(10, gainDB / 40)
+        let w0 = 2 * Double.pi * frequency / sampleRate
+        let alpha = sin(w0) / (2 * q)
+        let cosw = cos(w0)
+        let a0 = 1 + alpha / a
+        return StereoBiquad(
+            b0: Float((1 + alpha * a) / a0), b1: Float(-2 * cosw / a0), b2: Float((1 - alpha * a) / a0),
+            a1: Float(-2 * cosw / a0), a2: Float((1 - alpha / a) / a0)
+        )
+    }
+
     private init(b0: Float, b1: Float, b2: Float, a1: Float, a2: Float) {
         self.b0 = b0
         self.b1 = b1
         self.b2 = b2
         self.a1 = a1
         self.a2 = a2
+    }
+
+    /// Takes `other`'s coefficients but keeps this filter's state, so a
+    /// setting can change mid-stream without a click.
+    public mutating func retune(to other: StereoBiquad) {
+        b0 = other.b0
+        b1 = other.b1
+        b2 = other.b2
+        a1 = other.a1
+        a2 = other.a2
+    }
+
+    /// Gain in dB at `frequency`.
+    public func magnitudeDB(at frequency: Double, sampleRate: Double = AudioFormat.sampleRate) -> Double {
+        let w = 2 * Double.pi * frequency / sampleRate
+        let c1 = cos(w), s1 = sin(w), c2 = cos(2 * w), s2 = sin(2 * w)
+        let (b0, b1, b2, a1, a2) = (Double(b0), Double(b1), Double(b2), Double(a1), Double(a2))
+        let numRe = b0 + b1 * c1 + b2 * c2, numIm = -(b1 * s1 + b2 * s2)
+        let denRe = 1 + a1 * c1 + a2 * c2, denIm = -(a1 * s1 + a2 * s2)
+        let power = (numRe * numRe + numIm * numIm) / (denRe * denRe + denIm * denIm)
+        return 10 * log10(max(power, 1e-12))
     }
 
     public mutating func process(_ buffer: UnsafeMutableBufferPointer<Float>) {
@@ -207,6 +241,36 @@ public struct StereoBiquad: Sendable {
             }
             z1[c] = s1
             z2[c] = s2
+        }
+    }
+}
+
+/// Ten peaking filters, one octave wide, at `EQSettings.frequencies`.
+public struct GraphicEQ: Sendable {
+    public static let q = 1.41
+
+    private var bands: [StereoBiquad]
+
+    public init(_ settings: EQSettings) {
+        bands = Self.filters(for: settings)
+    }
+
+    public mutating func configure(_ settings: EQSettings) {
+        for (i, filter) in Self.filters(for: settings).enumerated() { bands[i].retune(to: filter) }
+    }
+
+    public mutating func process(_ buffer: UnsafeMutableBufferPointer<Float>) {
+        for i in bands.indices { bands[i].process(buffer) }
+    }
+
+    /// Combined gain of all bands at `frequency`, for drawing the curve.
+    public static func responseDB(_ settings: EQSettings, at frequency: Double) -> Double {
+        filters(for: settings).reduce(0) { $0 + $1.magnitudeDB(at: frequency) }
+    }
+
+    private static func filters(for settings: EQSettings) -> [StereoBiquad] {
+        EQSettings.frequencies.indices.map { i in
+            .peaking(frequency: EQSettings.frequencies[i], gainDB: settings.gain(band: i), q: q)
         }
     }
 }
@@ -276,10 +340,11 @@ public struct PeakLimiter: Sendable {
     }
 }
 
-/// Per-input processing chain: high-pass → gate → fader → mute.
+/// Per-input processing chain: high-pass → gate → EQ → fader → mute.
 public struct ChannelStripProcessor: Sendable {
     private var highPass: StereoBiquad?
     private var gate: NoiseGate?
+    private var eq: GraphicEQ?
     private var gateThresholdDB: Double?
     private var gain: Float = 1
     private var targetGain: Float = 1
@@ -308,6 +373,11 @@ public struct ChannelStripProcessor: Sendable {
             gate = nil
             gateThresholdDB = nil
         }
+        if source.eq.isEnabled {
+            if eq == nil { eq = GraphicEQ(source.eq) } else { eq?.configure(source.eq) }
+        } else {
+            eq = nil
+        }
         targetGain = decibelsToLinear(source.gainDB)
         muted = source.isMuted
     }
@@ -317,6 +387,7 @@ public struct ChannelStripProcessor: Sendable {
     public mutating func process(_ buffer: UnsafeMutableBufferPointer<Float>) -> AudioLevel {
         highPass?.process(buffer)
         gate?.process(buffer)
+        eq?.process(buffer)
         let muteTarget: Float = muted ? 0 : 1
         var peak: Float = 0
         var sumSquares: Float = 0

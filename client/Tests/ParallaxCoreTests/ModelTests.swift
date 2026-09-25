@@ -69,6 +69,18 @@ import Testing
         #expect(decoded.scenes == old.scenes)
     }
 
+    @Test func audioSourcesFromOlderBuildsGetFlatEQ() throws {
+        var source = AudioSource(name: "Mic", kind: .device(uniqueID: "mic"), gainDB: 3)
+        source.eq = EQSettings(isEnabled: true, gainsDB: [3, 0, 0, 0, 0, 0, 0, 0, 0, -2])
+        #expect(try JSONDecoder().decode(AudioSource.self, from: JSONEncoder().encode(source)) == source)
+
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(source)) as! [String: Any]
+        json["eq"] = nil
+        let decoded = try JSONDecoder().decode(AudioSource.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.eq == EQSettings())
+        #expect(decoded.gainDB == 3)
+    }
+
     @Test func monitorSettingsRoundTrip() throws {
         var profile = Profile.makeDefault()
         profile.monitor = MonitorSettings(output: .device(uid: "BuiltInSpeakerDevice"), volume: 0.25)
