@@ -1,10 +1,9 @@
 <p align="center">
-  <img src="client/Support/AppIcon.svg" alt="Parallax logo" width="128">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/header-dark.svg">
+    <img src="docs/images/header-light.svg" alt="Parallax" width="320">
+  </picture>
 </p>
-
-<h1 align="center">Parallax</h1>
-
-<br>
 
 A macOS livestreaming studio in one app. It replaces an OBS + StreamYard + Loopback/Audio Hijack setup: capture, scenes, audio mixing, local recording, multistreaming, and unified chat.
 
