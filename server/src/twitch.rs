@@ -2,7 +2,7 @@
 //! (EventSub over WebSocket to read, Helix to send). Only outbound
 //! connections, so it works on a laptop with no public URL.
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
@@ -37,6 +37,9 @@ pub struct Twitch {
     store: Arc<Store>,
     events: Events,
     inner: Mutex<Inner>,
+    /// Profile picture URLs by user ID. Chat events don't include them, so
+    /// each chatter is looked up once. `None` means they have none.
+    avatars: Mutex<HashMap<String, Option<String>>>,
 }
 
 #[derive(Default)]
@@ -69,6 +72,7 @@ impl Twitch {
             store,
             events,
             inner: Mutex::default(),
+            avatars: Mutex::default(),
         })
     }
 
@@ -315,7 +319,9 @@ impl Twitch {
                     }
                     EventsubWebsocketData::Notification { payload: Event::ChannelChatMessageV1(p), .. } => {
                         if let eventsub::Message::Notification(message) = p.message {
-                            self.events.chat(chat_message(message));
+                            let mut chat = chat_message(message);
+                            chat.author.avatar_url = self.avatar(&chat.author.id).await;
+                            self.events.chat(chat);
                         }
                     }
                     EventsubWebsocketData::Revocation { .. } => bail!("Twitch revoked chat access"),
@@ -323,6 +329,29 @@ impl Twitch {
                 }
             }
         }
+    }
+
+    /// A chatter's profile picture, from cache or one Helix lookup. Chat still
+    /// shows without it if the lookup fails.
+    async fn avatar(&self, user_id: &str) -> Option<String> {
+        if let Some(cached) = self.avatars.lock().await.get(user_id) {
+            return cached.clone();
+        }
+        let token = self.token().await.ok()?;
+        let url = match self.helix.get_user_from_id(user_id, &token).await {
+            Ok(user) => user.and_then(|u| u.profile_image_url),
+            Err(e) => {
+                tracing::debug!("couldn't look up Twitch user {user_id}: {e}");
+                return None;
+            }
+        };
+        let mut avatars = self.avatars.lock().await;
+        // A long stream with lots of chatters shouldn't grow this forever.
+        if avatars.len() > 5000 {
+            avatars.clear();
+        }
+        avatars.insert(user_id.to_owned(), url.clone());
+        url
     }
 
     async fn subscribe(&self, session_id: &str) -> Result<()> {
