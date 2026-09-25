@@ -321,7 +321,7 @@ final class AppModel {
                 item.cornerRadius = 0.08
             }
         case .color: item.contentMode = .stretch
-        case .chatFeed: item.frame = NormalizedRect(x: 0.72, y: 0.04, width: 0.26, height: 0.92)
+        case .chatFeed: item.frame = ChatPlacement.right.rect
         case .featuredChat: item.frame = NormalizedRect(x: 0.05, y: 0.74, width: 0.9, height: 0.2)
         default: break
         }
@@ -590,6 +590,38 @@ final class AppModel {
         let feed = broadcast.messages.suffix(8).map(overlayLine)
         let featured = broadcast.featuredMessage.map(overlayLine)
         engine.updateChat(feed: Array(feed), featured: featured)
+    }
+
+    /// The live scene's item showing `kind` (the chat feed or featured comment), if any.
+    func chatItem(_ kind: VideoSourceKind) -> SceneItem? {
+        programScene?.items.last { profile.videoSource($0.sourceID)?.kind == kind }
+    }
+
+    func isOnScreen(_ kind: VideoSourceKind) -> Bool { chatItem(kind)?.isVisible ?? false }
+
+    /// Shows or hides chat on the stream. Hiding keeps the item, so turning
+    /// it back on puts it where it was.
+    func setOnScreen(_ kind: VideoSourceKind, _ on: Bool) {
+        if let item = chatItem(kind) {
+            updateItem(item.id, undo: on ? "Show Chat" : "Hide Chat") { $0.isVisible = on }
+            selectedItemID = on ? item.id : (selectedItemID == item.id ? nil : selectedItemID)
+        } else if on {
+            addVideoSource(kind: kind, name: kind == .chatFeed ? "Chat Feed" : "Featured Comment")
+        }
+    }
+
+    /// Moves the chat feed to a preset spot, adding it first if needed.
+    func placeChat(_ placement: ChatPlacement) {
+        edit("Place Chat") {
+            if chatItem(.chatFeed) == nil { addVideoSourceWithoutUndo(kind: .chatFeed, name: "Chat Feed") }
+            guard let id = chatItem(.chatFeed)?.id else { return }
+            updateScene(profile.programSceneID) { scene in
+                guard let i = scene.items.firstIndex(where: { $0.id == id }) else { return }
+                scene.items[i].frame = placement.rect
+                scene.items[i].isVisible = true
+            }
+            selectedItemID = id
+        }
     }
 
     private func overlayLine(_ message: ChatMessage) -> ChatOverlayLine {

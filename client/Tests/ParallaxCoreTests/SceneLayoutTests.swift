@@ -160,3 +160,18 @@ import Testing
         #expect(near(cropped.frame.height, item.frame.height * 0.8))
     }
 }
+
+@Suite struct ChatPlacementTests {
+    @Test func presetsStayOnCanvas() {
+        for p in ChatPlacement.allCases {
+            #expect(p.rect.clamped() == p.rect, "\(p) should already fit the canvas")
+        }
+    }
+
+    @Test func recognizesPresetFramesOnly() {
+        #expect(ChatPlacement(matching: ChatPlacement.left.rect) == .left)
+        var moved = ChatPlacement.left.rect
+        moved.x += 0.05
+        #expect(ChatPlacement(matching: moved) == nil)
+    }
+}

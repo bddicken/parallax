@@ -271,3 +271,54 @@ extension SceneItem {
         return item
     }
 }
+
+/// Quick spots for the on-stream chat feed, picked from the chat panel.
+public enum ChatPlacement: String, CaseIterable, Identifiable, Sendable {
+    case right, left, bottomRight, bottomLeft, lowerThird
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .right: "Right Side"
+        case .left: "Left Side"
+        case .bottomRight: "Bottom Right"
+        case .bottomLeft: "Bottom Left"
+        case .lowerThird: "Lower Third"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .right: "rectangle.rightthird.inset.filled"
+        case .left: "rectangle.leftthird.inset.filled"
+        case .bottomRight: "rectangle.inset.bottomright.filled"
+        case .bottomLeft: "rectangle.inset.bottomleft.filled"
+        case .lowerThird: "rectangle.bottomthird.inset.filled"
+        }
+    }
+
+    public var rect: NormalizedRect {
+        let m = Snapper.margin
+        switch self {
+        case .right: return NormalizedRect(x: 1 - m - 0.25, y: m, width: 0.25, height: 1 - m * 2)
+        case .left: return NormalizedRect(x: m, y: m, width: 0.25, height: 1 - m * 2)
+        case .bottomRight: return NormalizedRect(x: 1 - m - 0.3, y: 0.5, width: 0.3, height: 0.5 - m)
+        case .bottomLeft: return NormalizedRect(x: m, y: 0.5, width: 0.3, height: 0.5 - m)
+        case .lowerThird: return NormalizedRect(x: m, y: 0.7, width: 0.6, height: 0.3 - m)
+        }
+    }
+
+    /// The preset `frame` is sitting at, if any.
+    public init?(matching frame: NormalizedRect) {
+        guard let match = Self.allCases.first(where: { $0.rect.isApproximately(frame) }) else { return nil }
+        self = match
+    }
+}
+
+extension NormalizedRect {
+    func isApproximately(_ other: NormalizedRect, tolerance: Double = 0.001) -> Bool {
+        abs(x - other.x) < tolerance && abs(y - other.y) < tolerance
+            && abs(width - other.width) < tolerance && abs(height - other.height) < tolerance
+    }
+}

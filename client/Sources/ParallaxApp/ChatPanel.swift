@@ -1,3 +1,4 @@
+import ParallaxCore
 import ParallaxRemote
 import SwiftUI
 
@@ -23,6 +24,8 @@ struct ChatPanel: View {
                     Image(systemName: "wifi.exclamationmark").foregroundStyle(.red).help(broadcast.connectionError ?? "")
                 }
             }
+            Divider()
+            OnStreamBar()
             Divider()
             ScrollViewReader { proxy in
                 List(broadcast.messages) { message in
@@ -86,6 +89,53 @@ struct ChatPanel: View {
     }
 }
 
+/// Puts chat on the stream in the live scene: the recent-messages feed and
+/// the starred comment. Fine-tune by dragging it in the preview.
+private struct OnStreamBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let feed = model.chatItem(.chatFeed)
+        let placement = feed.flatMap { ChatPlacement(matching: $0.frame) }
+        HStack(spacing: 6) {
+            Text("On stream").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+            toggle(.chatFeed, "Chat", systemImage: "bubble.left.and.bubble.right.fill",
+                   help: "Show recent chat on the stream in this scene. Drag it in the preview to move it, or drag a corner to resize.")
+            toggle(.featuredChat, "Featured", systemImage: "star.fill",
+                   help: "Show the comment you star on the stream in this scene.")
+            Menu {
+                Section("Place Chat") {
+                    ForEach(ChatPlacement.allCases) { p in
+                        Toggle(isOn: Binding(get: { placement == p }, set: { _ in model.placeChat(p) })) {
+                            Label(p.title, systemImage: p.symbol)
+                        }
+                    }
+                }
+                Divider()
+                Button("Adjust in Preview") { model.selectedItemID = feed?.id }
+                    .disabled(feed?.isVisible != true)
+            } label: {
+                Image(systemName: placement?.symbol ?? "rectangle.dashed")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Where chat sits on the stream. Or drag it in the preview.")
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+
+    private func toggle(_ kind: VideoSourceKind, _ title: String, systemImage: String, help: String) -> some View {
+        Toggle(isOn: Binding(get: { model.isOnScreen(kind) }, set: { model.setOnScreen(kind, $0) })) {
+            Label(title, systemImage: systemImage)
+        }
+        .toggleStyle(.button)
+        .help(help)
+    }
+}
+
 private struct ChatRow: View {
     let message: ChatMessage
     let isFeatured: Bool
@@ -111,7 +161,7 @@ private struct ChatRow: View {
             }
             .buttonStyle(.borderless)
             .opacity(hovering || isFeatured ? 1 : 0)
-            .help(isFeatured ? "Remove from screen" : "Show on screen (needs a Featured Comment source)")
+            .help(isFeatured ? "Remove from screen" : "Show on screen (turn on Featured above)")
         }
         .padding(.vertical, 3)
         .listRowBackground(isFeatured ? Color.yellow.opacity(0.12) : Color.clear)
