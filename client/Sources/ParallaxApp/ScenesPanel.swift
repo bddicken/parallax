@@ -46,6 +46,9 @@ struct ScenesPanel: View {
                 if let id = ids.first, let scene = model.profile.scene(id) {
                     Button("Rename") { startRename(scene) }
                     Button("Duplicate") { model.duplicateScene(id) }
+                    Toggle("Record to Its Own File", isOn: Binding(
+                        get: { model.isRecordingOutput(id) }, set: { model.setRecordingOutput(id, $0) }))
+                        .disabled(model.isRecording)
                     Divider()
                     Button("Delete", role: .destructive) { model.deleteScene(id) }
                         .disabled(model.profile.scenes.count <= 1)
@@ -78,6 +81,12 @@ struct ScenesPanel: View {
             Spacer()
             if index < 9 {
                 Text("⌘\(index + 1)").font(.caption).foregroundStyle(.tertiary)
+            }
+            if model.isRecordingOutput(scene.id) {
+                Image(systemName: "record.circle")
+                    .font(.caption)
+                    .foregroundStyle(model.isRecording ? .red : .secondary)
+                    .help("Recorded to its own file")
             }
             if isProgram {
                 Circle().fill(.red).frame(width: 8, height: 8).help("Live")

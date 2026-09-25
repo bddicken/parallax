@@ -7,7 +7,8 @@ import Metal
 import ParallaxCore
 
 /// Renders the program scene at the output frame rate and hands each frame to
-/// the sinks (preview, recorder, uplink).
+/// the sinks (preview, recorder, uplink). Scenes recorded on their own are
+/// rendered in the same tick, with the same timestamp.
 final class Compositor: @unchecked Sendable {
     private struct Transition {
         var from: UUID?
@@ -116,8 +117,23 @@ final class Compositor: @unchecked Sendable {
 
         guard let buffer = makeBuffer(width: output.width, height: output.height) else { return }
         context.render(image, to: buffer, bounds: canvas, colorSpace: colorSpace)
+        // Every output gets the same timestamp, so files recorded together
+        // line up frame for frame.
         let pts = CMTime(hostSeconds: now)
-        for sink in sinks.all { sink.appendVideo(buffer, pts: pts) }
+        for (sceneID, outputs) in sinks.byScene {
+            var frame = buffer
+            if let sceneID, sceneID != program || transition != nil {
+                guard let b = makeBuffer(width: output.width, height: output.height) else { continue }
+                context.render(render(scenes[sceneID], time: now, canvas: canvas), to: b, bounds: canvas, colorSpace: colorSpace)
+                frame = b
+            }
+            for sink in outputs { sink.appendVideo(frame, pts: pts) }
+        }
+    }
+
+    /// Returns once any frame being rendered has been handed to the sinks.
+    func flush() async {
+        await withCheckedContinuation { cont in queue.async { cont.resume() } }
     }
 
     private func render(_ scene: StudioScene?, time: Double, canvas: CGRect) -> CIImage {

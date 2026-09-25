@@ -50,6 +50,8 @@ Key decisions:
 - **Sources are global, scenes reference them.** A camera used in five scenes is captured once, and its delay applies everywhere.
 - **Everything runs on the host clock** (`CACurrentMediaTime`). The compositor ticks at the output fps. The mixer pulls 10 ms chunks and absorbs device clock drift in each input's `DelayBuffer`.
 - **Delays**: video delay keeps a short history of frames (copied out of the capture pool). Audio delay is a ring-buffer offset, and changing it live inserts silence or drops audio.
+- **Recording can write several files at once**: the program and/or individual scenes (say, a full-frame camera scene and a screen scene to edit together later). The compositor renders each recorded scene in the same tick as the program, with the same timestamp. Recorders are added to and removed from the sinks together, so every file starts and ends on the same frame and audio sample. QuickTime files also carry a matching time-of-day timecode track.
+- **Long recordings survive errors.** Files are written in 2 s fragments, so a failure mid-take loses about 2 s at most, and the file is never deleted. Recording then continues in a "(part 2)" file. While recording or streaming, the engine keeps the Mac and its displays awake and opts out of App Nap.
 - **Chat overlays are just sources.** The engine renders chat into images the compositor places like any other source.
 
 ## Roadmap

@@ -27,15 +27,16 @@ struct ControlBar: View {
 
             Spacer()
 
-            if let url = model.lastRecordingURL, !model.isRecording {
+            if let first = model.lastRecordingURLs.first, !model.isRecording {
+                let urls = model.lastRecordingURLs
                 Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                    NSWorkspace.shared.activateFileViewerSelecting(urls)
                 } label: {
-                    Label(url.lastPathComponent, systemImage: "film")
+                    Label(urls.count == 1 ? first.lastPathComponent : "\(urls.count) files", systemImage: "film")
                         .lineLimit(1)
                 }
                 .buttonStyle(.borderless)
-                .help("Show in Finder")
+                .help(urls.count == 1 ? "Show in Finder" : "Show in Finder: " + urls.map(\.lastPathComponent).joined(separator: ", "))
             }
 
             Button(action: model.toggleRecording) {
@@ -80,8 +81,13 @@ struct ControlBar: View {
     }
 
     private var recordingSummary: String {
-        let r = model.profile.recording, size = r.resolution.size(for: model.profile.output)
-        return "Records \(size.width)×\(size.height) \(model.profile.output.fps) fps, \(r.codec == .hevc ? "HEVC" : "H.264") \(r.videoBitrateKbps / 1000) Mbps (⇧⌘R)"
+        let r = model.profile.recording
+        let files = r.outputs.map { output in
+            let size = output.resolution.size(for: model.profile.output)
+            return "\(model.recordingLabel(output)) \(size.width)×\(size.height) \(output.videoBitrateKbps / 1000) Mbps"
+        }
+        guard !files.isEmpty else { return "Nothing to record: choose what to record in Settings › Recording" }
+        return "Records \(files.joined(separator: ", ")) at \(model.profile.output.fps) fps, \(r.codec == .hevc ? "HEVC" : "H.264") (⇧⌘R)"
     }
 
     private func transitionBinding<T>(_ path: WritableKeyPath<TransitionSettings, T>) -> Binding<T> {
