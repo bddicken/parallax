@@ -3,7 +3,7 @@
 The relay between the Parallax app and streaming platforms. The Mac uploads one stream; the server sends it on to each platform and brings their chat back.
 
 ```
-Parallax ──SRT──▶ MediaMTX ──RTMP (local)──▶ ffmpeg -c copy ──RTMPS──▶ Twitch, YouTube
+Parallax ──SRT──▶ MediaMTX ──RTMP (local)──▶ ffmpeg -c copy ──RTMPS──▶ Twitch, YouTube, X
     ▲                (ingest)                  (one per destination)
     └── REST + WebSocket ──▶ parallax-server ◀── platform APIs (sign-in, stream keys, chat)
 ```
@@ -18,6 +18,7 @@ It leans on existing tools for media: [MediaMTX](https://mediamtx.org) receives 
 | `src/broadcast.rs` | Go live / stop; runs and watches one ffmpeg per destination |
 | `src/twitch.rs` | Device code sign-in, token refresh, stream key, chat (EventSub WebSocket in, Helix out) |
 | `src/youtube.rs` | Device code sign-in, a reusable stream, one broadcast per go-live, chat (streamed or polled in, `liveChatMessages.insert` out) |
+| `src/x.rs` | X ingest URL from `.env` (switched to RTMPS). Video only for now |
 | `src/store.rs` | `data/state.json`: API token, ingest key, platform sign-ins, custom destinations |
 
 ## Run locally
@@ -35,12 +36,13 @@ It prints the API token on startup. In Parallax, open Settings › Server, enter
 
 ### Platforms
 
-Each platform needs a one-time app registration on your account. Step-by-step guides:
+Each platform needs some one-time setup on your account. Step-by-step guides:
 
 - [Twitch setup](../docs/setup/twitch.md): `TWITCH_CLIENT_ID` (and `TWITCH_CLIENT_SECRET` for Confidential apps)
 - [YouTube setup](../docs/setup/youtube.md): `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET`
+- [X setup](../docs/setup/x.md): `X_RTMP_URL` and `X_STREAM_KEY` from an X Media Studio source (video only; you start and end broadcasts in Media Studio)
 
-### Test without Twitch or YouTube
+### Test without an account
 
 A `custom` destination can point at any RTMP server, such as ffmpeg listening locally:
 
@@ -49,7 +51,7 @@ ffmpeg -listen 1 -i rtmp://127.0.0.1:19350/app/test -c copy out.flv
 ```
 
 ```bash
-curl -X PUT localhost:8080/v1/destinations -H "Authorization: Bearer $TOKEN" \
+curl -X PUT localhost:8080/v1/destinations -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '[{"id":"local","platform":"custom","name":"Local test","enabled":true,"rtmpURL":"rtmp://127.0.0.1:19350/app","streamKey":"test"}]'
 ```
 
@@ -70,5 +72,6 @@ Environment variables (a `.env` file works too):
 | `TWITCH_CLIENT_SECRET` | | Only for Confidential apps |
 | `TWITCH_INGEST_URL` | `rtmps://ingest.global-contribute.live-video.net:443/app` | Twitch ingest (auto-picks the nearest region) |
 | `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` | | Enables YouTube (both required) |
+| `X_RTMP_URL` / `X_STREAM_KEY` | | Enables X: a Media Studio source's server URL and stream key (both required) |
 
 `data/state.json` holds tokens, so it's written with owner-only permissions.

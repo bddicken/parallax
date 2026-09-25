@@ -25,6 +25,7 @@ use crate::{
     },
     store::Store,
     twitch::Twitch,
+    x,
     youtube::YouTube,
 };
 
@@ -118,6 +119,16 @@ async fn all_destinations(state: &AppState) -> Vec<Destination> {
             stream_key: None,
         });
     }
+    if state.config.x.is_some() {
+        list.push(Destination {
+            id: "x".into(),
+            platform: Platform::X,
+            name: "X".into(),
+            enabled: true,
+            rtmp_url: None,
+            stream_key: None,
+        });
+    }
     list.extend(state.store.get().custom_destinations);
     list
 }
@@ -128,12 +139,12 @@ async fn destinations(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 /// Replaces the custom RTMP destinations. Platform destinations come from
-/// connected accounts, so they're ignored here. A missing stream key keeps
-/// the saved one.
+/// connected accounts (or, for X, the server's settings), so they're ignored
+/// here. A missing stream key keeps the saved one.
 async fn put_destinations(State(state): State<Arc<AppState>>, Json(list): Json<Vec<Destination>>) -> AppResult<StatusCode> {
     let mut custom = Vec::new();
     for mut d in list.into_iter().filter(|d| d.platform == Platform::Custom) {
-        if d.id.is_empty() || d.id == "twitch" || d.id == "youtube" {
+        if d.id.is_empty() || d.id == "twitch" || d.id == "youtube" || d.id == "x" {
             return Err(ApiError::bad_request("Each custom destination needs its own id."));
         }
         if !d.rtmp_url.as_deref().is_some_and(|u| u.starts_with("rtmp://") || u.starts_with("rtmps://")) {
@@ -170,6 +181,10 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
                     .map_err(|e| format!("{e:#}")),
                 None => Err("YouTube isn't set up on the server.".into()),
             },
+            Platform::X => match &state.config.x {
+                Some(config) => Ok(x::ingest_url(config)),
+                None => Err("X isn't set up on the server.".into()),
+            },
             Platform::Custom => {
                 let base = dest.rtmp_url.clone().unwrap_or_default();
                 Ok(match &dest.stream_key {
@@ -177,7 +192,6 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
                     _ => base,
                 })
             }
-            other => Err(format!("{other:?} isn't supported yet.")),
         };
         if let Err(error) = &url {
             tracing::warn!("can't go live on {id}: {error}");

@@ -6,6 +6,7 @@ mod ingest;
 mod protocol;
 mod store;
 mod twitch;
+mod x;
 mod youtube;
 
 use std::sync::Arc;
@@ -50,6 +51,9 @@ async fn main() -> Result<()> {
     match &youtube {
         Some(youtube) => youtube.restore().await,
         None => tracing::warn!("YOUTUBE_CLIENT_ID/SECRET aren't set, so YouTube is off"),
+    }
+    if config.x.is_none() {
+        tracing::warn!("X_RTMP_URL/X_STREAM_KEY aren't set, so X is off");
     }
 
     let broadcaster = Broadcaster::new(config.ffmpeg_bin.clone(), ingest.clone(), events.clone());
