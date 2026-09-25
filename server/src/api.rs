@@ -179,6 +179,9 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
             }
             other => Err(format!("{other:?} isn't supported yet.")),
         };
+        if let Err(error) = &url {
+            tracing::warn!("can't go live on {id}: {error}");
+        }
         targets.push(Target { id, url });
     }
     state.broadcaster.start(targets).await;

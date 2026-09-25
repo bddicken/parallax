@@ -441,7 +441,7 @@ impl YouTube {
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
-            let error = ApiErrorBody::parse(&body);
+            let error = ApiErrorBody::parse_with_status(status, &body);
             if error.is_chat_over() {
                 return Ok(ChatEnd::Ended);
             }
@@ -519,14 +519,17 @@ impl YouTube {
         body: Option<Value>,
     ) -> Result<T> {
         let mut request = self.http.request(method, format!("{API}/{path}")).bearer_auth(token).query(query);
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
+        request = match body {
+            Some(body) => request.json(&body),
+            // Google answers a bodyless POST without `Content-Length: 0` with
+            // 411, and an empty body alone doesn't add the header.
+            None => request.header(reqwest::header::CONTENT_LENGTH, 0),
+        };
         let response = request.send().await?;
         let status = response.status();
         let text = response.text().await?;
         if !status.is_success() {
-            return Err(ApiErrorBody::parse(&text).into());
+            return Err(ApiErrorBody::parse_with_status(status, &text).into());
         }
         // DELETE and some POSTs answer 204 with no body.
         serde_json::from_str(if text.trim().is_empty() { "null" } else { &text })
@@ -753,6 +756,14 @@ struct ApiErrorBody {
 }
 
 impl ApiErrorBody {
+    /// Like `parse`, but some failures come back as an HTML page; name the status instead.
+    fn parse_with_status(status: reqwest::StatusCode, body: &str) -> ApiErrorBody {
+        if body.trim_start().starts_with('<') {
+            return ApiErrorBody { message: format!("YouTube returned {status}"), reason: None };
+        }
+        ApiErrorBody::parse(body)
+    }
+
     fn parse(body: &str) -> ApiErrorBody {
         let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
         let error = &value["error"];
@@ -886,6 +897,8 @@ mod tests {
             "errors": [{"reason": "liveStreamingNotEnabled", "domain": "youtube.liveBroadcast"}]}}"#;
         let e = ApiErrorBody::parse(body);
         assert!(e.message.contains("youtube.com/features"));
+        let html = ApiErrorBody::parse_with_status(reqwest::StatusCode::LENGTH_REQUIRED, "<!DOCTYPE html><html>…");
+        assert_eq!(html.message, "YouTube returned 411 Length Required");
         let ended = ApiErrorBody::parse(r#"{"error": {"code": 403, "message": "ended", "errors": [{"reason": "liveChatEnded"}]}}"#);
         assert!(ended.is_chat_over());
     }
