@@ -47,6 +47,9 @@ pub struct DestinationStatus {
     pub bitrate_kbps: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// People watching now, where the platform reports it (Twitch, YouTube).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewers: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

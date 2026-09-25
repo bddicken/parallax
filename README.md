@@ -13,6 +13,7 @@ A macOS livestreaming studio in one app. It replaces an OBS + StreamYard + Loopb
 - **Local recording**: H.264/HEVC up to 4K, crash-safe, independent of the stream.
 - **Multistreaming**: upload one stream, and the server relays it to each platform (Twitch today).
 - **Unified chat**: read platform chat and reply from the app.
+- **Viewer counts**: see how many people are watching on each platform, and in total.
 
 ## How it works
 

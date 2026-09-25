@@ -45,12 +45,15 @@ public struct DestinationStatus: Codable, Hashable, Sendable {
     public var state: DestinationState
     public var bitrateKbps: Int
     public var error: String?
+    /// People watching now, where the platform reports it (Twitch, YouTube).
+    public var viewers: Int?
 
-    public init(destinationID: String, state: DestinationState, bitrateKbps: Int = 0, error: String? = nil) {
+    public init(destinationID: String, state: DestinationState, bitrateKbps: Int = 0, error: String? = nil, viewers: Int? = nil) {
         self.destinationID = destinationID
         self.state = state
         self.bitrateKbps = bitrateKbps
         self.error = error
+        self.viewers = viewers
     }
 }
 

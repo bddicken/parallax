@@ -1,7 +1,12 @@
 //! Going live: one ffmpeg per destination copies the ingest stream (no
 //! re-encoding) to the platform, restarting on its own if it drops.
 
-use std::{collections::VecDeque, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use tokio::{
@@ -37,6 +42,9 @@ struct Inner {
     /// Bumped on every start and stop, so late updates from a stopped relay are dropped.
     generation: u64,
     relays: Vec<(DestinationStatus, Option<JoinHandle<()>>)>,
+    /// Latest viewer counts by destination, kept apart from the relays'
+    /// statuses so relay updates don't wipe them.
+    viewers: HashMap<String, i64>,
 }
 
 impl Broadcaster {
@@ -59,7 +67,11 @@ impl Broadcaster {
             live: inner.started_at.is_some(),
             ingest_active: *self.ingest.ready().borrow(),
             started_at: inner.started_at,
-            destinations: inner.relays.iter().map(|(s, _)| s.clone()).collect(),
+            destinations: inner
+                .relays
+                .iter()
+                .map(|(s, _)| DestinationStatus { viewers: inner.viewers.get(&s.destination_id).copied(), ..s.clone() })
+                .collect(),
         }
     }
 
@@ -72,6 +84,7 @@ impl Broadcaster {
         stop_relays(&mut inner);
         inner.generation += 1;
         inner.started_at = Some(Utc::now());
+        inner.viewers.clear();
         let generation = inner.generation;
         for target in targets {
             let (status, task) = match target.url {
@@ -94,6 +107,24 @@ impl Broadcaster {
         stop_relays(&mut inner);
         inner.generation += 1;
         inner.started_at = None;
+        inner.viewers.clear();
+        drop(inner);
+        self.publish().await;
+    }
+
+    /// Destinations currently relaying video, whose viewer counts are worth checking.
+    pub async fn live_destinations(&self) -> Vec<String> {
+        let inner = self.inner.lock().await;
+        inner.relays.iter().filter(|(s, _)| s.state == DestinationState::Live).map(|(s, _)| s.destination_id.clone()).collect()
+    }
+
+    /// Replaces the viewer counts, announcing them if any changed.
+    pub async fn set_viewers(&self, viewers: HashMap<String, i64>) {
+        let mut inner = self.inner.lock().await;
+        if inner.viewers == viewers {
+            return;
+        }
+        inner.viewers = viewers;
         drop(inner);
         self.publish().await;
     }
@@ -186,6 +217,7 @@ impl Broadcaster {
                     state: DestinationState::Live,
                     bitrate_kbps: kbps,
                     error: None,
+                    viewers: None,
                 };
                 self.set(generation, status).await;
             }
@@ -209,7 +241,7 @@ fn stop_relays(inner: &mut Inner) {
 }
 
 fn connecting(id: &str, error: Option<String>) -> DestinationStatus {
-    DestinationStatus { destination_id: id.into(), state: DestinationState::Connecting, bitrate_kbps: 0, error }
+    DestinationStatus { destination_id: id.into(), state: DestinationState::Connecting, bitrate_kbps: 0, error, viewers: None }
 }
 
 /// Hides the stream key (the last path segment) in logs and errors.

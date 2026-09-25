@@ -27,6 +27,8 @@ struct ControlBar: View {
 
             Spacer()
 
+            ViewerCounts()
+
             if let url = model.lastRecordingURL, !model.isRecording {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([url])
@@ -139,6 +141,11 @@ struct GoLiveSheet: View {
                         .disabled(broadcast.status.live)
                         Spacer()
                         if let status = broadcast.status.destinations.first(where: { $0.destinationID == dest.id }) {
+                            if let viewers = status.viewers {
+                                Label("\(viewers)", systemImage: "eye")
+                                    .font(.callout).monospacedDigit().foregroundStyle(.secondary)
+                                    .help("\(viewers) watching on \(dest.name)")
+                            }
                             StatusPill(state: status.state, error: status.error)
                         }
                     }
@@ -182,6 +189,33 @@ struct GoLiveSheet: View {
         .task {
             await broadcast.refreshDestinations()
             selected = Set(broadcast.destinations.filter(\.enabled).map(\.id))
+        }
+    }
+}
+
+/// While live: everyone watching, then each platform's share.
+private struct ViewerCounts: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let counts = model.broadcast.viewerCounts
+        if let total = model.broadcast.totalViewers {
+            HStack(spacing: 10) {
+                Label("\(total)", systemImage: "eye.fill")
+                    .fontWeight(.semibold)
+                if counts.count > 1 {
+                    ForEach(counts) { count in
+                        HStack(spacing: 2) {
+                            PlatformBadge(platform: count.platform)
+                            Text("\(count.viewers)").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .monospacedDigit()
+            .help(counts.map { "\($0.name): \($0.viewers)" }.joined(separator: "\n")
+                  + (counts.count > 1 ? "\nSomeone watching on two platforms counts twice." : ""))
+            Divider().frame(height: 20)
         }
     }
 }
