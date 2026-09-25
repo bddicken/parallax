@@ -43,6 +43,13 @@ import Testing
         #expect(accounts[1].displayName == "Parallax Dev")
     }
 
+    @Test func decodesHealthAndEncodesUpdates() throws {
+        #expect(try decode(ServerHealth.self, "health") == ServerHealth(version: "0.1.0", canUpdate: true))
+        let encoded = try JSONSerialization.jsonObject(with: WireCoding.encoder().encode(UpdateServerRequest(version: "0.2.0"))) as? NSDictionary
+        let expected = try JSONSerialization.jsonObject(with: fixture("update-server")) as? NSDictionary
+        #expect(encoded == expected)
+    }
+
     @Test func encodesStartRequestLikeTheFixture() throws {
         let request = StartBroadcastRequest(destinationIDs: ["twitch", "youtube"], title: "Building Parallax", privacy: "public")
         let encoded = try JSONSerialization.jsonObject(with: WireCoding.encoder().encode(request)) as? NSDictionary

@@ -134,6 +134,27 @@ public struct IngestInfo: Codable, Hashable, Sendable {
     public var rtmpURL: String
 }
 
+/// `GET /v1/health`, which needs no token.
+public struct ServerHealth: Codable, Hashable, Sendable {
+    public var version: String
+    /// Whether `POST /v1/server/update` works (servers deployed from Parallax).
+    public var canUpdate: Bool
+
+    public init(version: String, canUpdate: Bool) {
+        self.version = version
+        self.canUpdate = canUpdate
+    }
+}
+
+public struct UpdateServerRequest: Codable, Sendable {
+    /// A release version, like `0.2.0`.
+    public var version: String
+
+    public init(version: String) {
+        self.version = version
+    }
+}
+
 public enum AccountState: String, Codable, Sendable {
     case disconnected, pending, connected
 }

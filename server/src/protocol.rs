@@ -157,6 +157,22 @@ pub struct DeviceCode {
     pub expires_at: DateTime<Utc>,
 }
 
+/// `GET /v1/health`, which needs no token.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ServerHealth {
+    pub version: String,
+    /// Whether `POST /v1/server/update` works here (servers installed by
+    /// Parallax's deploy).
+    #[serde(rename = "canUpdate")]
+    pub can_update: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct UpdateServerRequest {
+    /// A release version, like `0.2.0` (from the `server-v0.2.0` tag).
+    pub version: String,
+}
+
 /// Pushed over `/v1/events` as `{"type": ..., "data": ...}`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
@@ -228,6 +244,13 @@ mod tests {
         round_trips::<ServerEvent>("event-chat");
         round_trips::<ServerEvent>("event-status");
         round_trips::<ServerEvent>("event-accounts");
+        round_trips::<ServerHealth>("health");
+    }
+
+    #[test]
+    fn reads_update_requests() {
+        let req: UpdateServerRequest = serde_json::from_value(fixture("update-server")).unwrap();
+        assert_eq!(req.version, "0.2.0");
     }
 
     #[test]

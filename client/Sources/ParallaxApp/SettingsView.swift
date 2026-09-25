@@ -219,12 +219,17 @@ private struct ServerSettingsView: View {
             if let error = model.broadcast.connectionError {
                 Text(error).foregroundStyle(.red)
             }
+            DeploySection()
         }
         .formStyle(.grouped)
-        .onAppear {
-            url = model.profile.broadcast.serverURL
-            token = Keychain.read("server-token") ?? ""
-        }
+        .onAppear(perform: showSavedServer)
+        // A deploy (or destroying the server in use) changes the server.
+        .onChange(of: model.profile.broadcast.serverURL) { showSavedServer() }
+    }
+
+    private func showSavedServer() {
+        url = model.profile.broadcast.serverURL
+        token = Keychain.read("server-token") ?? ""
     }
 }
 

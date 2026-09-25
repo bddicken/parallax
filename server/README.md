@@ -20,6 +20,8 @@ It leans on existing tools for media: [MediaMTX](https://mediamtx.org) receives 
 | `src/youtube.rs` | Device code sign-in, a reusable stream, one broadcast per go-live, chat (streamed or polled in, `liveChatMessages.insert` out) |
 | `src/x.rs` | X ingest URL from `.env` (switched to RTMPS). Video only for now |
 | `src/store.rs` | `data/state.json`: API token, ingest key, platform sign-ins, custom destinations |
+| `src/update.rs` | Self-update from GitHub Releases (servers deployed from the app) |
+| `deploy/cloud-init.sh` | Installs the server on a fresh Ubuntu droplet; the app fills it in and deploys it |
 
 ## Run locally
 
@@ -55,6 +57,26 @@ curl -X PUT localhost:8080/v1/destinations -H "Authorization: Bearer $TOKEN" -H 
   -d '[{"id":"local","platform":"custom","name":"Local test","enabled":true,"rtmpURL":"rtmp://127.0.0.1:19350/app","streamKey":"test"}]'
 ```
 
+## Deploy to DigitalOcean
+
+The app can create a droplet running the server, with HTTPS, a firewall, and an encrypted SRT upload: see the [DigitalOcean setup](../docs/setup/digitalocean.md). On the droplet, [`deploy/cloud-init.sh`](deploy/cloud-init.sh) sets up:
+
+- `/opt/parallax/bin/`: `parallax-server` (a release build) and `mediamtx`
+- `/etc/parallax/parallax.env`: its settings, including the platform settings from the deploy sheet
+- `parallax.service` (systemd) running as the `parallax` user, with its data in `/var/lib/parallax`
+- Caddy serving `https://<ip>.sslip.io` in front of the API on `127.0.0.1:8080`
+
+To use the script elsewhere, replace each placeholder value at its top and run it as root on Ubuntu 24.04 (amd64 or arm64).
+
+## Releases
+
+Deploys and self-updates download Linux builds (amd64 and arm64) from this repository's GitHub Releases, which [`.github/workflows/server-release.yml`](../.github/workflows/server-release.yml) builds. To release:
+
+1. Set `version` in `Cargo.toml`, and `ServerRelease.version` in `client/Sources/ParallaxRemote/ServerDeploy.swift` to match (a client test checks), and merge.
+2. Tag the merge and push the tag: `git tag server-v0.2.0 && git push origin server-v0.2.0`.
+
+Each app build deploys the release it names, and offers **Update** for servers running an older one. `parallax-server --version` prints the version, and `GET /v1/health` reports it.
+
 ## Configuration
 
 Environment variables (a `.env` file works too):
@@ -64,10 +86,13 @@ Environment variables (a `.env` file works too):
 | `PARALLAX_ADDR` | `127.0.0.1:8080` | Control API listen address |
 | `PARALLAX_DATA_DIR` | `data` | Saved state and the generated MediaMTX config |
 | `PARALLAX_TOKEN` | generated | API token |
+| `PARALLAX_INGEST_KEY` | generated | Password for sending video (letters, digits, `-._~`) |
+| `PARALLAX_SRT_PASSPHRASE` | | Encrypts the SRT upload; clients must use it. 10–79 letters, digits, `-._~` |
 | `PARALLAX_PUBLIC_HOST` | host the client connected to | Host name given to the client for sending video |
 | `PARALLAX_SRT_PORT` / `PARALLAX_RTMP_PORT` | `8890` / `1935` | Ingest ports (SRT is UDP) |
 | `PARALLAX_MEDIAMTX_API_PORT` | `9997` | MediaMTX API, localhost only |
 | `PARALLAX_MEDIAMTX` / `PARALLAX_FFMPEG` | from `PATH` | Binaries |
+| `PARALLAX_RELEASE_REPO` | | GitHub repository (`owner/name`) whose releases `POST /v1/server/update` installs. Unset turns self-update off. Needs a supervisor that restarts the server when it exits |
 | `TWITCH_CLIENT_ID` | | Enables Twitch |
 | `TWITCH_CLIENT_SECRET` | | Only for Confidential apps |
 | `TWITCH_INGEST_URL` | `rtmps://ingest.global-contribute.live-video.net:443/app` | Twitch ingest (auto-picks the nearest region) |

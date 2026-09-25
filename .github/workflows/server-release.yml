@@ -1,0 +1,78 @@
+# Builds parallax-server for Linux and publishes it as a GitHub Release.
+#
+# To release: set `version` in server/Cargo.toml (and ServerRelease.version in
+# client/Sources/ParallaxRemote/ServerDeploy.swift), merge, then push a
+# matching tag:
+#
+#   git tag server-v0.2.0 && git push origin server-v0.2.0
+#
+# Droplets deployed from the app download these assets at boot
+# (server/deploy/cloud-init.sh), and so does the server's self-update.
+name: Server release
+
+on:
+  push:
+    tags: ["server-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # 22.04 builds link against an older glibc, so they also run on
+          # older distributions than the deploy's Ubuntu 24.04.
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the tag matches Cargo.toml
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [[ "$GITHUB_REF_NAME" != "server-v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match server/Cargo.toml's version ($version)."
+            exit 1
+          fi
+      - run: cargo test --locked
+      - run: cargo build --release --locked
+      - name: Stage the binary
+        run: |
+          mkdir -p ../dist
+          cp target/release/parallax-server "../dist/parallax-server-linux-${{ matrix.arch }}"
+          "../dist/parallax-server-linux-${{ matrix.arch }}" --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: parallax-server-linux-${{ matrix.arch }}
+          path: dist/parallax-server-linux-${{ matrix.arch }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum parallax-server-linux-* | tee SHA256SUMS
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "parallax-server ${GITHUB_REF_NAME#server-v}" \
+            --generate-notes

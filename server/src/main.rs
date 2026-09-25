@@ -6,12 +6,14 @@ mod ingest;
 mod protocol;
 mod store;
 mod twitch;
+mod update;
 mod x;
 mod youtube;
 
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use tokio::sync::{Mutex, watch};
 use tracing_subscriber::EnvFilter;
 
 use crate::{
@@ -21,6 +23,11 @@ use crate::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // The self-update checks a download with this before installing it.
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("parallax-server {}", update::VERSION);
+        return Ok(());
+    }
     let _ = dotenvy::dotenv();
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
@@ -34,6 +41,9 @@ async fn main() -> Result<()> {
     let store = Arc::new(Store::open(&config.data_dir)?);
     if let Some(token) = &config.api_token {
         store.update(|s| s.api_token = token.clone())?;
+    }
+    if let Some(key) = &config.ingest_key {
+        store.update(|s| s.ingest_key = key.clone())?;
     }
     let saved = store.get();
     let events = Events::new();
@@ -57,18 +67,42 @@ async fn main() -> Result<()> {
     }
 
     let broadcaster = Broadcaster::new(config.ffmpeg_bin.clone(), ingest.clone(), events.clone());
-    let state = Arc::new(AppState { config: config.clone(), store, events, ingest, broadcaster, twitch, youtube });
+    let (shutdown, _) = watch::channel(false);
+    let state = Arc::new(AppState {
+        config: config.clone(),
+        store,
+        events,
+        ingest,
+        broadcaster,
+        twitch,
+        youtube,
+        shutdown: shutdown.clone(),
+        updating: Mutex::new(()),
+    });
     tokio::spawn(api::publish_accounts(state.clone()));
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(config.addr).await.with_context(|| format!("listening on {}", config.addr))?;
-    tracing::info!("parallax-server on http://{}", config.addr);
+    tracing::info!("parallax-server {} on http://{}", update::VERSION, config.addr);
     tracing::info!("API token: {} (paste into Parallax › Settings › Server)", saved.api_token);
-    axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
+    tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            signal().await;
+            shutdown.send_replace(true);
+        }
+    });
+    let mut stop = shutdown.subscribe();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            let _ = stop.wait_for(|stop| *stop).await;
+        })
+        .await?;
     Ok(())
 }
 
-async fn shutdown() {
+/// Ctrl-C or SIGTERM. A self-update stops the server the same way.
+async fn signal() {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");

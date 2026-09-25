@@ -1,0 +1,36 @@
+{
+  "regions": [
+    {
+      "name": "San Francisco 3",
+      "slug": "sfo3",
+      "features": ["backups", "ipv6", "metadata", "install_agent", "storage", "image_transfer"],
+      "available": true,
+      "sizes": ["s-1vcpu-512mb-10gb", "s-1vcpu-1gb", "s-1vcpu-2gb", "s-2vcpu-2gb"]
+    },
+    {
+      "name": "Amsterdam 2",
+      "slug": "ams2",
+      "features": ["backups", "ipv6", "metadata"],
+      "available": false,
+      "sizes": []
+    },
+    {
+      "name": "New York 3",
+      "slug": "nyc3",
+      "features": ["backups", "ipv6", "metadata", "install_agent", "storage", "image_transfer"],
+      "available": true,
+      "sizes": ["s-1vcpu-512mb-10gb", "s-1vcpu-1gb", "s-1vcpu-2gb", "s-2vcpu-2gb"]
+    },
+    {
+      "name": "Bangalore 1",
+      "slug": "blr1",
+      "features": ["backups", "ipv6", "metadata"],
+      "available": true,
+      "sizes": ["s-2vcpu-4gb"]
+    }
+  ],
+  "links": {},
+  "meta": {
+    "total": 4
+  }
+}

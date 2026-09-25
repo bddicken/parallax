@@ -1,6 +1,6 @@
 //! The control API from docs/protocol.md: REST plus the `/v1/events` WebSocket.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
@@ -13,7 +13,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::{Mutex, broadcast::error::RecvError, watch};
 
 use crate::{
     broadcast::{Broadcaster, Target},
@@ -21,11 +21,12 @@ use crate::{
     events::Events,
     ingest::Ingest,
     protocol::{
-        Account, AccountState, Destination, IngestInfo, Platform, SendChatRequest, ServerEvent, StartBroadcastRequest,
+        Account, AccountState, Destination, IngestInfo, Platform, SendChatRequest, ServerEvent, ServerHealth,
+        StartBroadcastRequest, UpdateServerRequest,
     },
     store::Store,
     twitch::{self, Twitch},
-    x,
+    update, x,
     youtube::YouTube,
 };
 
@@ -37,6 +38,10 @@ pub struct AppState {
     pub broadcaster: Arc<Broadcaster>,
     pub twitch: Option<Arc<Twitch>>,
     pub youtube: Option<Arc<YouTube>>,
+    /// Set to true to stop the server gracefully (main.rs waits for it).
+    pub shutdown: watch::Sender<bool>,
+    /// Held while an update downloads, so only one runs at a time.
+    pub updating: Mutex<()>,
 }
 
 type AppResult<T> = Result<T, ApiError>;
@@ -53,7 +58,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/accounts/{platform}/connect", post(connect_account))
         .route("/accounts/{platform}", delete(disconnect_account))
         .route("/events", get(events))
-        .layer(middleware::from_fn_with_state(state.clone(), require_token));
+        .route("/server/update", post(update_server))
+        .layer(middleware::from_fn_with_state(state.clone(), require_token))
+        // Added after the token layer, so it's open: the app polls it while a
+        // new server boots.
+        .route("/health", get(health));
     Router::new().route("/healthz", get(|| async { "ok" })).nest("/v1", v1).with_state(state)
 }
 
@@ -73,6 +82,41 @@ async fn require_token(State(state): State<Arc<AppState>>, request: Request, nex
 
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    Json(ServerHealth { version: update::VERSION.into(), can_update: state.config.release_repo.is_some() })
+}
+
+/// Installs another release and restarts into it. Needs a supervisor that
+/// restarts the server when it exits (systemd, in the deploy).
+async fn update_server(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<UpdateServerRequest>,
+) -> AppResult<StatusCode> {
+    let Some(repo) = &state.config.release_repo else {
+        return Err(ApiError::bad_request(
+            "This server can't update itself (PARALLAX_RELEASE_REPO isn't set). Servers deployed from Parallax can.",
+        ));
+    };
+    if !update::is_version(&req.version) {
+        return Err(ApiError::bad_request(format!("{:?} isn't a release version.", req.version)));
+    }
+    if state.broadcaster.status().await.live {
+        return Err(ApiError(StatusCode::CONFLICT, "Stop the broadcast before updating the server.".into()));
+    }
+    let Ok(_updating) = state.updating.try_lock() else {
+        return Err(ApiError(StatusCode::CONFLICT, "An update is already running.".into()));
+    };
+    update::install(repo, &req.version).await?;
+    tracing::info!("installed parallax-server {}; restarting", req.version);
+    // Give this response a moment to go out first.
+    let shutdown = state.shutdown.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        shutdown.send_replace(true);
+    });
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
@@ -314,6 +358,7 @@ async fn events(State(state): State<Arc<AppState>>, ws: WebSocketUpgrade) -> Res
 /// Sends the current status and accounts, then every event as it happens.
 async fn stream_events(state: Arc<AppState>, mut socket: WebSocket) {
     let mut rx = state.events.subscribe();
+    let mut shutdown = state.shutdown.subscribe();
     let initial = [ServerEvent::Status(state.broadcaster.status().await), ServerEvent::Accounts(account_list(&state).await)];
     for event in initial {
         if send(&mut socket, &event).await.is_err() {
@@ -332,8 +377,12 @@ async fn stream_events(state: Arc<AppState>, mut socket: WebSocket) {
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
                 _ => {}
             },
+            // Open sockets would otherwise hold up a graceful shutdown. (The
+            // block drops `wait_for`'s guard, which isn't Send.)
+            _ = async { drop(shutdown.wait_for(|stop| *stop).await) } => break,
         }
     }
+    let _ = socket.send(Message::Close(None)).await;
 }
 
 async fn send(socket: &mut WebSocket, event: &ServerEvent) -> Result<(), axum::Error> {
@@ -358,5 +407,76 @@ impl From<anyhow::Error> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (self.0, self.1).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::body::{Body, to_bytes};
+    use tower::ServiceExt;
+
+    use super::*;
+
+    fn state(release_repo: Option<&str>) -> Arc<AppState> {
+        let config = Arc::new(Config { release_repo: release_repo.map(Into::into), ..Config::for_tests() });
+        let store = Arc::new(Store::open(&config.data_dir).unwrap());
+        store.update(|s| s.api_token = "token".into()).unwrap();
+        let events = Events::new();
+        let ingest = Ingest::new(config.clone(), "key".into());
+        let broadcaster = Broadcaster::new("ffmpeg".into(), ingest.clone(), events.clone());
+        Arc::new(AppState {
+            config,
+            store,
+            events,
+            ingest,
+            broadcaster,
+            twitch: None,
+            youtube: None,
+            shutdown: watch::channel(false).0,
+            updating: Mutex::new(()),
+        })
+    }
+
+    async fn call(state: Arc<AppState>, request: axum::http::Request<Body>) -> (StatusCode, String) {
+        let response = router(state).oneshot(request).await.unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        (status, String::from_utf8(body.to_vec()).unwrap())
+    }
+
+    fn update_request(token: Option<&str>, version: &str) -> axum::http::Request<Body> {
+        let mut request = axum::http::Request::post("/v1/server/update").header(header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {token}"));
+        }
+        request.body(Body::from(format!(r#"{{"version":"{version}"}}"#))).unwrap()
+    }
+
+    #[tokio::test]
+    async fn health_needs_no_token() {
+        let (status, body) =
+            call(state(Some("bddicken/parallax")), axum::http::Request::get("/v1/health").body(Body::empty()).unwrap())
+                .await;
+        assert_eq!(status, StatusCode::OK);
+        let health: ServerHealth = serde_json::from_str(&body).unwrap();
+        assert_eq!(health, ServerHealth { version: update::VERSION.into(), can_update: true });
+    }
+
+    #[tokio::test]
+    async fn other_routes_still_need_the_token() {
+        let (status, _) = call(state(None), axum::http::Request::get("/v1/status").body(Body::empty()).unwrap()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) = call(state(Some("bddicken/parallax")), update_request(None, "0.2.0")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn update_needs_a_release_repo_and_a_version() {
+        let (status, body) = call(state(None), update_request(Some("token"), "0.2.0")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("PARALLAX_RELEASE_REPO"), "{body}");
+        let (status, body) = call(state(Some("bddicken/parallax")), update_request(Some("token"), "../x")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("isn't a release version"), "{body}");
     }
 }

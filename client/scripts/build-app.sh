@@ -25,6 +25,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Parallax"
 cp Support/Info.plist "$APP/Contents/Info.plist"
 cp Support/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# Install script for Settings › Server › Deploy (DigitalOcean).
+cp ../server/deploy/cloud-init.sh "$APP/Contents/Resources/cloud-init.sh"
 # Unique build number, so each build is distinguishable (About box, crash logs).
 plutil -replace CFBundleVersion -string "$(date +%Y%m%d.%H%M%S)" "$APP/Contents/Info.plist"
 

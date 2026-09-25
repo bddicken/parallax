@@ -7,6 +7,7 @@ Every `/v1` endpoint requires `Authorization: Bearer <token>`. Bodies are JSON, 
 | Method | Path | Body → Response |
 |---|---|---|
 | GET | `/healthz` | → `ok` (no auth) |
+| GET | `/v1/health` | → `ServerHealth` `{version, canUpdate}` (no auth) |
 | GET | `/v1/status` | → `BroadcastStatus` |
 | GET | `/v1/ingest` | → `IngestInfo` (`srtURL`, `rtmpURL`) |
 | GET | `/v1/destinations` | → `[Destination]` (stream keys omitted). `chatURL?` is the platform's pop-out chat page: Twitch always, YouTube once a broadcast exists, X when `X_USERNAME` is set. |
@@ -17,6 +18,7 @@ Every `/v1` endpoint requires `Authorization: Bearer <token>`. Bodies are JSON, 
 | GET | `/v1/accounts` | → `[Account]` |
 | POST | `/v1/accounts/{platform}/connect` | → `DeviceCode` `{userCode, verificationURL, expiresAt}`. The user opens the URL and enters the code; an `accounts` event follows when they finish. `twitch` or `youtube`. |
 | DELETE | `/v1/accounts/{platform}` | → 204 |
+| POST | `/v1/server/update` | `{version}` → 202, then the server restarts into that release. 400 if it can't update itself (`canUpdate` is false), 409 while live. |
 | GET | `/v1/events` | WebSocket of `{type, data}` events. Sends the current `broadcast.status` and `accounts` on connect. |
 
 Events:
@@ -27,4 +29,4 @@ Events:
 
 Unknown event types must be ignored so either side can add events.
 
-Media: the client pushes H.264 + AAC as MPEG-TS over SRT to `IngestInfo.srtURL` (the `streamid` carries the ingest key), or as FLV to `rtmpURL` as a fallback. The server relays it unchanged, so the client's encoder settings must suit every destination: Twitch needs H.264, a 2 s keyframe interval, and at most 6 Mbps; YouTube and X accept that too (X wants keyframes at most 3 s apart, up to 12 Mbps and 60 fps).
+Media: the client pushes H.264 + AAC as MPEG-TS over SRT to `IngestInfo.srtURL` (the `streamid` carries the ingest key, and a `passphrase` query item, when present, encrypts the stream), or as FLV to `rtmpURL` as a fallback. The server relays it unchanged, so the client's encoder settings must suit every destination: Twitch needs H.264, a 2 s keyframe interval, and at most 6 Mbps; YouTube and X accept that too (X wants keyframes at most 3 s apart, up to 12 Mbps and 60 fps).

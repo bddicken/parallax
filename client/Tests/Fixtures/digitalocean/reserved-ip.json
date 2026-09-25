@@ -1,0 +1,16 @@
+{
+  "reserved_ip": {
+    "ip": "45.55.96.47",
+    "droplet": null,
+    "region": {
+      "name": "New York 3",
+      "slug": "nyc3",
+      "features": ["backups", "ipv6", "metadata"],
+      "available": true,
+      "sizes": ["s-1vcpu-1gb"]
+    },
+    "locked": false,
+    "project_id": "746c6152-2fa2-11ed-92d3-27aaa54e4988"
+  },
+  "links": {}
+}

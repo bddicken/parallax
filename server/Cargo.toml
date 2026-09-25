@@ -23,3 +23,7 @@ twitch_oauth2 = { version = "0.17.1", features = ["reqwest"] }
 
 [dev-dependencies]
 tower = { version = "0.5.3", features = ["util"] }
+
+[profile.release]
+# Smaller downloads for deploys and self-updates.
+strip = true

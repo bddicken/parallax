@@ -55,7 +55,7 @@ Key decisions:
 ## Roadmap
 
 1. **Uplink**: done. `Uplink` hands the program to HaishinKit, which encodes with VideoToolbox (H.264) and AAC and sends MPEG-TS over SRT.
-2. **Server**: SRT ingest, ffmpeg `-c copy` relay, Twitch, and YouTube (sign-in, stream keys, chat both ways) are in. Next: deploy to a VM, then more platforms one at a time.
+2. **Server**: SRT ingest, ffmpeg `-c copy` relay, Twitch, and YouTube (sign-in, stream keys, chat both ways) are in, and the app deploys it to DigitalOcean ([setup](setup/digitalocean.md)). Next: more platforms one at a time.
 3. **Replace Loopback / virtual camera**: headphone monitoring output, a CoreMediaIO camera extension (needs Xcode and a signing identity), and possibly a virtual audio device.
 4. **Studio polish**: preview/program ("studio mode"), hotkeys, compressor and voice-isolation filters, per-scene audio.
 

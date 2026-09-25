@@ -20,6 +20,7 @@ final class AppModel {
 
     let devices = DeviceCatalog()
     let broadcast = BroadcastModel()
+    let deploy = DeployModel()
     var selectedItemID: UUID?
     var levels: [UUID: AudioLevel] = [:]
     var masterLevel = AudioLevel.silent
@@ -86,6 +87,8 @@ final class AppModel {
             }
         }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
+        deploy.onUse = { [weak self] url, token in self?.useServer(url: url, token: token) }
+        deploy.onDestroyed = { [weak self] url in self?.forgetServer(url: url) }
         // Save identities that sources re-found (renumbered display, replugged
         // camera) so the next launch goes straight to the right device.
         engine.onVideoSourceResolved = { [weak self] id, kind in
@@ -576,6 +579,21 @@ final class AppModel {
             }
         }
         return true
+    }
+
+    /// Points the app at a server (the token goes in the Keychain) and reconnects.
+    func useServer(url: URL, token: String) {
+        Keychain.write(token, for: "server-token")
+        profile.broadcast.serverURL = url.absoluteString
+        broadcast.connect(profile.broadcast)
+    }
+
+    /// Goes offline if `url` is the server in use (it was destroyed).
+    func forgetServer(url: URL) {
+        guard profile.broadcast.serverURL == url.absoluteString else { return }
+        Keychain.write(nil, for: "server-token")
+        profile.broadcast.serverURL = ""
+        broadcast.connect(profile.broadcast)
     }
 
     func stopUplink() {

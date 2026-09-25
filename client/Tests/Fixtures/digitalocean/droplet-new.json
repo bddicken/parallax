@@ -1,0 +1,44 @@
+{
+  "droplet": {
+    "id": 3164444,
+    "name": "parallax-server",
+    "memory": 1024,
+    "vcpus": 1,
+    "disk": 25,
+    "locked": false,
+    "status": "new",
+    "created_at": "2026-09-25T16:36:31Z",
+    "features": ["monitoring"],
+    "backup_ids": [],
+    "snapshot_ids": [],
+    "image": {
+      "id": 6918990,
+      "name": "24.04 (LTS) x64",
+      "distribution": "Ubuntu",
+      "slug": "ubuntu-24-04-x64"
+    },
+    "size_slug": "s-1vcpu-1gb",
+    "networks": {
+      "v4": [],
+      "v6": []
+    },
+    "region": {
+      "name": "New York 3",
+      "slug": "nyc3",
+      "features": ["backups", "ipv6", "metadata"],
+      "available": true,
+      "sizes": ["s-1vcpu-1gb"]
+    },
+    "tags": ["parallax"],
+    "vpc_uuid": ""
+  },
+  "links": {
+    "actions": [
+      {
+        "id": 7515,
+        "rel": "create",
+        "href": "https://api.digitalocean.com/v2/actions/7515"
+      }
+    ]
+  }
+}

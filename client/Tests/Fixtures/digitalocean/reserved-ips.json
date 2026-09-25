@@ -1,0 +1,101 @@
+{
+  "reserved_ips": [
+    {
+      "ip": "198.51.100.7",
+      "droplet": null,
+      "region": {
+        "name": "New York 3",
+        "slug": "nyc3",
+        "features": [
+          "backups",
+          "ipv6",
+          "metadata"
+        ],
+        "available": true,
+        "sizes": [
+          "s-1vcpu-1gb"
+        ]
+      },
+      "locked": false,
+      "project_id": "746c6152-2fa2-11ed-92d3-27aaa54e4988"
+    },
+    {
+      "ip": "45.55.96.47",
+      "droplet": {
+        "id": 3164444,
+        "name": "parallax-server",
+        "memory": 1024,
+        "vcpus": 1,
+        "disk": 25,
+        "locked": false,
+        "status": "active",
+        "created_at": "2026-09-25T16:36:31Z",
+        "features": [
+          "monitoring"
+        ],
+        "backup_ids": [],
+        "snapshot_ids": [],
+        "image": {
+          "id": 6918990,
+          "name": "24.04 (LTS) x64",
+          "distribution": "Ubuntu",
+          "slug": "ubuntu-24-04-x64"
+        },
+        "size_slug": "s-1vcpu-1gb",
+        "networks": {
+          "v4": [
+            {
+              "ip_address": "10.128.192.124",
+              "netmask": "255.255.0.0",
+              "gateway": "nil",
+              "type": "private"
+            },
+            {
+              "ip_address": "192.241.165.154",
+              "netmask": "255.255.255.0",
+              "gateway": "192.241.165.1",
+              "type": "public"
+            }
+          ],
+          "v6": []
+        },
+        "region": {
+          "name": "New York 3",
+          "slug": "nyc3",
+          "features": [
+            "backups",
+            "ipv6",
+            "metadata"
+          ],
+          "available": true,
+          "sizes": [
+            "s-1vcpu-1gb"
+          ]
+        },
+        "tags": [
+          "parallax"
+        ],
+        "vpc_uuid": ""
+      },
+      "region": {
+        "name": "New York 3",
+        "slug": "nyc3",
+        "features": [
+          "backups",
+          "ipv6",
+          "metadata"
+        ],
+        "available": true,
+        "sizes": [
+          "s-1vcpu-1gb"
+        ]
+      },
+      "locked": false,
+      "project_id": "746c6152-2fa2-11ed-92d3-27aaa54e4988"
+    }
+  ],
+  "links": {},
+  "meta": {
+    "total": 2
+  }
+}
