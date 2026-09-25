@@ -20,6 +20,7 @@ pub struct Config {
     pub mediamtx_bin: String,
     pub ffmpeg_bin: String,
     pub twitch: Option<TwitchConfig>,
+    pub youtube: Option<YouTubeConfig>,
 }
 
 #[derive(Clone, Debug)]
@@ -29,6 +30,14 @@ pub struct TwitchConfig {
     pub client_secret: Option<String>,
     /// RTMP(S) base URL; the stream key is appended.
     pub ingest_url: String,
+}
+
+/// A Google OAuth client of type "TVs and Limited Input devices". Google's
+/// device flow needs the secret too (it isn't really secret for this type).
+#[derive(Clone, Debug)]
+pub struct YouTubeConfig {
+    pub client_id: String,
+    pub client_secret: String,
 }
 
 impl Config {
@@ -43,6 +52,11 @@ impl Config {
             ingest_url: var("TWITCH_INGEST_URL")
                 .unwrap_or_else(|| "rtmps://ingest.global-contribute.live-video.net:443/app".into()),
         });
+        let youtube = match (var("YOUTUBE_CLIENT_ID"), var("YOUTUBE_CLIENT_SECRET")) {
+            (Some(client_id), Some(client_secret)) => Some(YouTubeConfig { client_id, client_secret }),
+            (None, None) => None,
+            _ => anyhow::bail!("Set both YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET, or neither"),
+        };
         Ok(Config {
             addr: var("PARALLAX_ADDR")
                 .unwrap_or_else(|| "127.0.0.1:8080".into())
@@ -57,6 +71,7 @@ impl Config {
             mediamtx_bin: var("PARALLAX_MEDIAMTX").unwrap_or_else(|| "mediamtx".into()),
             ffmpeg_bin: var("PARALLAX_FFMPEG").unwrap_or_else(|| "ffmpeg".into()),
             twitch,
+            youtube,
         })
     }
 }

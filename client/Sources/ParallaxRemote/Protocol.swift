@@ -113,6 +113,16 @@ public struct SendChatRequest: Codable, Sendable {
 
 public struct StartBroadcastRequest: Codable, Sendable {
     public var destinationIDs: [String]
+    /// Used where a platform creates a video per broadcast (YouTube).
+    public var title: String?
+    /// "public", "unlisted", or "private".
+    public var privacy: String?
+
+    public init(destinationIDs: [String], title: String? = nil, privacy: String? = nil) {
+        self.destinationIDs = destinationIDs
+        self.title = title
+        self.privacy = privacy
+    }
 }
 
 public struct IngestInfo: Codable, Hashable, Sendable {

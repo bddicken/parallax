@@ -21,6 +21,11 @@ pub struct State {
     /// Password the client uses to publish video to MediaMTX.
     pub ingest_key: String,
     pub twitch: Option<TwitchAuth>,
+    pub youtube: Option<YouTubeAuth>,
+    /// The reusable YouTube stream (ingest point) we push video to.
+    pub youtube_stream: Option<YouTubeStream>,
+    /// The YouTube broadcast we're live on, so a restart can pick its chat back up.
+    pub youtube_broadcast: Option<YouTubeBroadcast>,
     /// Custom RTMP destinations. Platform destinations come from accounts.
     pub custom_destinations: Vec<Destination>,
 }
@@ -31,6 +36,27 @@ pub struct TwitchAuth {
     pub refresh_token: Option<String>,
     pub user_id: String,
     pub login: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct YouTubeAuth {
+    pub refresh_token: String,
+    pub channel_id: String,
+    pub title: String,
+    pub handle: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct YouTubeStream {
+    pub id: String,
+    /// RTMP(S) URL including the stream name (key).
+    pub url: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct YouTubeBroadcast {
+    pub id: String,
+    pub live_chat_id: Option<String>,
 }
 
 pub struct Store {

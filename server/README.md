@@ -3,12 +3,12 @@
 The relay between the Parallax app and streaming platforms. The Mac uploads one stream; the server sends it on to each platform and brings their chat back.
 
 ```
-Parallax ──SRT──▶ MediaMTX ──RTMP (local)──▶ ffmpeg -c copy ──RTMPS──▶ Twitch
+Parallax ──SRT──▶ MediaMTX ──RTMP (local)──▶ ffmpeg -c copy ──RTMPS──▶ Twitch, YouTube
     ▲                (ingest)                  (one per destination)
-    └── REST + WebSocket ──▶ parallax-server ◀── Twitch API (sign-in, stream key, chat)
+    └── REST + WebSocket ──▶ parallax-server ◀── platform APIs (sign-in, stream keys, chat)
 ```
 
-It leans on existing tools for media: [MediaMTX](https://mediamtx.org) receives the stream and ffmpeg relays it without re-encoding. The server runs both as child processes and restarts them if they exit. Twitch sign-in and chat use the [`twitch_api`](https://docs.rs/twitch_api) and [`twitch_oauth2`](https://docs.rs/twitch_oauth2) crates.
+It leans on existing tools for media: [MediaMTX](https://mediamtx.org) receives the stream and ffmpeg relays it without re-encoding. The server runs both as child processes and restarts them if they exit. Twitch uses the [`twitch_api`](https://docs.rs/twitch_api) and [`twitch_oauth2`](https://docs.rs/twitch_oauth2) crates; YouTube uses [`oauth2`](https://docs.rs/oauth2) for sign-in and calls the YouTube Data API directly.
 
 | File | What |
 |---|---|
@@ -17,6 +17,7 @@ It leans on existing tools for media: [MediaMTX](https://mediamtx.org) receives 
 | `src/ingest.rs` | Generates the MediaMTX config and runs it; tracks whether video is arriving |
 | `src/broadcast.rs` | Go live / stop; runs and watches one ffmpeg per destination |
 | `src/twitch.rs` | Device code sign-in, token refresh, stream key, chat (EventSub WebSocket in, Helix out) |
+| `src/youtube.rs` | Device code sign-in, a reusable stream, one broadcast per go-live, chat (streamed or polled in, `liveChatMessages.insert` out) |
 | `src/store.rs` | `data/state.json`: API token, ingest key, Twitch tokens, custom destinations |
 
 ## Run locally
@@ -30,7 +31,7 @@ cp .env.example .env   # then set TWITCH_CLIENT_ID
 cargo run
 ```
 
-It prints the API token on startup. In Parallax, open Settings › Server, enter `http://127.0.0.1:8080` and the token, then click **Connect Twitch**.
+It prints the API token on startup. In Parallax, open Settings › Server, enter `http://127.0.0.1:8080` and the token, then connect Twitch and YouTube.
 
 ### Twitch app
 
@@ -42,7 +43,20 @@ Register an app at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/ap
 
 Scopes requested: `channel:read:stream_key`, `user:read:chat`, `user:write:chat`.
 
-### Test without Twitch
+### YouTube app
+
+In the [Google Cloud console](https://console.cloud.google.com):
+
+1. Create a project, then under **APIs & Services › Library**, enable **YouTube Data API v3**.
+2. Under **Google Auth Platform**, set up the consent screen: audience **External**, and under **Data Access** add the scope `https://www.googleapis.com/auth/youtube`.
+3. Under **Audience**, click **Publish app**. Apps left in "Testing" have sign-ins that expire after 7 days. You don't need Google's verification for your own use: when signing in, click **Advanced › Go to (app name)** past the "Google hasn't verified this app" screen.
+4. Under **Clients**, create an OAuth client of type **TVs and Limited Input devices**, and put its ID and secret in `.env` as `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET`.
+
+The channel also needs live streaming turned on at [youtube.com/features](https://www.youtube.com/features) (it can take up to 24 hours the first time).
+
+How it works: the server creates one reusable stream ("Parallax" in YouTube Studio) and, on each Go Live, a broadcast with the title and visibility from the app, set to start and stop with the video. Chat follows that broadcast. The API allows 10,000 quota units a day: going live costs about 150, each chat message sent 50, and each chat read 1.
+
+### Test without Twitch or YouTube
 
 A `custom` destination can point at any RTMP server, such as ffmpeg listening locally:
 
@@ -71,5 +85,6 @@ Environment variables (a `.env` file works too):
 | `TWITCH_CLIENT_ID` | | Enables Twitch |
 | `TWITCH_CLIENT_SECRET` | | Only for Confidential apps |
 | `TWITCH_INGEST_URL` | `rtmps://ingest.global-contribute.live-video.net:443/app` | Twitch ingest (auto-picks the nearest region) |
+| `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` | | Enables YouTube (both required) |
 
 `data/state.json` holds tokens, so it's written with owner-only permissions.

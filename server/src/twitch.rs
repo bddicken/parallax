@@ -122,8 +122,7 @@ impl Twitch {
     }
 
     async fn publish(&self) {
-        let account = self.account().await;
-        self.events.accounts(vec![account]);
+        self.events.accounts_changed();
     }
 
     /// Starts the device code flow. The user enters the returned code at

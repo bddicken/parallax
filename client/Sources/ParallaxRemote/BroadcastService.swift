@@ -16,7 +16,7 @@ public protocol BroadcastService: Sendable {
     func destinations() async throws -> [Destination]
     func status() async throws -> BroadcastStatus
     func ingest() async throws -> IngestInfo
-    func startBroadcast(destinationIDs: [String]) async throws
+    func startBroadcast(_ request: StartBroadcastRequest) async throws
     func stopBroadcast() async throws
     func sendChat(_ request: SendChatRequest) async throws
     func accounts() async throws -> [Account]
@@ -44,7 +44,7 @@ public struct OfflineBroadcastService: BroadcastService {
     public func destinations() async throws -> [Destination] { [] }
     public func status() async throws -> BroadcastStatus { BroadcastStatus() }
     public func ingest() async throws -> IngestInfo { throw notConnected }
-    public func startBroadcast(destinationIDs: [String]) async throws { throw notConnected }
+    public func startBroadcast(_ request: StartBroadcastRequest) async throws { throw notConnected }
     public func stopBroadcast() async throws {}
     public func sendChat(_ request: SendChatRequest) async throws { throw notConnected }
     public func accounts() async throws -> [Account] { [] }
@@ -76,8 +76,8 @@ public final class HTTPBroadcastService: BroadcastService {
     public func status() async throws -> BroadcastStatus { try await get("v1/status") }
     public func ingest() async throws -> IngestInfo { try await get("v1/ingest") }
 
-    public func startBroadcast(destinationIDs: [String]) async throws {
-        try await post("v1/broadcast/start", body: StartBroadcastRequest(destinationIDs: destinationIDs))
+    public func startBroadcast(_ request: StartBroadcastRequest) async throws {
+        try await post("v1/broadcast/start", body: request)
     }
 
     public func stopBroadcast() async throws {

@@ -94,6 +94,21 @@ pub struct SendChatRequest {
 pub struct StartBroadcastRequest {
     #[serde(rename = "destinationIDs")]
     pub destination_ids: Vec<String>,
+    /// Used where a platform creates a broadcast per go-live (YouTube).
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub privacy: Option<Privacy>,
+}
+
+/// Who can watch, for platforms that ask (YouTube).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Privacy {
+    Public,
+    #[default]
+    Unlisted,
+    Private,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -210,5 +225,15 @@ mod tests {
         round_trips::<ServerEvent>("event-chat");
         round_trips::<ServerEvent>("event-status");
         round_trips::<ServerEvent>("event-accounts");
+    }
+
+    #[test]
+    fn reads_start_requests() {
+        let req: StartBroadcastRequest = serde_json::from_value(fixture("start-broadcast")).unwrap();
+        assert_eq!(req.destination_ids, ["twitch", "youtube"]);
+        assert_eq!(req.title.as_deref(), Some("Building Parallax"));
+        assert_eq!(req.privacy, Some(Privacy::Public));
+        let bare: StartBroadcastRequest = serde_json::from_str(r#"{"destinationIDs": ["twitch"]}"#).unwrap();
+        assert_eq!(bare.privacy, None);
     }
 }

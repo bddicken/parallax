@@ -399,12 +399,22 @@ public struct StreamSettings: Codable, Hashable, Sendable {
     }
 }
 
+/// Who can watch, for platforms that create a video per broadcast (YouTube).
+public enum BroadcastPrivacy: String, Codable, CaseIterable, Sendable {
+    case `public`, unlisted, `private`
+
+    public var displayName: String { rawValue.capitalized }
+}
+
 public struct BroadcastSettings: Codable, Hashable, Sendable {
     /// Base URL of parallax-server. Empty means use the built-in mock.
     public var serverURL: String = ""
     /// Use the built-in fake server (generated chat) when no URL is set.
     public var useMockServer = false
     public var stream = StreamSettings()
+    /// Title for the next broadcast, where the platform asks for one (YouTube).
+    public var title = ""
+    public var privacy = BroadcastPrivacy.unlisted
 
     public init(serverURL: String = "") {
         self.serverURL = serverURL
@@ -415,6 +425,8 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
         serverURL = try c.decodeIfPresent(String.self, forKey: .serverURL) ?? ""
         useMockServer = try c.decodeIfPresent(Bool.self, forKey: .useMockServer) ?? false
         stream = try c.decodeIfPresent(StreamSettings.self, forKey: .stream) ?? StreamSettings()
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        privacy = try c.decodeIfPresent(BroadcastPrivacy.self, forKey: .privacy) ?? .unlisted
     }
 }
 

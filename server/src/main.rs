@@ -6,6 +6,7 @@ mod ingest;
 mod protocol;
 mod store;
 mod twitch;
+mod youtube;
 
 use std::sync::Arc;
 
@@ -14,6 +15,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::{
     api::AppState, broadcast::Broadcaster, config::Config, events::Events, ingest::Ingest, store::Store, twitch::Twitch,
+    youtube::YouTube,
 };
 
 #[tokio::main]
@@ -32,10 +34,10 @@ async fn main() -> Result<()> {
     if let Some(token) = &config.api_token {
         store.update(|s| s.api_token = token.clone())?;
     }
-    let state = store.get();
+    let saved = store.get();
     let events = Events::new();
 
-    let ingest = Ingest::new(config.clone(), state.ingest_key.clone());
+    let ingest = Ingest::new(config.clone(), saved.ingest_key.clone());
     tokio::spawn(ingest.clone().run());
 
     let twitch = config.twitch.clone().map(|c| Twitch::new(c, store.clone(), events.clone()));
@@ -44,12 +46,20 @@ async fn main() -> Result<()> {
         None => tracing::warn!("TWITCH_CLIENT_ID isn't set, so Twitch is off"),
     }
 
+    let youtube = config.youtube.clone().map(|c| YouTube::new(c, store.clone(), events.clone()));
+    match &youtube {
+        Some(youtube) => youtube.restore().await,
+        None => tracing::warn!("YOUTUBE_CLIENT_ID/SECRET aren't set, so YouTube is off"),
+    }
+
     let broadcaster = Broadcaster::new(config.ffmpeg_bin.clone(), ingest.clone(), events.clone());
-    let app = api::router(Arc::new(AppState { config: config.clone(), store, events, ingest, broadcaster, twitch }));
+    let state = Arc::new(AppState { config: config.clone(), store, events, ingest, broadcaster, twitch, youtube });
+    tokio::spawn(api::publish_accounts(state.clone()));
+    let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(config.addr).await.with_context(|| format!("listening on {}", config.addr))?;
     tracing::info!("parallax-server on http://{}", config.addr);
-    tracing::info!("API token: {} (paste into Parallax › Settings › Server)", state.api_token);
+    tracing::info!("API token: {} (paste into Parallax › Settings › Server)", saved.api_token);
     axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
     Ok(())
 }
