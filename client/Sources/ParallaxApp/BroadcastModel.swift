@@ -22,6 +22,15 @@ final class BroadcastModel {
 
     var featuredMessage: ChatMessage? { messages.first { $0.id == featuredMessageID } }
 
+    /// Each platform's pop-out chat page. While live, only for the
+    /// destinations in the broadcast.
+    var chatPages: [URL] {
+        let inBroadcast = Set(status.destinations.map(\.destinationID))
+        return destinations
+            .filter { !status.live || inBroadcast.contains($0.id) }
+            .compactMap { $0.chatURL.flatMap(URL.init(string:)) }
+    }
+
     func connect(_ settings: BroadcastSettings) {
         eventsTask?.cancel()
         eventsTask = nil
@@ -152,6 +161,10 @@ final class BroadcastModel {
         connectionError = nil
         switch event {
         case .status(let s):
+            // YouTube's chat page exists only once a broadcast does.
+            if s.live != status.live {
+                Task { await refreshDestinations() }
+            }
             status = s
         case .accounts(let list):
             // A newly connected account adds a destination.

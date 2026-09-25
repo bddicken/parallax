@@ -24,7 +24,7 @@ use crate::{
         Account, AccountState, Destination, IngestInfo, Platform, SendChatRequest, ServerEvent, StartBroadcastRequest,
     },
     store::Store,
-    twitch::Twitch,
+    twitch::{self, Twitch},
     x,
     youtube::YouTube,
 };
@@ -105,6 +105,7 @@ async fn all_destinations(state: &AppState) -> Vec<Destination> {
             enabled: true,
             rtmp_url: None,
             stream_key: None,
+            chat_url: Some(twitch::chat_url(&login)),
         });
     }
     if let Some(youtube) = &state.youtube
@@ -117,9 +118,10 @@ async fn all_destinations(state: &AppState) -> Vec<Destination> {
             enabled: true,
             rtmp_url: None,
             stream_key: None,
+            chat_url: youtube.chat_url(),
         });
     }
-    if state.config.x.is_some() {
+    if let Some(config) = &state.config.x {
         list.push(Destination {
             id: "x".into(),
             platform: Platform::X,
@@ -127,6 +129,7 @@ async fn all_destinations(state: &AppState) -> Vec<Destination> {
             enabled: true,
             rtmp_url: None,
             stream_key: None,
+            chat_url: x::chat_url(config),
         });
     }
     list.extend(state.store.get().custom_destinations);
@@ -150,6 +153,7 @@ async fn put_destinations(State(state): State<Arc<AppState>>, Json(list): Json<V
         if !d.rtmp_url.as_deref().is_some_and(|u| u.starts_with("rtmp://") || u.starts_with("rtmps://")) {
             return Err(ApiError::bad_request(format!("{}: rtmpURL must start with rtmp:// or rtmps://", d.name)));
         }
+        d.chat_url = None;
         if d.stream_key.is_none() {
             d.stream_key = state.store.get().custom_destinations.into_iter().find(|old| old.id == d.id).and_then(|old| old.stream_key);
         }

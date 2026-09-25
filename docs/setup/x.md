@@ -2,7 +2,7 @@
 
 One-time setup, about 5 minutes. You need a running [`parallax-server`](../../server/README.md) and an X account that can go live (X Premium).
 
-X's API is approval-only, so Parallax sends video to a Media Studio source, and you start and end each broadcast in Media Studio. X chat isn't supported yet.
+X's API is approval-only, so Parallax sends video to a Media Studio source, and you start and end each broadcast in Media Studio. X chat doesn't show in Parallax yet, but the Chat panel's pop-out button can open it on X.
 
 ## 1. Create a source
 
@@ -17,9 +17,10 @@ Add to `server/.env` (or your host's environment) and restart the server:
 ```
 X_RTMP_URL=rtmps://va.pscp.tv:443/x
 X_STREAM_KEY=your-stream-key
+X_USERNAME=your-handle
 ```
 
-Use your source's URL; the region prefix varies. A plain `rtmp://` URL is switched to RTMPS.
+Use your source's URL; the region prefix varies. A plain `rtmp://` URL is switched to RTMPS. `X_USERNAME` is optional; it lets Parallax open your chat at `x.com/your-handle/livechat`.
 
 ## 3. Go live
 
