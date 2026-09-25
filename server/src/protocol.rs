@@ -12,6 +12,8 @@ pub enum Platform {
     Youtube,
     X,
     Twitch,
+    /// Set up by stream URL and key from LinkedIn Live Studio, like `Custom`.
+    Linkedin,
     /// Any RTMP(S) target, without chat. Handy for testing.
     Custom,
 }
@@ -22,7 +24,7 @@ pub struct Destination {
     pub platform: Platform,
     pub name: String,
     pub enabled: bool,
-    /// Write-only for `custom` destinations. The server never returns stream keys.
+    /// Write-only for `custom` and `linkedin` destinations. The server never returns stream keys.
     #[serde(rename = "rtmpURL", default, skip_serializing_if = "Option::is_none")]
     pub rtmp_url: Option<String>,
     #[serde(rename = "streamKey", default, skip_serializing_if = "Option::is_none")]

@@ -3,7 +3,7 @@
 The relay between the Parallax app and streaming platforms. The Mac uploads one stream; the server sends it on to each platform and brings their chat back.
 
 ```
-Parallax ──SRT──▶ MediaMTX ──RTMP (local)──▶ ffmpeg -c copy ──RTMPS──▶ Twitch, YouTube
+Parallax ──SRT──▶ MediaMTX ──RTMP (local)──▶ ffmpeg -c copy ──RTMPS──▶ Twitch, YouTube, LinkedIn
     ▲                (ingest)                  (one per destination)
     └── REST + WebSocket ──▶ parallax-server ◀── platform APIs (sign-in, stream keys, chat)
 ```
@@ -18,7 +18,8 @@ It leans on existing tools for media: [MediaMTX](https://mediamtx.org) receives 
 | `src/broadcast.rs` | Go live / stop; runs and watches one ffmpeg per destination |
 | `src/twitch.rs` | Device code sign-in, token refresh, stream key, chat (EventSub WebSocket in, Helix out) |
 | `src/youtube.rs` | Device code sign-in, a reusable stream, one broadcast per go-live, chat (streamed or polled in, `liveChatMessages.insert` out) |
-| `src/store.rs` | `data/state.json`: API token, ingest key, Twitch tokens, custom destinations |
+| `src/linkedin.rs` | Checks LinkedIn destinations (URL and key from Live Studio). Video only |
+| `src/store.rs` | `data/state.json`: API token, ingest key, Twitch tokens, custom and LinkedIn destinations |
 
 ## Run locally
 
@@ -55,6 +56,22 @@ In the [Google Cloud console](https://console.cloud.google.com):
 The channel also needs live streaming turned on at [youtube.com/features](https://www.youtube.com/features) (it can take up to 24 hours the first time).
 
 How it works: the server creates one reusable stream ("Parallax" in YouTube Studio) and, on each Go Live, a broadcast with the title and visibility from the app, set to start and stop with the video. Chat follows that broadcast. The API allows 10,000 quota units a day: going live costs about 150, each chat message sent 50, and each chat read 1.
+
+### LinkedIn
+
+LinkedIn's Live API is only for approved partner organizations (see [docs/linkedin.md](../docs/linkedin.md)), so there's no sign-in. Instead, the server pushes to the stream URL and key from LinkedIn Live Studio. Your profile or Page needs [LinkedIn Live access](https://www.linkedin.com/help/linkedin/answer/a568503).
+
+1. Schedule a live event on LinkedIn. Within an hour of its start (two for verified Pages), go to **Live Studio › Manage streams**, pick the event, choose **Prepare to go live**, pick the region nearest the server, and click **Get URL**.
+2. In Parallax › Settings › Server › LinkedIn, paste the stream URL and key and click **Save**. Or with curl:
+
+   ```bash
+   curl -X PUT localhost:8080/v1/destinations -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d '[{"id":"linkedin","platform":"linkedin","name":"LinkedIn","enabled":true,"rtmpURL":"rtmps://…","streamKey":"…"}]'
+   ```
+
+3. Go live from Parallax with LinkedIn checked. When the preview shows up in Live Studio, click **Go live** there, and **End stream** when you're done.
+
+Each event gets its own key, so paste a new one for each event. LinkedIn takes up to 1080p, 30 fps, 6 Mbps video, and 128 kbps audio, with 2 s keyframes and a 4-hour limit. `PUT /v1/destinations` replaces the whole list, so include any custom destinations you want to keep. LinkedIn chat isn't supported: live comments are only readable through restricted APIs.
 
 ### Test without Twitch or YouTube
 

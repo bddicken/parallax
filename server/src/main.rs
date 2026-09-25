@@ -3,6 +3,7 @@ mod broadcast;
 mod config;
 mod events;
 mod ingest;
+mod linkedin;
 mod protocol;
 mod store;
 mod twitch;

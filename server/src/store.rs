@@ -26,7 +26,8 @@ pub struct State {
     pub youtube_stream: Option<YouTubeStream>,
     /// The YouTube broadcast we're live on, so a restart can pick its chat back up.
     pub youtube_broadcast: Option<YouTubeBroadcast>,
-    /// Custom RTMP destinations. Platform destinations come from accounts.
+    /// Destinations set up by URL and stream key: custom RTMP and LinkedIn.
+    /// (The name predates LinkedIn.) Other platforms come from accounts.
     pub custom_destinations: Vec<Destination>,
 }
 
