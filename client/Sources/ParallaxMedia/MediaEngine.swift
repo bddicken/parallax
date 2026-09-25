@@ -22,6 +22,7 @@ public final class MediaEngine {
     private var captureFPS = 0
     private var canvas = OutputSettings(width: 0, height: 0)
     private var recorder: Recorder?
+    private var uplink: Uplink?
     private var monitor: AudioMonitor?
     private var monitorSettings = MonitorSettings()
     /// Why monitoring isn't playing, if it should be (e.g. device unplugged).
@@ -192,6 +193,25 @@ public final class MediaEngine {
         sinks.remove(r)
         recorder = nil
         return try await r.finish()
+    }
+
+    // MARK: Streaming
+
+    public var isStreaming: Bool { uplink != nil }
+
+    /// Starts sending the program to parallax-server at `url` (SRT).
+    public func startStreaming(to url: URL, settings: StreamSettings, onState: @escaping @Sendable (UplinkState) -> Void) {
+        stopStreaming()
+        let u = Uplink(url: url, stream: settings, output: compositor.outputSettings, onState: onState)
+        uplink = u
+        sinks.add(u)
+    }
+
+    public func stopStreaming() {
+        guard let u = uplink else { return }
+        sinks.remove(u)
+        u.stop()
+        uplink = nil
     }
 
     // MARK: Nodes

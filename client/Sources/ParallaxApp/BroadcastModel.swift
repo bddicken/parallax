@@ -3,12 +3,14 @@ import Observation
 import ParallaxCore
 import ParallaxRemote
 
-/// Connection to parallax-server (or the mock): destinations, live status, chat.
+/// Connection to parallax-server (or the mock): destinations, live status,
+/// platform accounts, chat.
 @Observable
 final class BroadcastModel {
     private(set) var service: BroadcastService = OfflineBroadcastService()
     var destinations: [Destination] = []
     var status = BroadcastStatus()
+    var accounts: [Account] = []
     var messages: [ChatMessage] = []
     var featuredMessageID: String?
     var connectionError: String?
@@ -26,7 +28,7 @@ final class BroadcastModel {
         connectionError = nil
         let previousMode = service.mode
         if let url = URL(string: settings.serverURL), url.scheme != nil {
-            service = HTTPBroadcastService(baseURL: url, token: Keychain.read("server-token") ?? "")
+            service = HTTPBroadcastService(baseURL: url, token: Self.serverToken)
         } else if settings.useMockServer {
             service = MockBroadcastService()
         } else {
@@ -37,6 +39,7 @@ final class BroadcastModel {
             messages = []
             featuredMessageID = nil
             destinations = []
+            accounts = []
             status = BroadcastStatus()
             onChatChanged?()
         }
@@ -61,6 +64,15 @@ final class BroadcastModel {
         }
     }
 
+    private static var serverToken: String {
+        #if DEBUG
+        // Lets a scratch profile (PARALLAX_PROFILE) talk to a local server
+        // without touching the Keychain.
+        if let token = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_SERVER_TOKEN"] { return token }
+        #endif
+        return Keychain.read("server-token") ?? ""
+    }
+
     func refreshDestinations() async {
         do {
             destinations = try await service.destinations()
@@ -70,12 +82,45 @@ final class BroadcastModel {
         }
     }
 
-    func start(_ destinationIDs: [String]) async {
-        await perform { try await $0.startBroadcast(destinationIDs: destinationIDs) }
+    /// Returns false (with `connectionError` set) if the server refused.
+    @discardableResult
+    func start(_ request: StartBroadcastRequest) async -> Bool {
+        await perform { try await $0.startBroadcast(request) }
     }
 
     func stop() async {
         await perform { try await $0.stopBroadcast() }
+    }
+
+    func ingest() async -> IngestInfo? {
+        do {
+            return try await service.ingest()
+        } catch {
+            connectionError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func account(_ platform: Platform) -> Account? {
+        accounts.first { $0.platform == platform }
+    }
+
+    /// Starts sign-in and returns the code to show; the server finishes it and
+    /// sends an `accounts` event.
+    func connectAccount(_ platform: Platform) async -> DeviceCode? {
+        do {
+            let code = try await service.connectAccount(platform)
+            connectionError = nil
+            return code
+        } catch {
+            connectionError = error.localizedDescription
+            return nil
+        }
+    }
+
+    func disconnectAccount(_ platform: Platform) async {
+        await perform { try await $0.disconnectAccount(platform) }
+        await refreshDestinations()
     }
 
     func send(_ text: String, to platforms: [Platform]?) async {
@@ -89,14 +134,17 @@ final class BroadcastModel {
         onChatChanged?()
     }
 
-    private func perform(_ body: (BroadcastService) async throws -> Void) async {
+    @discardableResult
+    private func perform(_ body: (BroadcastService) async throws -> Void) async -> Bool {
         isBusy = true
         defer { isBusy = false }
         do {
             try await body(service)
             connectionError = nil
+            return true
         } catch {
             connectionError = error.localizedDescription
+            return false
         }
     }
 
@@ -105,6 +153,12 @@ final class BroadcastModel {
         switch event {
         case .status(let s):
             status = s
+        case .accounts(let list):
+            // A newly connected account adds a destination.
+            if list.map(\.state) != accounts.map(\.state) {
+                Task { await refreshDestinations() }
+            }
+            accounts = list
         case .chat(let message):
             messages.append(message)
             if messages.count > Self.maxMessages {

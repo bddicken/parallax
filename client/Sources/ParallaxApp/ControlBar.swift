@@ -92,9 +92,31 @@ struct ControlBar: View {
 struct GoLiveSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var selected: Set<String> = []
 
     private var broadcast: BroadcastModel { model.broadcast }
+
+    /// While live, what's actually streaming; otherwise what you checked last
+    /// time (or each destination's default).
+    private var selected: Set<String> {
+        if broadcast.status.live {
+            return Set(broadcast.status.destinations.map(\.destinationID))
+        }
+        let available = broadcast.destinations
+        guard let remembered = model.profile.broadcast.destinationIDs else {
+            return Set(available.filter(\.enabled).map(\.id))
+        }
+        return Set(available.map(\.id)).intersection(remembered)
+    }
+
+    private func setSelected(_ id: String, _ on: Bool) {
+        var ids = selected
+        if on { ids.insert(id) } else { ids.remove(id) }
+        model.profile.broadcast.destinationIDs = ids.sorted()
+    }
+
+    private var youTubeSelected: Bool {
+        broadcast.destinations.contains { $0.platform == .youtube && selected.contains($0.id) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -112,10 +134,12 @@ struct GoLiveSheet: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if broadcast.service.isMock {
-                Label("Using the built-in mock server. Nothing is actually streamed until parallax-server and the uplink are built.",
+                Label("Using the built-in mock server, so nothing is actually streamed.",
                       systemImage: "info.circle")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+            } else {
+                UplinkRow()
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -123,7 +147,7 @@ struct GoLiveSheet: View {
                     HStack {
                         Toggle(isOn: Binding(
                             get: { selected.contains(dest.id) },
-                            set: { if $0 { selected.insert(dest.id) } else { selected.remove(dest.id) } }
+                            set: { setSelected(dest.id, $0) }
                         )) {
                             HStack(spacing: 6) {
                                 PlatformBadge(platform: dest.platform)
@@ -138,12 +162,21 @@ struct GoLiveSheet: View {
                     }
                 }
                 if broadcast.destinations.isEmpty {
-                    Text(broadcast.connectionError ?? "No destinations configured on the server.")
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text(broadcast.connectionError ?? "No destinations yet. Connect Twitch in Settings › Server.")
+                            .foregroundStyle(.secondary)
+                        if broadcast.connectionError == nil {
+                            SettingsLink { Text("Open…") }.buttonStyle(.link)
+                        }
+                    }
                 }
             }
             .padding(12)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+
+            if youTubeSelected {
+                YouTubeOptions().disabled(broadcast.status.live)
+            }
 
             if let error = broadcast.connectionError {
                 Text(error).font(.callout).foregroundStyle(.red)
@@ -153,10 +186,10 @@ struct GoLiveSheet: View {
                 Spacer()
                 Button("Close") { dismiss() }
                 if broadcast.status.live {
-                    Button("End Broadcast", role: .destructive) { Task { await broadcast.stop() } }
+                    Button("End Broadcast", role: .destructive) { Task { await model.endBroadcast() } }
                         .buttonStyle(.borderedProminent).tint(.red)
                 } else {
-                    Button("Start Broadcast") { Task { await broadcast.start(Array(selected)) } }
+                    Button("Start Broadcast") { Task { await model.goLive(Array(selected)) } }
                         .buttonStyle(.borderedProminent)
                         .disabled(selected.isEmpty || broadcast.isBusy)
                 }
@@ -164,10 +197,68 @@ struct GoLiveSheet: View {
         }
         .padding(20)
         .frame(width: 440)
-        .task {
-            await broadcast.refreshDestinations()
-            selected = Set(broadcast.destinations.filter(\.enabled).map(\.id))
+        .task { await broadcast.refreshDestinations() }
+    }
+}
+
+/// YouTube makes a new video for each broadcast, so it needs a title and
+/// visibility. Remembered for next time.
+private struct YouTubeOptions: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        Grid(alignment: .leading, verticalSpacing: 8) {
+            GridRow {
+                Text("Title")
+                TextField("Title", text: $model.profile.broadcast.title, prompt: Text("What's this stream about?"))
+                    .textFieldStyle(.roundedBorder)
+                    .labelsHidden()
+            }
+            GridRow {
+                Text("YouTube")
+                Picker("Visibility", selection: $model.profile.broadcast.privacy) {
+                    ForEach(BroadcastPrivacy.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
         }
+        .font(.callout)
+    }
+}
+
+/// Whether this Mac is sending video to the server.
+private struct UplinkRow: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 6) {
+            switch model.uplinkState {
+            case nil:
+                if model.broadcast.status.live {
+                    Label("Live on the server, but this Mac isn't sending video.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Button("Send Video") { Task { await model.startUplink() } }
+                } else {
+                    Label("Video goes to the server once you start.", systemImage: "arrow.up.circle")
+                        .foregroundStyle(.secondary)
+                }
+            case .connecting:
+                ProgressView().controlSize(.small)
+                Text("Connecting to the server…").foregroundStyle(.secondary)
+            case .sending:
+                Label(model.broadcast.status.ingestActive ? "Sending video to the server" : "Sending video…",
+                      systemImage: "arrow.up.circle.fill")
+                    .foregroundStyle(.green)
+            case .retrying(let reason):
+                Label(reason, systemImage: "arrow.clockwise.circle.fill")
+                    .foregroundStyle(.orange)
+                    .help("Parallax keeps retrying on its own.")
+            }
+        }
+        .font(.callout)
     }
 }
 

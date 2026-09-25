@@ -1,0 +1,21 @@
+[
+  {
+    "id": "twitch",
+    "platform": "twitch",
+    "name": "Twitch (parallaxdev)",
+    "enabled": true
+  },
+  {
+    "id": "youtube",
+    "platform": "youtube",
+    "name": "YouTube (Parallax Dev)",
+    "enabled": true
+  },
+  {
+    "id": "local-test",
+    "platform": "custom",
+    "name": "Local test",
+    "enabled": false,
+    "rtmpURL": "rtmp://127.0.0.1:1935/test"
+  }
+]

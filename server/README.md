@@ -1,25 +1,74 @@
 # parallax-server
 
-Cloud relay for Parallax. **Stub only** — the client is the current focus.
-
-Responsibilities (planned):
-
-- **Ingest** one high-quality uplink from the Mac client (SRT, RTMP fallback).
-- **Relay** it without re-encoding to every enabled destination (YouTube, X, Twitch, custom RTMP).
-- **Chat**: aggregate chat from each platform, push it to the client over a websocket, and post replies as the authenticated account.
-- **Auth**: hold platform OAuth tokens / stream keys so they never live on the client.
+The relay between the Parallax app and streaming platforms. The Mac uploads one stream; the server sends it on to each platform and brings their chat back.
 
 ```
-cmd/parallax-server   entrypoint
-internal/api          control plane (REST + /v1/events websocket)
-internal/protocol     wire types, mirrored in client/Sources/ParallaxRemote
-internal/ingest       uplink listener
-internal/relay        fan-out to destinations
-internal/chat         per-platform chat providers + hub
+Parallax ──SRT──▶ MediaMTX ──RTMP (local)──▶ ffmpeg -c copy ──RTMPS──▶ Twitch, YouTube
+    ▲                (ingest)                  (one per destination)
+    └── REST + WebSocket ──▶ parallax-server ◀── platform APIs (sign-in, stream keys, chat)
 ```
 
-Run:
+It leans on existing tools for media: [MediaMTX](https://mediamtx.org) receives the stream and ffmpeg relays it without re-encoding. The server runs both as child processes and restarts them if they exit. Twitch uses the [`twitch_api`](https://docs.rs/twitch_api) and [`twitch_oauth2`](https://docs.rs/twitch_oauth2) crates; YouTube uses [`oauth2`](https://docs.rs/oauth2) for sign-in and calls the YouTube Data API directly.
+
+| File | What |
+|---|---|
+| `src/api.rs` | Control API ([protocol](../docs/protocol.md)): bearer auth, REST, `/v1/events` WebSocket |
+| `src/protocol.rs` | Wire types, mirrored in `client/Sources/ParallaxRemote/Protocol.swift` |
+| `src/ingest.rs` | Generates the MediaMTX config and runs it; tracks whether video is arriving |
+| `src/broadcast.rs` | Go live / stop; runs and watches one ffmpeg per destination |
+| `src/twitch.rs` | Device code sign-in, token refresh, stream key, chat (EventSub WebSocket in, Helix out) |
+| `src/youtube.rs` | Device code sign-in, a reusable stream, one broadcast per go-live, chat (streamed or polled in, `liveChatMessages.insert` out) |
+| `src/store.rs` | `data/state.json`: API token, ingest key, platform sign-ins, custom destinations |
+
+## Run locally
 
 ```bash
-PARALLAX_TOKEN=dev go run ./cmd/parallax-server
+brew install mediamtx ffmpeg
 ```
+
+```bash
+cp .env.example .env   # then fill in the platforms you use (see below)
+cargo run
+```
+
+It prints the API token on startup. In Parallax, open Settings › Server, enter `http://127.0.0.1:8080` and the token, then connect Twitch and YouTube.
+
+### Platforms
+
+Each platform needs a one-time app registration on your account. Step-by-step guides:
+
+- [Twitch setup](../docs/setup/twitch.md): `TWITCH_CLIENT_ID` (and `TWITCH_CLIENT_SECRET` for Confidential apps)
+- [YouTube setup](../docs/setup/youtube.md): `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET`
+
+### Test without Twitch or YouTube
+
+A `custom` destination can point at any RTMP server, such as ffmpeg listening locally:
+
+```bash
+ffmpeg -listen 1 -i rtmp://127.0.0.1:19350/app/test -c copy out.flv
+```
+
+```bash
+curl -X PUT localhost:8080/v1/destinations -H "Authorization: Bearer $TOKEN" \
+  -d '[{"id":"local","platform":"custom","name":"Local test","enabled":true,"rtmpURL":"rtmp://127.0.0.1:19350/app","streamKey":"test"}]'
+```
+
+## Configuration
+
+Environment variables (a `.env` file works too):
+
+| Variable | Default | |
+|---|---|---|
+| `PARALLAX_ADDR` | `127.0.0.1:8080` | Control API listen address |
+| `PARALLAX_DATA_DIR` | `data` | Saved state and the generated MediaMTX config |
+| `PARALLAX_TOKEN` | generated | API token |
+| `PARALLAX_PUBLIC_HOST` | host the client connected to | Host name given to the client for sending video |
+| `PARALLAX_SRT_PORT` / `PARALLAX_RTMP_PORT` | `8890` / `1935` | Ingest ports (SRT is UDP) |
+| `PARALLAX_MEDIAMTX_API_PORT` | `9997` | MediaMTX API, localhost only |
+| `PARALLAX_MEDIAMTX` / `PARALLAX_FFMPEG` | from `PATH` | Binaries |
+| `TWITCH_CLIENT_ID` | | Enables Twitch |
+| `TWITCH_CLIENT_SECRET` | | Only for Confidential apps |
+| `TWITCH_INGEST_URL` | `rtmps://ingest.global-contribute.live-video.net:443/app` | Twitch ingest (auto-picks the nearest region) |
+| `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` | | Enables YouTube (both required) |
+
+`data/state.json` holds tokens, so it's written with owner-only permissions.

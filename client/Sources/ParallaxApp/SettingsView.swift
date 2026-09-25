@@ -176,8 +176,9 @@ private struct StreamingSettingsView: View {
             } footer: {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Streams \(String(size.width)) × \(String(size.height)) at \(model.profile.output.fps) fps, H.264 \(String(format: "%.1f", Double(stream.videoBitrateKbps) / 1000)) Mbps. Parallax uploads this once; the server relays it unchanged to every platform, so pick a bitrate your upload can sustain (aim for under ~70% of it).")
-                    Text("Sending the stream to the server isn't built yet. These settings are saved and will be used once it is.")
-                        .foregroundStyle(.orange)
+                    if stream.videoBitrateKbps > 6_000 || stream.keyframeIntervalSeconds != 2 {
+                        Text("Twitch needs 2 s keyframes and at most 6 Mbps.").foregroundStyle(.orange)
+                    }
                 }
                 .foregroundStyle(.secondary)
             }
@@ -204,10 +205,19 @@ private struct ServerSettingsView: View {
             HStack {
                 Spacer()
                 Button("Save & Reconnect") {
-                    Keychain.write(token, for: "server-token")
+                    Keychain.write(token.trimmingCharacters(in: .whitespacesAndNewlines), for: "server-token")
                     model.profile.broadcast.serverURL = url.trimmingCharacters(in: .whitespaces)
                     model.broadcast.connect(model.profile.broadcast)
                 }
+            }
+            if model.broadcast.service.mode == .server {
+                Section("Accounts") {
+                    AccountRow(platform: .twitch)
+                    AccountRow(platform: .youtube)
+                }
+            }
+            if let error = model.broadcast.connectionError {
+                Text(error).foregroundStyle(.red)
             }
         }
         .formStyle(.grouped)
@@ -215,5 +225,78 @@ private struct ServerSettingsView: View {
             url = model.profile.broadcast.serverURL
             token = Keychain.read("server-token") ?? ""
         }
+    }
+}
+
+/// A platform sign-in on the server. Connecting shows a code to enter on the
+/// platform's site (OAuth device flow), so the server needs no public URL.
+private struct AccountRow: View {
+    @Environment(AppModel.self) private var model
+    let platform: Platform
+
+    private var account: Account? { model.broadcast.account(platform) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                PlatformBadge(platform: platform)
+                Text(platform.displayName)
+                Spacer()
+                switch account?.state {
+                case .connected:
+                    Text(account?.displayName ?? account?.login ?? "Connected").foregroundStyle(.secondary)
+                    Button("Disconnect") { Task { await model.broadcast.disconnectAccount(platform) } }
+                case .pending:
+                    ProgressView().controlSize(.small)
+                    Button("Cancel") { Task { await model.broadcast.disconnectAccount(platform) } }
+                default:
+                    Button("Connect \(platform.displayName)…", action: connect)
+                }
+            }
+            if account?.state == .pending, let code = account?.pending {
+                PendingCodeView(platform: platform, code: code)
+            }
+            if let error = account?.error, account?.state != .connected {
+                Text(error).font(.callout).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private func connect() {
+        Task {
+            if let code = await model.broadcast.connectAccount(platform), let url = URL(string: code.verificationURL) {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+}
+
+private struct PendingCodeView: View {
+    let platform: Platform
+    let code: DeviceCode
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Approve Parallax in your browser. If \(platform.displayName) asks for a code, enter:")
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Text(code.userCode)
+                    .font(.system(.title2, design: .monospaced).weight(.semibold))
+                    .textSelection(.enabled)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(code.userCode, forType: .string)
+                } label: { Image(systemName: "doc.on.doc") }
+                    .buttonStyle(.borderless)
+                    .help("Copy")
+                Spacer()
+                if let url = URL(string: code.verificationURL) {
+                    Link("Open \(url.host() ?? "browser")", destination: url)
+                }
+            }
+            Text("Expires \(code.expiresAt, style: .relative).").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
     }
 }

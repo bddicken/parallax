@@ -23,9 +23,9 @@ public actor MockBroadcastService: BroadcastService {
         IngestInfo(srtURL: "srt://127.0.0.1:9000?streamid=mock", rtmpURL: "rtmp://127.0.0.1/live/mock")
     }
 
-    public func startBroadcast(destinationIDs: [String]) async throws {
+    public func startBroadcast(_ request: StartBroadcastRequest) async throws {
         current = BroadcastStatus(live: true, ingestActive: false, startedAt: Date(),
-                                  destinations: destinationIDs.map { DestinationStatus(destinationID: $0, state: .connecting) })
+                                  destinations: request.destinationIDs.map { DestinationStatus(destinationID: $0, state: .connecting) })
         broadcast(.status(current))
         try? await Task.sleep(for: .seconds(1.5))
         guard current.live else { return }
@@ -47,6 +47,19 @@ public actor MockBroadcastService: BroadcastService {
         }
     }
 
+    public func accounts() async throws -> [Account] { Self.accounts }
+
+    private static let accounts = [
+        Account(platform: .twitch, state: .connected, login: "mockstreamer", displayName: "MockStreamer"),
+        Account(platform: .youtube, state: .connected, login: "@mockstreamer", displayName: "Mock Streamer"),
+    ]
+
+    public func connectAccount(_ platform: Platform) async throws -> DeviceCode {
+        throw ServerError(message: "The mock server can't sign in to \(platform.displayName).")
+    }
+
+    public func disconnectAccount(_ platform: Platform) async throws {}
+
     public nonisolated func events() -> AsyncThrowingStream<ServerEvent, Error> {
         AsyncThrowingStream { continuation in
             let id = UUID()
@@ -58,6 +71,7 @@ public actor MockBroadcastService: BroadcastService {
     private func subscribe(_ id: UUID, _ continuation: AsyncThrowingStream<ServerEvent, Error>.Continuation) {
         subscribers[id] = continuation
         continuation.yield(.status(current))
+        continuation.yield(.accounts(Self.accounts))
         if chatter == nil {
             chatter = Task { [weak self] in
                 while !Task.isCancelled {

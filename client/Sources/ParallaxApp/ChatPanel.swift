@@ -41,7 +41,7 @@ struct ChatPanel: View {
                             ContentUnavailableView {
                                 Label("Chat not connected", systemImage: "bubble.left.and.bubble.right")
                             } description: {
-                                Text("Chat from YouTube, X, and Twitch shows up here once parallax-server is set up in Settings › Server. Turn on Mock to try it with fake messages.")
+                                Text("Chat from your connected platforms shows up here once parallax-server is set up in Settings › Server. Turn on Mock to try it with fake messages.")
                             }
                         } else {
                             ContentUnavailableView("No messages yet", systemImage: "bubble.left.and.bubble.right")
@@ -94,8 +94,8 @@ private struct ChatRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            PlatformBadge(platform: message.platform)
-                .help(message.platform.displayName)
+            ChatAvatar(author: message.author, platform: message.platform)
+                .help("\(message.author.displayName) on \(message.platform.displayName)")
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
                     Text(message.author.displayName).font(.callout.weight(.semibold))
@@ -119,19 +119,66 @@ private struct ChatRow: View {
     }
 }
 
+/// The sender's profile picture with their platform's badge on the corner.
+/// Falls back to their initial when there's no picture (or it won't load).
+private struct ChatAvatar: View {
+    let author: ChatAuthor
+    let platform: Platform
+
+    private static let size: CGFloat = 28
+
+    var body: some View {
+        picture
+            .frame(width: Self.size, height: Self.size)
+            .clipShape(Circle())
+            .overlay(alignment: .bottomTrailing) {
+                PlatformBadge(platform: platform, font: .system(size: 8, weight: .bold))
+                    .frame(width: 14, height: 14)
+                    .background(Circle().fill(.background))
+                    .offset(x: 4, y: 4)
+            }
+            .padding(.trailing, 4)
+            .padding(.bottom, 4)
+    }
+
+    @ViewBuilder private var picture: some View {
+        if let url = author.avatarURL.flatMap(URL.init(string:)) {
+            AsyncImage(url: url) { phase in
+                if let image = phase.image {
+                    image.resizable().scaledToFill()
+                } else {
+                    initial
+                }
+            }
+        } else {
+            initial
+        }
+    }
+
+    private var initial: some View {
+        Text(author.displayName.first.map { String($0).uppercased() } ?? "?")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(platform.accent.color.opacity(0.8))
+    }
+}
+
 /// SF Symbols has no X logo, so X gets a text glyph.
 struct PlatformBadge: View {
     let platform: Platform
+    var font: Font = .caption
 
     var body: some View {
         Group {
             if platform == .x {
-                Text("𝕏").font(.caption.bold())
+                Text("𝕏").bold()
             } else {
-                Image(systemName: platform.symbol).font(.caption)
+                Image(systemName: platform.symbol)
             }
         }
+        .font(font)
         .foregroundStyle(platform.accent.color)
-        .frame(width: 16)
+        .frame(minWidth: 14)
     }
 }

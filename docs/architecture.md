@@ -20,7 +20,7 @@ Multistreaming from the Mac means uploading the full stream once per platform: 3
 
 Costs: roughly 0.5–1 s of extra latency from the extra hop, plus a small VM. Prefer a host with generous included egress (DigitalOcean, Hetzner) over AWS, where egress is billed per GB.
 
-**Server language: Go.** The work is network plumbing (SRT/RTMP, HTTP, websockets, OAuth, process supervision) rather than per-pixel compute. Go's standard library and concurrency model fit that well and iterate faster. It relays without re-encoding, so Rust's raw-performance edge doesn't buy much here.
+**Server: Rust, with media handled by existing tools.** MediaMTX receives the stream and ffmpeg relays it without re-encoding; the Rust server (axum, tokio) runs them, holds platform sign-ins, and bridges chat. Platforms are added one at a time, starting with Twitch, whose public API covers streaming and chat without partner approval. See [`server/README.md`](../server/README.md).
 
 ## Client
 
@@ -29,7 +29,7 @@ Camera  ─┐                                                   ┌─▶ Previ
 Display ─┼─▶ VideoSourceNode ─▶ VideoFrameBuffer (delay) ─┐  │
 Window  ─┤                                                ├─▶ Compositor ─────┼─▶ Recorder      (AVAssetWriter, H.264/HEVC + AAC)
 Image / Color / Chat overlays ────────────────────────────┘  (Core Image,   │
-                                                              Metal, 30/60)  └─▶ UplinkSink    (next: VideoToolbox → SRT/RTMP)
+                                                              Metal, 30/60)  └─▶ Uplink        (HaishinKit: H.264 + AAC → SRT)
 Mic / interface ─┐
 System audio ────┴─▶ PCMNormalizer ─▶ DelayBuffer ─▶ ChannelStrip ─▶ AudioMixer ─▶ same sinks
                      (48 kHz float)   (sync delay,   (HPF, gate,     (10 ms chunks,
@@ -41,7 +41,7 @@ Modules (`client/Sources`):
 | Module | Responsibility |
 |---|---|
 | `ParallaxCore` | `Profile` model (sources, scenes, settings), persistence, layout math, DSP. No AVFoundation, so it's fast to unit test. |
-| `ParallaxMedia` | Capture nodes, compositor, mixer, recorder, `MediaEngine`. `MediaSink` is the seam where the server uplink plugs in. |
+| `ParallaxMedia` | Capture nodes, compositor, mixer, recorder, `Uplink` (stream to the server), `MediaEngine`. Everything that consumes the program output is a `MediaSink`. |
 | `ParallaxRemote` | Wire types mirroring `server/internal/protocol`, `BroadcastService` protocol, HTTP/websocket client, and a mock. |
 | `ParallaxApp` | SwiftUI UI. `AppModel` edits the `Profile`, and `MediaEngine.apply(_:)` reconciles running captures against it. |
 
@@ -54,8 +54,8 @@ Key decisions:
 
 ## Roadmap
 
-1. **Uplink**: `UplinkSink` encodes with VideoToolbox/AudioToolbox and sends SRT (RTMP fallback). Evaluate HaishinKit before writing our own.
-2. **Server MVP**: SRT ingest, ffmpeg `-c copy` relay per destination, YouTube and Twitch chat providers, OAuth.
+1. **Uplink**: done. `Uplink` hands the program to HaishinKit, which encodes with VideoToolbox (H.264) and AAC and sends MPEG-TS over SRT.
+2. **Server**: SRT ingest, ffmpeg `-c copy` relay, Twitch, and YouTube (sign-in, stream keys, chat both ways) are in. Next: deploy to a VM, then more platforms one at a time.
 3. **Replace Loopback / virtual camera**: headphone monitoring output, a CoreMediaIO camera extension (needs Xcode and a signing identity), and possibly a virtual audio device.
 4. **Studio polish**: preview/program ("studio mode"), hotkeys, compressor and voice-isolation filters, per-scene audio.
 
