@@ -1,3 +1,5 @@
+<img src="client/Support/AppIcon.svg" alt="Parallax logo" width="128">
+
 # Parallax
 
 A macOS livestreaming studio in one app. It replaces an OBS + StreamYard + Loopback/Audio Hijack setup: capture, scenes, audio mixing, local recording, multistreaming, and unified chat.
