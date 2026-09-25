@@ -1,4 +1,3 @@
-import AppKit
 import ParallaxCore
 import SwiftUI
 
@@ -34,13 +33,26 @@ struct ScenesPanel: View {
                 .disabled(model.profile.scenes.count <= 1)
                 .help("Delete the current scene")
             }
-            List {
+            // Native selection (not a tap gesture) so rows can be dragged to reorder.
+            // Selecting a scene makes it live; double-click renames.
+            List(selection: programSelection) {
                 ForEach(Array(model.profile.scenes.enumerated()), id: \.element.id) { index, scene in
-                    row(scene, index: index)
+                    row(scene, index: index).tag(scene.id)
                 }
                 .onMove { model.moveScenes(from: $0, to: $1) }
             }
             .listStyle(.sidebar)
+            .contextMenu(forSelectionType: UUID.self) { ids in
+                if let id = ids.first, let scene = model.profile.scene(id) {
+                    Button("Rename") { startRename(scene) }
+                    Button("Duplicate") { model.duplicateScene(id) }
+                    Divider()
+                    Button("Delete", role: .destructive) { model.deleteScene(id) }
+                        .disabled(model.profile.scenes.count <= 1)
+                }
+            } primaryAction: { ids in
+                if let id = ids.first, let scene = model.profile.scene(id) { startRename(scene) }
+            }
         }
         .frame(minHeight: 180)
     }
@@ -71,24 +83,14 @@ struct ScenesPanel: View {
                 Circle().fill(.red).frame(width: 8, height: 8).help("Live")
             }
         }
-        .contentShape(Rectangle())
         .padding(.vertical, 3)
-        .listRowBackground(isProgram ? Color.accentColor.opacity(0.18) : Color.clear)
-        .onTapGesture {
-            // Single-click switches immediately; the second click of a double-click renames.
-            if NSApp.currentEvent?.clickCount == 2 {
-                startRename(scene)
-            } else {
-                model.selectScene(scene.id)
-            }
-        }
-        .contextMenu {
-            Button("Rename") { startRename(scene) }
-            Button("Duplicate") { model.duplicateScene(scene.id) }
-            Divider()
-            Button("Delete", role: .destructive) { model.deleteScene(scene.id) }
-                .disabled(model.profile.scenes.count <= 1)
-        }
+    }
+
+    private var programSelection: Binding<UUID?> {
+        Binding(
+            get: { model.profile.programSceneID },
+            set: { if let id = $0 { model.selectScene(id) } }
+        )
     }
 
     private func startRename(_ scene: StudioScene) {
