@@ -449,6 +449,22 @@ public struct MonitorSettings: Codable, Hashable, Sendable {
     }
 }
 
+/// Text size of the on-stream chat feed; each step is 25% bigger.
+public enum ChatTextSize: String, Codable, CaseIterable, Identifiable, Sendable {
+    case small, medium, large
+
+    public var id: String { rawValue }
+    public var title: String { rawValue.capitalized }
+
+    public var scale: Double {
+        switch self {
+        case .small: 1
+        case .medium: 1.25
+        case .large: 1.5
+        }
+    }
+}
+
 /// Everything the user configures, persisted as one JSON document.
 public struct Profile: Codable, Hashable, Sendable {
     public var version: Int = 1
@@ -461,6 +477,7 @@ public struct Profile: Codable, Hashable, Sendable {
     public var transition = TransitionSettings()
     public var broadcast = BroadcastSettings()
     public var monitor = MonitorSettings()
+    public var chatTextSize = ChatTextSize.small
 
     public init() {}
 
@@ -479,6 +496,7 @@ public struct Profile: Codable, Hashable, Sendable {
         transition = try c.decodeIfPresent(TransitionSettings.self, forKey: .transition) ?? d.transition
         broadcast = try c.decodeIfPresent(BroadcastSettings.self, forKey: .broadcast) ?? d.broadcast
         monitor = try c.decodeIfPresent(MonitorSettings.self, forKey: .monitor) ?? d.monitor
+        chatTextSize = try c.decodeIfPresent(ChatTextSize.self, forKey: .chatTextSize) ?? d.chatTextSize
     }
 
     public static func makeDefault() -> Profile {

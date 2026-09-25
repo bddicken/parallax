@@ -22,7 +22,8 @@ enum ChatOverlayRenderer {
 
     /// Newest message at the bottom, older ones stacked above until full.
     /// Drawn at the pixel size of its box on the canvas so text keeps its
-    /// size and reflows as the box is resized; `scale` is canvas height / 1080.
+    /// size and reflows as the box is resized; `scale` is canvas height / 1080
+    /// times the text size.
     static func feed(_ lines: [ChatOverlayLine], size: CGSize = feedSize, scale: CGFloat = 1) -> CIImage {
         draw(size: size) { size in
             let pad = 14 * scale, gap = 8 * scale, radius = 12 * scale

@@ -112,6 +112,11 @@ private struct OnStreamBar: View {
                         }
                     }
                 }
+                Section("Text Size") {
+                    ForEach(ChatTextSize.allCases) { size in
+                        Toggle(size.title, isOn: Binding(get: { model.profile.chatTextSize == size }, set: { _ in setTextSize(size) }))
+                    }
+                }
                 Divider()
                 Button("Adjust in Preview") { model.selectedItemID = feed?.id }
                     .disabled(feed?.isVisible != true)
@@ -120,11 +125,15 @@ private struct OnStreamBar: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .help("Where chat sits on the stream. Or drag it in the preview.")
+            .help("Where chat sits on the stream and how big its text is. Or drag it in the preview.")
         }
         .controlSize(.small)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    private func setTextSize(_ size: ChatTextSize) {
+        model.edit("Chat Text Size") { model.profile.chatTextSize = size }
     }
 
     private func toggle(_ kind: VideoSourceKind, _ title: String, systemImage: String, help: String) -> some View {

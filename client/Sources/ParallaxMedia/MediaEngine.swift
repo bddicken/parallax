@@ -37,6 +37,7 @@ public final class MediaEngine {
     private var feedLines: [ChatOverlayLine] = []
     private var feedSize = ChatOverlayRenderer.feedSize
     private var feedScale: CGFloat = 1
+    private var chatTextSize = ChatTextSize.small
     private var feedImage = ChatOverlayRenderer.feed([])
     private var featuredImage: CIImage?
     private var scenes: [StudioScene] = []
@@ -94,6 +95,7 @@ public final class MediaEngine {
 
         compositor.update(scenes: profile.scenes, output: profile.output)
         scenes = profile.scenes
+        chatTextSize = profile.chatTextSize
         resizeChatFeed()
         applyMonitor(profile.monitor)
     }
@@ -179,10 +181,11 @@ public final class MediaEngine {
     }
 
     /// Draws the feed at its box's pixel size in the live scene, so resizing
-    /// the box reflows messages instead of scaling the text.
+    /// the box reflows messages instead of scaling the text. Text scales with
+    /// the canvas and the chosen text size.
     private func resizeChatFeed() {
         let size = chatFeedBoxSize() ?? feedSize
-        let scale = CGFloat(max(canvas.height, 1)) / 1080
+        let scale = CGFloat(max(canvas.height, 1)) / 1080 * chatTextSize.scale
         guard size != feedSize || scale != feedScale else { return }
         feedSize = size
         feedScale = scale
