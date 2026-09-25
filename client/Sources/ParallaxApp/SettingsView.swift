@@ -304,9 +304,9 @@ private struct LocalServerPlatformsSection: View {
 
     var body: some View {
         Section {
-            TextField("Twitch client ID", text: $draft.twitchClientID)
+            SecureField("Twitch client ID", text: $draft.twitchClientID)
             SecureField("Twitch client secret", text: $draft.twitchClientSecret, prompt: Text("Confidential apps only"))
-            TextField("YouTube client ID", text: $draft.youtubeClientID)
+            SecureField("YouTube client ID", text: $draft.youtubeClientID)
             SecureField("YouTube client secret", text: $draft.youtubeClientSecret)
             TextField("X server URL", text: $draft.xRTMPURL, prompt: Text("rtmps://…"))
             SecureField("X stream key", text: $draft.xStreamKey)
