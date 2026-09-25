@@ -92,9 +92,27 @@ struct ControlBar: View {
 struct GoLiveSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var selected: Set<String> = []
 
     private var broadcast: BroadcastModel { model.broadcast }
+
+    /// While live, what's actually streaming; otherwise what you checked last
+    /// time (or each destination's default).
+    private var selected: Set<String> {
+        if broadcast.status.live {
+            return Set(broadcast.status.destinations.map(\.destinationID))
+        }
+        let available = broadcast.destinations
+        guard let remembered = model.profile.broadcast.destinationIDs else {
+            return Set(available.filter(\.enabled).map(\.id))
+        }
+        return Set(available.map(\.id)).intersection(remembered)
+    }
+
+    private func setSelected(_ id: String, _ on: Bool) {
+        var ids = selected
+        if on { ids.insert(id) } else { ids.remove(id) }
+        model.profile.broadcast.destinationIDs = ids.sorted()
+    }
 
     private var youTubeSelected: Bool {
         broadcast.destinations.contains { $0.platform == .youtube && selected.contains($0.id) }
@@ -129,7 +147,7 @@ struct GoLiveSheet: View {
                     HStack {
                         Toggle(isOn: Binding(
                             get: { selected.contains(dest.id) },
-                            set: { if $0 { selected.insert(dest.id) } else { selected.remove(dest.id) } }
+                            set: { setSelected(dest.id, $0) }
                         )) {
                             HStack(spacing: 6) {
                                 PlatformBadge(platform: dest.platform)
@@ -179,10 +197,7 @@ struct GoLiveSheet: View {
         }
         .padding(20)
         .frame(width: 440)
-        .task {
-            await broadcast.refreshDestinations()
-            selected = Set(broadcast.destinations.filter(\.enabled).map(\.id))
-        }
+        .task { await broadcast.refreshDestinations() }
     }
 }
 
