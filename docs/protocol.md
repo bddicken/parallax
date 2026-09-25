@@ -9,7 +9,7 @@ Every `/v1` endpoint requires `Authorization: Bearer <token>`. Bodies are JSON, 
 | GET | `/healthz` | → `ok` (no auth) |
 | GET | `/v1/status` | → `BroadcastStatus` |
 | GET | `/v1/ingest` | → `IngestInfo` (`srtURL`, `rtmpURL`) |
-| GET | `/v1/destinations` | → `[Destination]` (stream keys omitted). `chatURL?` is the platform's pop-out chat page: Twitch always, YouTube once a broadcast exists, X when `X_USERNAME` is set. |
+| GET | `/v1/destinations` | → `[Destination]` (stream keys omitted). `chatURL?` is the platform's pop-out chat page: Twitch always, YouTube once a broadcast exists, X when `X_USERNAME` is set (the client also reads X chat from it). |
 | PUT | `/v1/destinations` | `[Destination]` → 204. Replaces the `custom` destinations; a missing `streamKey` keeps the saved one. Platform destinations come from connected accounts, or for X, the server's `.env`. |
 | POST | `/v1/broadcast/start` | `{destinationIDs: [..], title?, privacy?: public\|unlisted\|private}` → 204. `title` and `privacy` apply where a platform creates a video per broadcast (YouTube). |
 | POST | `/v1/broadcast/stop` | → 204 |

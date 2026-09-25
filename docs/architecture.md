@@ -59,4 +59,4 @@ Key decisions:
 3. **Replace Loopback / virtual camera**: headphone monitoring output, a CoreMediaIO camera extension (needs Xcode and a signing identity), and possibly a virtual audio device.
 4. **Studio polish**: preview/program ("studio mode"), hotkeys, compressor and voice-isolation filters, per-scene audio.
 
-Open question: X's API access for reading and posting live-broadcast chat is limited. Confirm before promising X chat (RTMP ingest to X works either way).
+X's chat API is approval-only, so the client reads X chat from X's own chat page in a web view (`XChatReader`) instead of through the server. Sending to X isn't done yet.

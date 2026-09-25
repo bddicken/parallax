@@ -19,6 +19,11 @@ final class BroadcastModel {
     @ObservationIgnored var onChatChanged: (() -> Void)?
     @ObservationIgnored private var eventsTask: Task<Void, Never>?
     @ObservationIgnored private static let maxMessages = 500
+    @ObservationIgnored private lazy var xChat: XChatReader = {
+        let reader = XChatReader()
+        reader.onMessage = { [weak self] in self?.receive($0) }
+        return reader
+    }()
 
     var featuredMessage: ChatMessage? { messages.first { $0.id == featuredMessageID } }
 
@@ -29,6 +34,16 @@ final class BroadcastModel {
         return destinations
             .filter { !status.live || inBroadcast.contains($0.id) }
             .compactMap { $0.chatURL.flatMap(URL.init(string:)) }
+    }
+
+    /// X's chat page, which Parallax can read chat from (see `XChatReader`).
+    var xChatPage: URL? {
+        destinations.first { $0.platform == .x }?.chatURL.flatMap(URL.init(string:))
+    }
+
+    /// Opens the X chat window, whose comments show up in `messages`.
+    func showXChat() {
+        if let xChatPage { xChat.show(xChatPage) }
     }
 
     func connect(_ settings: BroadcastSettings) {
@@ -173,12 +188,16 @@ final class BroadcastModel {
             }
             accounts = list
         case .chat(let message):
-            messages.append(message)
-            if messages.count > Self.maxMessages {
-                messages.removeFirst(messages.count - Self.maxMessages)
-            }
-            onChatChanged?()
+            receive(message)
         }
+    }
+
+    private func receive(_ message: ChatMessage) {
+        messages.append(message)
+        if messages.count > Self.maxMessages {
+            messages.removeFirst(messages.count - Self.maxMessages)
+        }
+        onChatChanged?()
     }
 }
 
