@@ -195,10 +195,19 @@ private struct NowPlayingCard: View {
         let music = model.music
         let track = music.nowPlaying
         VStack(alignment: .leading, spacing: 6) {
-            Text(track?.title ?? (music.library.tracks.isEmpty ? "No songs yet" : "Not playing"))
-                .font(.callout.weight(.medium))
-                .foregroundStyle(track == nil ? .secondary : .primary)
-                .lineLimit(1)
+            HStack {
+                Text(track?.title ?? (music.library.tracks.isEmpty ? "No songs yet" : "Not playing"))
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(track == nil ? .secondary : .primary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Button { music.setShuffle(!music.library.shuffle) } label: {
+                    Image(systemName: "shuffle")
+                        .foregroundStyle(music.library.shuffle ? Color.accentColor : .secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(music.library.shuffle ? "Shuffle is on" : "Shuffle is off (plays in list order)")
+            }
             TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                 let duration = max(track?.duration ?? 0, 1)
                 let position = min(scrub ?? (track == nil ? 0 : music.position), duration)
@@ -223,13 +232,7 @@ private struct NowPlayingCard: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
             }
-            HStack(spacing: 14) {
-                Button { music.setShuffle(!music.library.shuffle) } label: {
-                    Image(systemName: "shuffle")
-                        .foregroundStyle(music.library.shuffle ? Color.accentColor : .secondary)
-                }
-                .help(music.library.shuffle ? "Shuffle is on" : "Shuffle is off (plays in list order)")
-                Spacer()
+            HStack(spacing: 10) {
                 Button(action: music.playPrevious) { Image(systemName: "backward.fill") }
                     .disabled(track == nil)
                     .help("Previous song (⌥⌘←)")
@@ -242,8 +245,8 @@ private struct NowPlayingCard: View {
                 Button(action: music.playNext) { Image(systemName: "forward.fill") }
                     .disabled(music.library.tracks.isEmpty)
                     .help("Next song (⌥⌘→)")
-                Spacer()
-                MusicVolumeSlider().frame(width: 90)
+                Spacer(minLength: 8)
+                MusicVolumeSlider().frame(minWidth: 60, maxWidth: 110)
             }
             .buttonStyle(.borderless)
         }
@@ -391,8 +394,14 @@ struct MusicVolumeSlider: View {
 
 /// Compact music controls for the bottom bar.
 struct MusicMiniPlayer: View {
+    /// Roomiest first; the bar picks the first that fits.
+    enum Style: CaseIterable {
+        case full, noTitle, buttonsOnly, hidden
+    }
+
     @Environment(AppModel.self) private var model
     @AppStorage("sidebarTab") private var tab = SidebarTab.sources
+    var style = Style.full
 
     var body: some View {
         let music = model.music
@@ -407,15 +416,18 @@ struct MusicMiniPlayer: View {
                 .help(music.isPlaying ? "Pause music (⌥⌘P)" : "Play music (⌥⌘P)")
                 Button(action: music.playNext) { Image(systemName: "forward.fill") }
                     .help("Next song (⌥⌘→)")
-                Button { tab = .music } label: {
-                    Text(music.nowPlaying?.title ?? "Music")
-                        .lineLimit(1)
-                        .foregroundStyle(music.nowPlaying == nil ? .secondary : .primary)
+                if style == .full {
+                    Button { tab = .music } label: {
+                        Text(music.nowPlaying?.title ?? "Music")
+                            .lineLimit(1)
+                            .foregroundStyle(music.nowPlaying == nil ? .secondary : .primary)
+                    }
+                    .frame(maxWidth: 150, alignment: .leading)
+                    .help("Show music")
                 }
-                .frame(maxWidth: 150, alignment: .leading)
-                .layoutPriority(-1)
-                .help("Show music")
-                MusicVolumeSlider().frame(width: 80)
+                if style == .full || style == .noTitle {
+                    MusicVolumeSlider().frame(width: 80)
+                }
             }
         }
         .buttonStyle(.borderless)

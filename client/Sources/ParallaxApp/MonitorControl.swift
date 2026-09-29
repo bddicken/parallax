@@ -6,6 +6,8 @@ import SwiftUI
 struct MonitorControl: View {
     @Environment(AppModel.self) private var model
     @State private var showing = false
+    /// The device name truncates past this.
+    var maxLabelWidth: CGFloat = 170
 
     var body: some View {
         Button { showing.toggle() } label: {
@@ -14,7 +16,7 @@ struct MonitorControl: View {
                     .foregroundStyle(iconColor)
                 Text(label).lineLimit(1)
             }
-            .frame(maxWidth: 170)
+            .frame(maxWidth: maxLabelWidth)
         }
         .help("Audio monitor")
         .popover(isPresented: $showing, arrowEdge: .top) {
