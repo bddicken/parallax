@@ -24,6 +24,13 @@ public struct Song: Identifiable, Codable, Hashable, Sendable {
     public var lastPlayedAt: Date?
     public var playCount: Int
 
+    /// The song's page on Suno, if it came from there.
+    public var sunoURL: URL? {
+        guard let url = sourceURL.flatMap(URL.init(string:)), let host = url.host()?.lowercased(),
+              host == "suno.com" || host.hasSuffix(".suno.com") else { return nil }
+        return url
+    }
+
     public init(
         id: UUID = UUID(), title: String, artist: String? = nil, fileName: String, duration: Double,
         loudness: Double? = nil, trimDB: Double = 0, isExcluded: Bool = false, sourceURL: String? = nil,

@@ -200,6 +200,9 @@ private struct NowPlayingCard: View {
                     .font(.callout.weight(.medium))
                     .foregroundStyle(track == nil ? .secondary : .primary)
                     .lineLimit(1)
+                if let page = track?.sunoURL {
+                    SunoBadge { music.openSuno(page) }
+                }
                 Spacer(minLength: 4)
                 Button { music.setShuffle(!music.library.shuffle) } label: {
                     Image(systemName: "shuffle")
@@ -250,6 +253,26 @@ private struct NowPlayingCard: View {
             }
             .buttonStyle(.borderless)
         }
+    }
+}
+
+/// Marks a song made with Suno; opens its page there.
+private struct SunoBadge: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text("SUNO")
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.6)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .overlay(Capsule().strokeBorder(.secondary.opacity(0.6), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Made with Suno. Click to open this song on Suno.")
     }
 }
 
