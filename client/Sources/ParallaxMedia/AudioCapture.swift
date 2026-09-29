@@ -192,3 +192,21 @@ final class SystemAudioNode: NSObject, AudioInputNode, SCStreamOutput, SCStreamD
         onError(.failed("System audio stopped: \(error.localizedDescription)"))
     }
 }
+
+// MARK: - Music
+
+/// Connects the music player to its channel in the mixer.
+final class MusicNode: AudioInputNode {
+    private let player: SongPlayer
+    private let mixer: AudioMixer
+    private let id: UUID
+
+    init(player: SongPlayer, mixer: AudioMixer, id: UUID) {
+        self.player = player
+        self.mixer = mixer
+        self.id = id
+    }
+
+    func start() { mixer.attach(player, to: id) }
+    func stop() { mixer.detach(id) }
+}

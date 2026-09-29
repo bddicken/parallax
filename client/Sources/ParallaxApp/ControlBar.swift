@@ -24,6 +24,8 @@ struct ControlBar: View {
 
             Divider().frame(height: 20)
             MonitorControl()
+            Divider().frame(height: 20)
+            MusicMiniPlayer()
 
             Spacer()
 

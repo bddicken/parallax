@@ -13,6 +13,7 @@ A macOS livestreaming studio in one app. It replaces an OBS + StreamYard + Loopb
 
 - **Scenes and layouts**: cameras, displays, windows, images, and chat overlays. Drag, resize, snap, crop, round corners, and add shadows. Switch scenes with ⌘1–9 using a cut or fade.
 - **Audio mixer**: any mic or interface plus system audio, with per-input gain, sync delay, high-pass, noise gate, 10-band EQ, and a master limiter.
+- **Music**: a built-in player for your own songs, such as ones you download from Suno in a Suno window inside Parallax. It has shuffle, per-song volume, loudness matching, and music that ducks while you talk. Songs are audio only and never show on screen.
 - **Local recording**: H.264/HEVC up to 4K, crash-safe, independent of the stream.
 - **Multistreaming**: upload one stream, and the server relays it to each platform (Twitch and YouTube today).
 - **Unified chat**: read platform chat and reply from the app.

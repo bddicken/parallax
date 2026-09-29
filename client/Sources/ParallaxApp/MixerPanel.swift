@@ -43,6 +43,8 @@ private struct AddAudioMenu: View {
                 }
             }
             Button("System Audio") { model.addAudioSource(kind: .systemAudio, name: "System Audio") }
+            Button("Music") { model.ensureMusicSource() }
+                .disabled(model.musicSource != nil)
         } label: {
             Image(systemName: "plus")
         }
@@ -62,7 +64,7 @@ private struct ChannelStrip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Image(systemName: source.kind == .systemAudio ? "speaker.wave.2.fill" : "mic.fill")
+                Image(systemName: source.kind.symbol)
                     .foregroundStyle(.secondary)
                 Text(source.name).lineLimit(1)
                 if let error = model.sourceErrors[source.id] {
@@ -103,16 +105,18 @@ private struct ChannelStrip: View {
             }
             // Applied live: raising it inserts a gap of silence, lowering it
             // skips ahead, so you can dial in sync by ear while talking.
-            HStack {
-                Text("Delay").font(.caption).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
-                Slider(value: Binding(get: { Double(min(source.delayMs, Self.maxDelayMs)) },
-                                      set: { v in model.updateAudioSource(source.id) { $0.delayMs = Int(v.rounded()) } }),
-                       in: 0...Double(Self.maxDelayMs))
-                    .controlSize(.small)
-                Text("\(source.delayMs) ms")
-                    .font(.caption).monospacedDigit().frame(width: 60, alignment: .trailing)
+            if source.kind != .music {
+                HStack {
+                    Text("Delay").font(.caption).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
+                    Slider(value: Binding(get: { Double(min(source.delayMs, Self.maxDelayMs)) },
+                                          set: { v in model.updateAudioSource(source.id) { $0.delayMs = Int(v.rounded()) } }),
+                           in: 0...Double(Self.maxDelayMs))
+                        .controlSize(.small)
+                    Text("\(source.delayMs) ms")
+                        .font(.caption).monospacedDigit().frame(width: 60, alignment: .trailing)
+                }
+                .help("Delay this input to line up with a slower camera")
             }
-            .help("Delay this input to line up with a slower camera")
         }
         .padding(8)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
@@ -146,6 +150,8 @@ private struct ChannelOptions: View {
                     Stepper("Input \(source.firstChannel + 1)\(source.channelMode == .stereo ? "–\(source.firstChannel + 2)" : "")",
                             value: binding(\.firstChannel), in: 0...31)
                 }
+            } else {
+                Section("Ducking") { DuckingControls(source: source) }
             }
             Section("Processing") {
                 Toggle("High-pass filter (80 Hz)", isOn: binding(\.highPassEnabled))
@@ -345,5 +351,15 @@ struct LevelMeter: View {
 
     private func fraction(_ db: Float) -> CGFloat {
         CGFloat(min(1, max(0, (db + 60) / 60)))
+    }
+}
+
+extension AudioSourceKind {
+    var symbol: String {
+        switch self {
+        case .device: "mic.fill"
+        case .systemAudio: "speaker.wave.2.fill"
+        case .music: "music.note"
+        }
     }
 }

@@ -9,6 +9,8 @@ import ParallaxCore
 @MainActor
 public final class MediaEngine {
     public let preview = PreviewSink()
+    /// Plays into the mixer through the profile's Music input, if it has one.
+    public let music = SongPlayer()
     public var onLevels: ((MixerLevels) -> Void)?
     public var onSourceIssue: ((UUID, SourceIssue) -> Void)?
 
@@ -315,6 +317,7 @@ public final class MediaEngine {
             return DeviceAudioNode(uniqueID: uniqueID, name: name, modelID: modelID, onBuffer: onBuffer,
                                    onError: onError, onResolved: onResolved)
         case .systemAudio: return SystemAudioNode(onBuffer: onBuffer, onError: onError)
+        case .music: return MusicNode(player: music, mixer: mixer, id: id)
         }
     }
 }
