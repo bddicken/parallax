@@ -43,6 +43,8 @@ final class MusicModel {
     init(player: SongPlayer, directory: URL) {
         store = MusicLibraryStore(directory: directory)
         library = store.load()
+        // Leftovers from downloads interrupted by a quit or crash.
+        try? FileManager.default.removeItem(at: store.incomingDirectory)
         self.player = player
         player.onEvent = { [weak self] event in self?.handle(event) }
     }
@@ -287,7 +289,9 @@ final class MusicModel {
                 (try MusicImporter.contentHash(of: url), try await MusicImporter.analyze(url))
             }.value
             if let existing = library.tracks.first(where: { $0.contentHash == hash }) {
-                if existing.sourceURL == nil, let sourceURL { update(existing.id) { $0.sourceURL = sourceURL } }
+                if existing.sourceURL == nil, let page = sourceURL ?? analysis.sunoURL?.absoluteString {
+                    update(existing.id) { $0.sourceURL = page }
+                }
                 return showStatus("“\(existing.title)” is already in your music.")
             }
             let id = UUID()
@@ -301,7 +305,8 @@ final class MusicModel {
             }
             let track = Song(id: id, title: analysis.title ?? url.deletingPathExtension().lastPathComponent,
                                    artist: analysis.artist, fileName: fileName, duration: analysis.duration,
-                                   loudness: analysis.loudness, sourceURL: sourceURL, contentHash: hash)
+                                   loudness: analysis.loudness, sourceURL: sourceURL ?? analysis.sunoURL?.absoluteString,
+                                   contentHash: hash)
             // Newest first, where you'll look for what you just downloaded.
             library.tracks.insert(track, at: 0)
             libraryChanged()

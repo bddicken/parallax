@@ -34,6 +34,17 @@ import Testing
         return out
     }
 
+    /// Renders about as fast as the mixer would, so the decoder (which
+    /// opens the next song on its own queue) keeps up.
+    private func renderPaced(_ player: SongPlayer, chunks: Int) async throws -> [Float] {
+        var out: [Float] = []
+        for _ in 0..<chunks {
+            out += render(player, chunks: 1)
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        return out
+    }
+
     /// Renders until audio comes out (the decoder runs on its own queue).
     private func waitForAudio(_ player: SongPlayer) async throws -> [Float] {
         for _ in 0..<200 {
@@ -52,7 +63,7 @@ import Testing
         let id = UUID()
         player.play(.init(id: id, url: url, gainDB: -6.0206))
         _ = try await waitForAudio(player)
-        let steady = render(player, chunks: 10).suffix(960)
+        let steady = try await renderPaced(player, chunks: 10).suffix(960)
         #expect(steady.allSatisfy { abs($0 - 0.25) < 0.01 })
         #expect(player.currentID == id)
         #expect(player.position > 0.05)
@@ -67,7 +78,7 @@ import Testing
         player.play(.init(id: a, url: first, gainDB: 0))
         player.setUpcoming(.init(id: b, url: second, gainDB: 0), after: a)
         var out = try await waitForAudio(player)
-        out += render(player, chunks: 80) // 0.8 s: the rest of both songs, and beyond
+        out += try await renderPaced(player, chunks: 80) // 0.8 s: the rest of both songs, and beyond
         let left = stride(from: 0, to: out.count, by: 2).map { out[$0] }
         let start = try #require(left.firstIndex { $0 > 0.2 })
         let end = try #require(left.lastIndex { $0 > 0.4 })
@@ -93,7 +104,7 @@ import Testing
         // Meant to follow a song that's no longer last in line.
         player.setUpcoming(.init(id: UUID(), url: second, gainDB: 0), after: UUID())
         _ = try await waitForAudio(player)
-        let out = render(player, chunks: 40)
+        let out = try await renderPaced(player, chunks: 40)
         #expect(!out.contains { $0 > 0.4 })
         #expect(player.currentID == nil)
     }
@@ -104,14 +115,14 @@ import Testing
         let player = SongPlayer()
         player.play(.init(id: UUID(), url: url, gainDB: 0))
         _ = try await waitForAudio(player)
-        _ = render(player, chunks: 10)
+        _ = try await renderPaced(player, chunks: 10)
         player.pause()
-        _ = render(player, chunks: 40) // longer than the fade
+        _ = try await renderPaced(player, chunks: 40) // longer than the fade
         let held = player.position
-        #expect(render(player, chunks: 10).allSatisfy { $0 == 0 })
+        #expect(try await renderPaced(player, chunks: 10).allSatisfy { $0 == 0 })
         #expect(player.position == held)
         player.resume()
-        let resumed = render(player, chunks: 40).suffix(960)
+        let resumed = try await renderPaced(player, chunks: 40).suffix(960)
         #expect(resumed.allSatisfy { abs($0 - 0.5) < 0.01 })
     }
 
@@ -122,9 +133,9 @@ import Testing
         player.play(.init(id: UUID(), url: url, gainDB: 0))
         _ = try await waitForAudio(player)
         player.seek(to: 3)
-        _ = render(player, chunks: 5)
+        _ = try await renderPaced(player, chunks: 5)
         _ = try await waitForAudio(player)
-        _ = render(player, chunks: 5)
+        _ = try await renderPaced(player, chunks: 5)
         #expect(abs(player.position - 3.1) < 0.1)
     }
 

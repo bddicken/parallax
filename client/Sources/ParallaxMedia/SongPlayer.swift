@@ -307,7 +307,7 @@ public final class SongPlayer: AudioPullSource, @unchecked Sendable {
 
     private func open(_ request: Request) {
         do {
-            let reader = try TrackReader(url: request.item.url, from: request.offset)
+            let reader = try TrackReader.openBlocking(url: request.item.url, from: request.offset)
             let isCurrent = lock.withLock { () -> Bool in
                 guard generation == decoderGeneration else { return false }
                 segments.append(Segment(item: request.item, startFrame: framesWritten, offset: request.offset,
@@ -323,88 +323,94 @@ public final class SongPlayer: AudioPullSource, @unchecked Sendable {
     }
 }
 
-/// Reads an audio file as interleaved stereo Float32 at 48 kHz. Used by one
-/// queue at a time; Sendable only so the converter's input block can use it.
+/// Reads an audio file as interleaved stereo Float32 at 48 kHz.
+///
+/// Uses AVAssetReader rather than AVAudioFile: Suno's downloads are Opus in
+/// fragmented MP4, which AVAudioFile reports as zero-length and throws an
+/// Objective-C exception (uncatchable in Swift) when seeking in.
 final class TrackReader: @unchecked Sendable {
-    private let file: AVAudioFile
-    private let converter: AVAudioConverter?
-    private let input: AVAudioPCMBuffer
-    private let outputFormat: AVAudioFormat
-    private var reachedEnd = false
-    private var finished = false
+    private let reader: AVAssetReader
+    private let output: AVAssetReaderTrackOutput
+    private var pending: [Float] = []
+    private var pendingStart = 0
 
-    init(url: URL, from seconds: Double = 0) throws {
-        file = try AVAudioFile(forReading: url)
-        let format = file.processingFormat
-        guard format.channelCount > 0,
-              let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: AudioFormat.sampleRate,
-                                         channels: min(format.channelCount, 2), interleaved: false),
-              let input = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8192) else {
-            throw MediaError("Couldn't read \(url.lastPathComponent).")
-        }
-        outputFormat = target
-        self.input = input
-        if format.sampleRate == target.sampleRate, format.channelCount == target.channelCount,
-           format.commonFormat == .pcmFormatFloat32, !format.isInterleaved {
-            converter = nil
-        } else {
-            guard let converter = AVAudioConverter(from: format, to: target) else {
-                throw MediaError("\(url.lastPathComponent) is in a format Parallax can't play.")
-            }
-            self.converter = converter
-        }
-        file.framePosition = min(file.length, AVAudioFramePosition(seconds * format.sampleRate))
+    private static var outputSettings: [String: Any] {
+        [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: AudioFormat.sampleRate,
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false,
+            AVLinearPCMIsBigEndianKey: false,
+        ]
     }
 
-    /// Length in seconds.
-    var duration: Double { Double(file.length) / file.processingFormat.sampleRate }
+    static func open(url: URL, from seconds: Double = 0) async throws -> TrackReader {
+        let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+        guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
+            throw MediaError("\(url.lastPathComponent) has no audio.")
+        }
+        return try TrackReader(asset: asset, track: track, from: seconds, name: url.lastPathComponent)
+    }
+
+    /// `open` for a dispatch queue that may block (the player's decode
+    /// queue), never one of Swift concurrency's threads.
+    static func openBlocking(url: URL, from seconds: Double) throws -> TrackReader {
+        let result = BlockingResult()
+        Task.detached {
+            do { result.value = .success(try await open(url: url, from: seconds)) } catch { result.value = .failure(error) }
+            result.done.signal()
+        }
+        result.done.wait()
+        return try result.value!.get()
+    }
+
+    private final class BlockingResult: @unchecked Sendable {
+        let done = DispatchSemaphore(value: 0)
+        var value: Result<TrackReader, Error>?
+    }
+
+    private init(asset: AVAsset, track: AVAssetTrack, from seconds: Double, name: String) throws {
+        reader = try AVAssetReader(asset: asset)
+        output = AVAssetReaderTrackOutput(track: track, outputSettings: Self.outputSettings)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else { throw MediaError("\(name) is in a format Parallax can't play.") }
+        reader.add(output)
+        if seconds > 0 {
+            reader.timeRange = CMTimeRange(start: CMTime(seconds: seconds, preferredTimescale: 48_000), duration: .positiveInfinity)
+        }
+        guard reader.startReading() else {
+            throw reader.error ?? MediaError("Couldn't read \(name).")
+        }
+    }
+
+    deinit {
+        reader.cancelReading()
+    }
 
     /// Up to `frames` frames; empty at the end of the file.
     func read(frames: Int) throws -> [Float] {
-        guard !finished, frames > 0 else { return [] }
-        let pcm: AVAudioPCMBuffer
-        if let converter {
-            guard let out = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(frames)) else { return [] }
-            var error: NSError?
-            let status = converter.convert(to: out, error: &error) { [self] _, status in
-                if reachedEnd {
-                    status.pointee = .endOfStream
-                    return nil
-                }
-                do {
-                    try file.read(into: input, frameCount: input.frameCapacity)
-                } catch {
-                    reachedEnd = true
-                }
-                if input.frameLength == 0 {
-                    reachedEnd = true
-                    status.pointee = .endOfStream
-                    return nil
-                }
-                status.pointee = .haveData
-                return input
+        while pending.count - pendingStart < frames * 2 {
+            guard let sample = output.copyNextSampleBuffer() else {
+                if reader.status == .failed { throw reader.error ?? MediaError("Reading the song failed.") }
+                break
             }
-            if let error { throw error }
-            if status == .endOfStream || status == .error { finished = true }
-            pcm = out
-        } else {
-            guard let out = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(frames)) else { return [] }
-            try file.read(into: out, frameCount: AVAudioFrameCount(frames))
-            if out.frameLength == 0 { finished = true }
-            pcm = out
+            guard let block = CMSampleBufferGetDataBuffer(sample) else { continue }
+            let bytes = CMBlockBufferGetDataLength(block)
+            let old = pending.count
+            pending.append(contentsOf: repeatElement(0, count: bytes / MemoryLayout<Float>.size))
+            _ = pending.withUnsafeMutableBytes { buffer in
+                CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: bytes,
+                                           destination: buffer.baseAddress! + old * MemoryLayout<Float>.size)
+            }
         }
-        return Self.interleave(pcm)
-    }
-
-    private static func interleave(_ pcm: AVAudioPCMBuffer) -> [Float] {
-        let count = Int(pcm.frameLength)
-        guard count > 0, let channels = pcm.floatChannelData else { return [] }
-        let left = channels[0]
-        let right = pcm.format.channelCount > 1 ? channels[1] : left
-        var out = [Float](repeating: 0, count: count * 2)
-        for i in 0..<count {
-            out[i * 2] = left[i]
-            out[i * 2 + 1] = right[i]
+        let count = min(frames * 2, pending.count - pendingStart)
+        let out = Array(pending[pendingStart..<(pendingStart + count)])
+        pendingStart += count
+        if pendingStart >= 1 << 16 || pendingStart == pending.count {
+            pending.removeFirst(pendingStart)
+            pendingStart = 0
         }
         return out
     }

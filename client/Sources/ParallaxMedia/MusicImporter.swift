@@ -14,6 +14,13 @@ public enum MusicImporter {
         public var duration: Double
         /// Integrated loudness in LUFS, nil for silence.
         public var loudness: Double?
+        /// Suno stamps its downloads with the song's ID.
+        public var sunoSongID: String?
+
+        /// The song's page on Suno, when it came from there.
+        public var sunoURL: URL? {
+            sunoSongID.flatMap { URL(string: "https://suno.com/song/\($0)") }
+        }
     }
 
     public static func isAudioFile(_ url: URL) -> Bool {
@@ -23,21 +30,29 @@ public enum MusicImporter {
     /// Decodes the whole file to measure its loudness, so run it off the main thread.
     public static func analyze(_ url: URL) async throws -> Analysis {
         let asset = AVURLAsset(url: url)
-        var title: String?, artist: String?
-        if let metadata = try? await asset.load(.commonMetadata) {
+        var title: String?, artist: String?, sunoSongID: String?
+        if let metadata = try? await asset.load(.metadata) {
             for item in metadata {
                 guard let value = try? await item.load(.stringValue)?.trimmingCharacters(in: .whitespacesAndNewlines),
                       !value.isEmpty else { continue }
                 if item.commonKey == .commonKeyTitle { title = value }
                 if item.commonKey == .commonKeyArtist { artist = value }
+                sunoSongID = sunoSongID ?? Self.sunoSongID(inComment: value)
             }
         }
-        let (duration, loudness) = try measure(url)
-        return Analysis(title: title, artist: artist, duration: duration, loudness: loudness)
+        let (duration, loudness) = try await measure(url)
+        return Analysis(title: title, artist: artist, duration: duration, loudness: loudness, sunoSongID: sunoSongID)
     }
 
-    private static func measure(_ url: URL) throws -> (Double, Double?) {
-        let reader = try TrackReader(url: url)
+    /// Suno's comment reads "made with suno; created=…; id=<uuid>".
+    static func sunoSongID(inComment comment: String) -> String? {
+        guard comment.lowercased().contains("made with suno"),
+              let match = comment.firstMatch(of: /id=([0-9A-Fa-f-]{36})/) else { return nil }
+        return String(match.1).lowercased()
+    }
+
+    private static func measure(_ url: URL) async throws -> (Double, Double?) {
+        let reader = try await TrackReader.open(url: url)
         var meter = LoudnessMeter()
         var frames = 0
         while true {
