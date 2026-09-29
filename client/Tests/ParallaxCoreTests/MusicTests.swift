@@ -153,6 +153,15 @@ private func loudness(_ samples: [Float]) -> Double? {
         #expect(library.gainDB(for: quiet) == 2)
     }
 
+    @Test func recognizesSunoSongs() {
+        var song = Song(title: "A", fileName: "a.mp3", duration: 1, sourceURL: "https://suno.com/song/abc")
+        #expect(song.sunoURL?.absoluteString == "https://suno.com/song/abc")
+        song.sourceURL = "https://notsuno.com/song/abc"
+        #expect(song.sunoURL == nil)
+        song.sourceURL = nil
+        #expect(song.sunoURL == nil)
+    }
+
     @Test func roundTripsThroughStore() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }
