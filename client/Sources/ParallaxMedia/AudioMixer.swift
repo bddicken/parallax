@@ -2,6 +2,13 @@ import AVFoundation
 import Foundation
 import ParallaxCore
 
+/// An input the mixer pulls from on its own clock instead of one that
+/// pushes captured audio, e.g. the music player.
+protocol AudioPullSource: AnyObject, Sendable {
+    /// Fills `out` with `frames` frames of interleaved stereo at 48 kHz.
+    func render(into out: UnsafeMutableBufferPointer<Float>, frames: Int)
+}
+
 public struct MixerLevels: Sendable {
     public var inputs: [UUID: AudioLevel]
     public var master: AudioLevel
@@ -19,11 +26,17 @@ final class AudioMixer: @unchecked Sendable {
         var settings: AudioSource
         var buffer = DelayBuffer()
         var processor: ChannelStripProcessor
+        var ducker = Ducker()
         var level = AudioLevel.silent
 
         init(_ settings: AudioSource) {
             self.settings = settings
             processor = ChannelStripProcessor(source: settings)
+        }
+
+        /// Microphones and interfaces: what "talking" means for ducking.
+        var isVoice: Bool {
+            if case .device = settings.kind { true } else { false }
         }
     }
 
@@ -31,6 +44,7 @@ final class AudioMixer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "parallax.mixer", qos: .userInteractive)
     private let lock = NSLock()
     private var strips: [UUID: Strip] = [:]
+    private var pullSources: [UUID: AudioPullSource] = [:]
 
     // Only touched on `queue`.
     private var timer: DispatchSourceTimer?
@@ -61,6 +75,15 @@ final class AudioMixer: @unchecked Sendable {
                 strips[source.id] = strip
             }
         }
+    }
+
+    /// Makes `id` read from `source` instead of its queued audio.
+    func attach(_ source: AudioPullSource, to id: UUID) {
+        lock.withLock { pullSources[id] = source }
+    }
+
+    func detach(_ id: UUID) {
+        lock.withLock { _ = pullSources.removeValue(forKey: id) }
     }
 
     /// Maps the device's channels to stereo per the source's channel mode and
@@ -123,12 +146,15 @@ final class AudioMixer: @unchecked Sendable {
         let n = Self.chunkFrames
         for i in mix.indices { mix[i] = 0 }
         lock.withLock {
-            for strip in strips.values {
-                scratch.withUnsafeMutableBufferPointer { buf in
-                    strip.buffer.read(into: buf, frames: n)
-                    strip.level = strip.level.merged(with: strip.processor.process(buf))
-                }
-                for i in mix.indices { mix[i] += scratch[i] }
+            // Microphones first, so everything else can duck under them in
+            // the same chunk.
+            var voiceDB = AudioLevel.silent.rmsDB
+            for (id, strip) in strips where strip.isVoice {
+                let level = mixStrip(id, strip, frames: n, voiceDB: nil)
+                if !strip.settings.isMuted { voiceDB = max(voiceDB, level.rmsDB) }
+            }
+            for (id, strip) in strips where !strip.isVoice {
+                mixStrip(id, strip, frames: n, voiceDB: voiceDB)
             }
         }
         mix.withUnsafeMutableBufferPointer { buf in
@@ -142,6 +168,23 @@ final class AudioMixer: @unchecked Sendable {
         mix.withUnsafeBufferPointer { buf in
             for sink in outputs { sink.appendAudio(buf, frameCount: n, pts: pts) }
         }
+    }
+
+    /// Reads, processes, and adds one strip to the mix. Call with `lock` held.
+    @discardableResult
+    private func mixStrip(_ id: UUID, _ strip: Strip, frames n: Int, voiceDB: Float?) -> AudioLevel {
+        let level = scratch.withUnsafeMutableBufferPointer { buf in
+            if let source = pullSources[id] {
+                source.render(into: buf, frames: n)
+            } else {
+                strip.buffer.read(into: buf, frames: n)
+            }
+            if let voiceDB { strip.ducker.process(buf, keyDB: voiceDB, settings: strip.settings.duck) }
+            return strip.processor.process(buf)
+        }
+        strip.level = strip.level.merged(with: level)
+        for i in mix.indices { mix[i] += scratch[i] }
+        return level
     }
 
     private func reportLevels() {

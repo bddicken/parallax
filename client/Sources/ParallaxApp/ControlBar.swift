@@ -8,7 +8,22 @@ struct ControlBar: View {
     @State private var showingGoLive = false
 
     var body: some View {
-        HStack(spacing: 14) {
+        // The bar must never be wider than the column: that would stretch the
+        // preview, inspector, and mixer above it past the column's edge. As
+        // space runs out, the music controls shrink, then go (the Music tab
+        // still has them).
+        ViewThatFits(in: .horizontal) {
+            ForEach(MusicMiniPlayer.Style.allCases, id: \.self) { bar(music: $0) }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .sheet(isPresented: $showingGoLive) {
+            GoLiveSheet().environment(model)
+        }
+    }
+
+    private func bar(music: MusicMiniPlayer.Style) -> some View {
+        HStack(spacing: 12) {
             Picker("Transition", selection: transitionBinding(\.kind)) {
                 Text("Cut").tag(TransitionKind.cut)
                 Text("Fade").tag(TransitionKind.fade)
@@ -18,12 +33,17 @@ struct ControlBar: View {
             .frame(width: 110)
             if model.profile.transition.kind == .fade {
                 Stepper(value: transitionBinding(\.durationMs), in: 100...3000, step: 100) {
-                    Text("\(model.profile.transition.durationMs) ms").monospacedDigit()
+                    Text("\(model.profile.transition.durationMs) ms").monospacedDigit().fixedSize()
                 }
             }
 
             Divider().frame(height: 20)
-            MonitorControl()
+            // Music buttons matter more than the full headphone name.
+            MonitorControl(maxLabelWidth: music == .full || music == .noTitle ? 170 : 100)
+            if music != .hidden {
+                Divider().frame(height: 20)
+                MusicMiniPlayer(style: music)
+            }
 
             Spacer()
 
@@ -33,6 +53,7 @@ struct ControlBar: View {
                 } label: {
                     Label(url.lastPathComponent, systemImage: "film")
                         .lineLimit(1)
+                        .frame(maxWidth: 180)
                 }
                 .buttonStyle(.borderless)
                 .help("Show in Finder")
@@ -71,11 +92,6 @@ struct ControlBar: View {
             SettingsLink { Image(systemName: "gearshape") }
                 .buttonStyle(.borderless)
                 .help("Settings")
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .sheet(isPresented: $showingGoLive) {
-            GoLiveSheet().environment(model)
         }
     }
 

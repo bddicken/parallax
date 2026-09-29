@@ -118,10 +118,11 @@ extension VideoSourceKind {
 }
 
 extension AudioSourceKind {
-    public var permission: Permission {
+    public var permission: Permission? {
         switch self {
         case .device: .microphone
         case .systemAudio: .screenRecording
+        case .music: nil
         }
     }
 }

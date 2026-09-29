@@ -20,6 +20,7 @@ final class AppModel {
 
     let devices = DeviceCatalog()
     let broadcast = BroadcastModel()
+    let music: MusicModel
     /// parallax-server run by the app, when Settings › Server says "This Mac".
     let localServer: LocalServer
     /// Platform settings for `localServer` (from the Keychain).
@@ -55,6 +56,8 @@ final class AppModel {
         profile = store.load()
         // Next to the profile, so a scratch profile (PARALLAX_PROFILE) gets its own sign-ins.
         localServer = LocalServer(directory: store.url.deletingLastPathComponent().appending(path: "Server"))
+        // Songs are shared by every profile, but a scratch profile gets its own library.
+        music = MusicModel(player: engine.music, directory: store.url.deletingLastPathComponent().appending(path: "Music"))
         engine.onLevels = { [weak self] levels in
             self?.levels = levels.inputs
             self?.masterLevel = levels.master
@@ -91,6 +94,8 @@ final class AppModel {
                 sourceErrors[id] = nil
             }
         }
+        music.ensureOutput = { [weak self] in self?.ensureMusicSource() }
+        music.onProblem = { [weak self] in self?.banner = $0 }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
         localServer.onStateChanged = { [weak self] _ in self?.updateBroadcastConnection() }
         // Save identities that sources re-found (renumbered display, replugged
@@ -160,6 +165,7 @@ final class AppModel {
     func saveNow() {
         saveTask?.cancel()
         try? store.save(profile)
+        music.saveNow()
     }
 
     // MARK: Undo
@@ -196,6 +202,9 @@ final class AppModel {
         let live = profile.programSceneID
         var next = snapshot
         if next.scene(live) != nil { next.programSceneID = live }
+        // Audio changes aren't undo steps, so undoing a layout edit mustn't
+        // roll back a fader (or remove the input music is playing through).
+        next.audioSources = profile.audioSources
         profile = next
         if next.programSceneID != live { engine.setProgram(next.programSceneID, transition: profile.transition) }
         if selectedItem == nil { selectedItemID = nil }
@@ -453,8 +462,34 @@ final class AppModel {
     }
 
     func removeAudioSource(_ id: UUID) {
+        if musicSource?.id == id { music.stop() }
         profile.audioSources.removeAll { $0.id == id }
         sourceErrors[id] = nil
+    }
+
+    // MARK: Music
+
+    static let musicVolumeRange: ClosedRange<Double> = -40...6
+    /// Music starts well under your voice.
+    private static let defaultMusicGainDB = -12.0
+
+    /// The mixer input music plays through.
+    var musicSource: AudioSource? { profile.audioSources.first { $0.kind == .music } }
+
+    /// Adds the Music input to the mixer if it isn't there, ducking under
+    /// your mic from the start.
+    func ensureMusicSource() {
+        guard musicSource == nil else { return }
+        profile.audioSources.append(AudioSource(name: "Music", kind: .music, gainDB: Self.defaultMusicGainDB,
+                                                channelMode: .stereo, duck: DuckSettings(isEnabled: true)))
+    }
+
+    var musicVolumeDB: Double { musicSource?.gainDB ?? Self.defaultMusicGainDB }
+
+    func setMusicVolume(_ db: Double) {
+        ensureMusicSource()
+        guard let id = musicSource?.id else { return }
+        updateAudioSource(id) { $0.gainDB = min(max(db, -60), 20) }
     }
 
     // MARK: Permissions

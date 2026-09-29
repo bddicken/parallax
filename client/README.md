@@ -16,6 +16,7 @@ What works now:
   - Every edit is undoable (⌘Z). A whole drag is one undo step.
 - **Layers**: the sources list shows the top layer first. Drag to reorder, + / − to add or remove, and the eye button hides a layer.
 - **Audio**: any mic or interface (pick mono or stereo channels) plus system audio. Each input has a gain fader and, right under it, a live sync delay slider (0–1000 ms), plus mute, meter, 80 Hz high-pass, noise gate, and a 10-band graphic EQ (31 Hz–16 kHz, ±12 dB) with a live response curve. The master bus has a limiter.
+- **Music**: a Music tab next to Sources holds your song library, with play/pause, skip, seek, shuffle that avoids repeats, per-song volume, and loudness matching. Songs play gaplessly through a Music input in the mixer, which ducks under your microphones while you talk. Music › Open Suno (⌥⌘S) opens suno.com in Parallax; songs you download there with Suno's own Download button go straight into the library. Parallax never fetches songs from Suno any other way, since a download is what grants commercial rights. Keys: ⌥⌘P play/pause, ⌥⌘→/← next/previous, ⌥⌘↑/↓ volume.
 - **Audio monitor**: the headphones button next to Cut/Fade picks where you hear the program mix (None, System Default, or any connected output) and sets its volume. It follows device plug/unplug and system default changes.
 - **Video delay** per source, 0–2 s.
 - **Local recording**: H.264/HEVC + AAC to .mov/.mp4, with configurable bitrate and folder. Files are fragmented, so a crash keeps what was recorded, and quitting finishes the file.

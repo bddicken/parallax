@@ -71,6 +71,7 @@ extension AudioSourceKind {
         switch self {
         case .device(let uniqueID, _, _): "device:\(uniqueID)"
         case .systemAudio: "system"
+        case .music: "music"
         }
     }
 }
@@ -192,6 +193,8 @@ public enum AudioSourceKind: Codable, Hashable, Sendable {
     case device(uniqueID: String, name: String? = nil, modelID: String? = nil)
     /// Everything the Mac is playing, via ScreenCaptureKit (minus Parallax itself).
     case systemAudio
+    /// Parallax's own music player, playing songs from the music library.
+    case music
 }
 
 public enum ChannelMode: String, Codable, CaseIterable, Sendable {
@@ -233,6 +236,21 @@ public struct EQSettings: Codable, Hashable, Sendable {
     }
 }
 
+/// Turns an input down while you're talking into a microphone, e.g. music
+/// under your voice.
+public struct DuckSettings: Codable, Hashable, Sendable {
+    public static let amountRange: ClosedRange<Double> = -30 ... -3
+
+    public var isEnabled: Bool = false
+    /// How far to turn it down while you talk.
+    public var amountDB: Double = -12
+
+    public init(isEnabled: Bool = false, amountDB: Double = -12) {
+        self.isEnabled = isEnabled
+        self.amountDB = amountDB
+    }
+}
+
 public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var name: String
@@ -246,11 +264,13 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
     public var highPassEnabled: Bool
     public var gate: NoiseGateSettings
     public var eq: EQSettings
+    public var duck: DuckSettings
 
     public init(
         id: UUID = UUID(), name: String, kind: AudioSourceKind, gainDB: Double = 0, isMuted: Bool = false,
         delayMs: Int = 0, channelMode: ChannelMode = .mono, firstChannel: Int = 0,
-        highPassEnabled: Bool = false, gate: NoiseGateSettings = NoiseGateSettings(), eq: EQSettings = EQSettings()
+        highPassEnabled: Bool = false, gate: NoiseGateSettings = NoiseGateSettings(), eq: EQSettings = EQSettings(),
+        duck: DuckSettings = DuckSettings()
     ) {
         self.id = id
         self.name = name
@@ -263,6 +283,7 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
         self.highPassEnabled = highPassEnabled
         self.gate = gate
         self.eq = eq
+        self.duck = duck
     }
 
     // Decodes profiles saved before newer fields existed.
@@ -279,6 +300,7 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
         highPassEnabled = try c.decode(Bool.self, forKey: .highPassEnabled)
         gate = try c.decode(NoiseGateSettings.self, forKey: .gate)
         eq = try c.decodeIfPresent(EQSettings.self, forKey: .eq) ?? EQSettings()
+        duck = try c.decodeIfPresent(DuckSettings.self, forKey: .duck) ?? DuckSettings()
     }
 }
 
