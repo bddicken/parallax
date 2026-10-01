@@ -70,11 +70,23 @@ struct MusicPanel: View {
                 .fixedSize()
                 .help("Add songs")
             }
+            Picker("Music from", selection: Binding(get: { model.profile.musicMode }, set: { model.setMusicMode($0) })) {
+                Text("Library").tag(MusicMode.library)
+                Text("Suno Player").tag(MusicMode.sunoPlayer)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+            .help("Library plays songs you've downloaded. Suno Player sends whatever Suno's web player in the Suno window plays.")
             NowPlayingCard()
                 .padding(.horizontal, 12)
                 .padding(.bottom, 10)
             Divider()
-            if music.library.tracks.isEmpty && music.importing.isEmpty {
+            if music.mode == .sunoPlayer {
+                SunoPlayerInfo()
+            } else if music.library.tracks.isEmpty && music.importing.isEmpty {
                 ContentUnavailableView {
                     Label("No Songs", systemImage: "music.note.list")
                 } description: {
@@ -193,42 +205,52 @@ private struct NowPlayingCard: View {
 
     var body: some View {
         let music = model.music
-        let track = music.nowPlaying
+        let suno = music.mode == .sunoPlayer
+        let title = music.nowPlayingTitle
+        let duration = music.nowPlayingDuration
+        let hasSong = suno ? duration != nil : music.nowPlaying != nil
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(track?.title ?? (music.library.tracks.isEmpty ? "No songs yet" : "Not playing"))
+                Text(title ?? placeholder)
                     .font(.callout.weight(.medium))
-                    .foregroundStyle(track == nil ? .secondary : .primary)
+                    .foregroundStyle(title == nil ? .secondary : .primary)
                     .lineLimit(1)
-                if let page = track?.sunoURL {
-                    SunoBadge { music.openSuno(page) }
+                if suno {
+                    SunoBadge(help: "Playing from Suno's web player. Click to show the Suno window.") { music.openSuno() }
+                } else if let page = music.nowPlaying?.sunoURL {
+                    SunoBadge(help: "Made with Suno. Click to open this song on Suno.") { music.openSuno(page) }
                 }
                 Spacer(minLength: 4)
-                Button { music.setShuffle(!music.library.shuffle) } label: {
-                    Image(systemName: "shuffle")
-                        .foregroundStyle(music.library.shuffle ? Color.accentColor : .secondary)
+                if !suno {
+                    Button { music.setShuffle(!music.library.shuffle) } label: {
+                        Image(systemName: "shuffle")
+                            .foregroundStyle(music.library.shuffle ? Color.accentColor : .secondary)
+                    }
+                    .buttonStyle(.borderless)
+                    .help(music.library.shuffle ? "Shuffle is on" : "Shuffle is off (plays in list order)")
                 }
-                .buttonStyle(.borderless)
-                .help(music.library.shuffle ? "Shuffle is on" : "Shuffle is off (plays in list order)")
+            }
+            if suno, let artist = music.web?.artist {
+                Text(artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             TimelineView(.periodic(from: .now, by: 0.5)) { _ in
-                let duration = max(track?.duration ?? 0, 1)
-                let position = min(scrub ?? (track == nil ? 0 : music.position), duration)
+                let total = max(duration ?? 0, 1)
+                let position = min(scrub ?? (hasSong ? music.position : 0), total)
                 HStack(spacing: 6) {
                     Text(formatTime(position))
                         .frame(width: 34, alignment: .leading)
-                    Slider(value: Binding(get: { position }, set: { scrub = $0 }), in: 0...duration) { editing in
+                    Slider(value: Binding(get: { position }, set: { scrub = $0 }), in: 0...total) { editing in
                         guard !editing, let target = scrub else { return }
                         music.seek(to: target)
                         // Hold the thumb in place until the player gets there.
                         Task {
-                            try? await Task.sleep(for: .milliseconds(300))
+                            try? await Task.sleep(for: .milliseconds(suno ? 1200 : 300))
                             if scrub == target { scrub = nil }
                         }
                     }
                     .controlSize(.mini)
-                    .disabled(track == nil)
-                    Text(formatTime(track?.duration ?? 0))
+                    .disabled(!hasSong)
+                    Text(formatTime(duration ?? 0))
                         .frame(width: 34, alignment: .trailing)
                 }
                 .font(.caption2)
@@ -237,16 +259,16 @@ private struct NowPlayingCard: View {
             }
             HStack(spacing: 10) {
                 Button(action: music.playPrevious) { Image(systemName: "backward.fill") }
-                    .disabled(track == nil)
+                    .disabled(!music.canGoBack)
                     .help("Previous song (⌥⌘←)")
                 Button(action: music.togglePlayPause) {
                     Image(systemName: music.isPlaying ? "pause.circle.fill" : "play.circle.fill")
                         .font(.system(size: 26))
                 }
-                .disabled(music.library.tracks.isEmpty)
+                .disabled(!music.canPlay)
                 .help(music.isPlaying ? "Pause (⌥⌘P)" : "Play (⌥⌘P)")
                 Button(action: music.playNext) { Image(systemName: "forward.fill") }
-                    .disabled(music.library.tracks.isEmpty)
+                    .disabled(!music.canPlay)
                     .help("Next song (⌥⌘→)")
                 Spacer(minLength: 8)
                 MusicVolumeSlider().frame(minWidth: 60, maxWidth: 110)
@@ -254,10 +276,53 @@ private struct NowPlayingCard: View {
             .buttonStyle(.borderless)
         }
     }
+
+    private var placeholder: String {
+        let music = model.music
+        switch music.mode {
+        case .library: return music.library.tracks.isEmpty ? "No songs yet" : "Not playing"
+        case .sunoPlayer: return music.isPlaying ? "Playing on Suno" : music.web == nil ? "Open Suno to play" : "Not playing"
+        }
+    }
+}
+
+/// What to do in Suno Player mode, shown in place of the library.
+private struct SunoPlayerInfo: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Play songs in the Suno window. Whatever Suno's player plays goes to your stream through the Suno Player input in the mixer, and these controls drive it.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Show Suno Window") { model.music.openSuno() }
+            if model.profile.monitor.output == .off {
+                note("Turn on monitoring (the headphones button below) to hear it. While Parallax captures the Suno window, its sound only comes through Parallax.",
+                     symbol: "headphones")
+            }
+            if let id = model.musicSource?.id, let problem = model.sourceErrors[id] {
+                note(problem, symbol: "exclamationmark.triangle.fill")
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func note(_ text: String, symbol: String) -> some View {
+        Label {
+            Text(text).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: symbol)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
 }
 
 /// Marks a song made with Suno; opens its page there.
 private struct SunoBadge: View {
+    let help: String
     let action: () -> Void
 
     var body: some View {
@@ -272,7 +337,7 @@ private struct SunoBadge: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help("Made with Suno. Click to open this song on Suno.")
+        .help(help)
     }
 }
 
@@ -429,7 +494,7 @@ struct MusicMiniPlayer: View {
     var body: some View {
         let music = model.music
         HStack(spacing: 8) {
-            if music.library.tracks.isEmpty {
+            if !music.canPlay {
                 Button { tab = .music } label: { Label("Music", systemImage: "music.note") }
                     .help("Add songs from Suno")
             } else {
@@ -441,9 +506,9 @@ struct MusicMiniPlayer: View {
                     .help("Next song (⌥⌘→)")
                 if style == .full {
                     Button { tab = .music } label: {
-                        Text(music.nowPlaying?.title ?? "Music")
+                        Text(music.nowPlayingTitle ?? (music.mode == .sunoPlayer ? "Suno" : "Music"))
                             .lineLimit(1)
-                            .foregroundStyle(music.nowPlaying == nil ? .secondary : .primary)
+                            .foregroundStyle(music.nowPlayingTitle == nil ? .secondary : .primary)
                     }
                     .frame(maxWidth: 150, alignment: .leading)
                     .help("Show music")
@@ -462,7 +527,7 @@ struct MusicCommands: Commands {
 
     var body: some Commands {
         let music = model.music
-        let hasSongs = !music.library.tracks.isEmpty
+        let hasSongs = music.canPlay
         CommandMenu("Music") {
             Button(music.isPlaying ? "Pause" : "Play") { music.togglePlayPause() }
                 .keyboardShortcut("p", modifiers: [.command, .option])
@@ -472,8 +537,9 @@ struct MusicCommands: Commands {
                 .disabled(!hasSongs)
             Button("Previous Song") { music.playPrevious() }
                 .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-                .disabled(music.nowPlaying == nil)
+                .disabled(!music.canGoBack)
             Toggle("Shuffle", isOn: Binding(get: { music.library.shuffle }, set: music.setShuffle))
+                .disabled(music.mode == .sunoPlayer)
             Divider()
             Button("Louder") { model.setMusicVolume(model.musicVolumeDB + 3) }
                 .keyboardShortcut(.upArrow, modifiers: [.command, .option])

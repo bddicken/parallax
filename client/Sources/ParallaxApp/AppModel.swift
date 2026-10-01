@@ -94,6 +94,7 @@ final class AppModel {
                 sourceErrors[id] = nil
             }
         }
+        music.mode = profile.musicMode
         music.ensureOutput = { [weak self] in self?.ensureMusicSource() }
         music.onProblem = { [weak self] in self?.banner = $0 }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
@@ -205,6 +206,7 @@ final class AppModel {
         // Audio changes aren't undo steps, so undoing a layout edit mustn't
         // roll back a fader (or remove the input music is playing through).
         next.audioSources = profile.audioSources
+        next.musicMode = profile.musicMode
         profile = next
         if next.programSceneID != live { engine.setProgram(next.programSceneID, transition: profile.transition) }
         if selectedItem == nil { selectedItemID = nil }
@@ -462,7 +464,7 @@ final class AppModel {
     }
 
     func removeAudioSource(_ id: UUID) {
-        if musicSource?.id == id { music.stop() }
+        if profile.audioSources.first(where: { $0.id == id })?.kind == .music { music.stop() }
         profile.audioSources.removeAll { $0.id == id }
         sourceErrors[id] = nil
     }
@@ -473,15 +475,27 @@ final class AppModel {
     /// Music starts well under your voice.
     private static let defaultMusicGainDB = -12.0
 
-    /// The mixer input music plays through.
-    var musicSource: AudioSource? { profile.audioSources.first { $0.kind == .music } }
+    /// The mixer input music plays through in the current mode.
+    var musicSource: AudioSource? { profile.musicSource }
 
-    /// Adds the Music input to the mixer if it isn't there, ducking under
-    /// your mic from the start.
+    /// Adds the current mode's music input to the mixer if it isn't there,
+    /// ducking under your mic from the start.
     func ensureMusicSource() {
         guard musicSource == nil else { return }
-        profile.audioSources.append(AudioSource(name: "Music", kind: .music, gainDB: Self.defaultMusicGainDB,
+        let (kind, name): (AudioSourceKind, String) = profile.musicMode == .library ? (.music, "Music") : (.webPlayer, "Suno Player")
+        profile.audioSources.append(AudioSource(name: name, kind: kind, gainDB: Self.defaultMusicGainDB,
                                                 channelMode: .stereo, duck: DuckSettings(isEnabled: true)))
+    }
+
+    /// Switches between the music library and Suno's own web player.
+    func setMusicMode(_ mode: MusicMode) {
+        guard mode != profile.musicMode else { return }
+        profile.musicMode = mode
+        music.mode = mode
+        if mode == .sunoPlayer {
+            ensureMusicSource()
+            music.openSuno()
+        }
     }
 
     var musicVolumeDB: Double { musicSource?.gainDB ?? Self.defaultMusicGainDB }

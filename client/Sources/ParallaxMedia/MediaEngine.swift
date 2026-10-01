@@ -83,13 +83,15 @@ public final class MediaEngine {
             registry[source.id]?.setDelay(ms: source.delayMs)
         }
 
-        let wantedAudio = Dictionary(uniqueKeysWithValues: profile.audioSources.map { ($0.id, $0) })
+        // Only the music input for the current music mode runs.
+        let audioSources = profile.activeAudioSources
+        let wantedAudio = Dictionary(uniqueKeysWithValues: audioSources.map { ($0.id, $0) })
         for (id, running) in audioNodes where wantedAudio[id]?.kind != running.kind {
             running.node.stop()
             audioNodes[id] = nil
         }
-        mixer.configure(profile.audioSources)
-        for source in profile.audioSources where audioNodes[source.id] == nil {
+        mixer.configure(audioSources)
+        for source in audioSources where audioNodes[source.id] == nil {
             let node = makeAudioNode(source)
             audioNodes[source.id] = (source.kind, node)
             node.start()
@@ -318,6 +320,7 @@ public final class MediaEngine {
                                    onError: onError, onResolved: onResolved)
         case .systemAudio: return SystemAudioNode(onBuffer: onBuffer, onError: onError)
         case .music: return MusicNode(player: music, mixer: mixer, id: id)
+        case .webPlayer: return WebAudioNode(onBuffer: onBuffer, onError: onError)
         }
     }
 }

@@ -24,7 +24,12 @@ final class PCMNormalizer {
         input.frameLength = frames
         guard CMSampleBufferCopyPCMDataIntoAudioBufferList(
             sampleBuffer, at: 0, frameCount: Int32(frames), into: input.mutableAudioBufferList) == noErr else { return nil }
+        return convert(input)
+    }
 
+    func convert(_ input: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let format = input.format
+        let frames = input.frameLength
         if format.commonFormat == .pcmFormatFloat32, !format.isInterleaved, format.sampleRate == 48_000 {
             return input
         }

@@ -54,6 +54,7 @@ Key decisions:
 - **Everything runs on the host clock** (`CACurrentMediaTime`). The compositor ticks at the output fps. The mixer pulls 10 ms chunks and absorbs device clock drift in each input's `DelayBuffer`.
 - **Delays**: video delay keeps a short history of frames (copied out of the capture pool). Audio delay is a ring-buffer offset, and changing it live inserts silence or drops audio.
 - **Music is pulled, not pushed.** Captures push audio into a `DelayBuffer`, but `SongPlayer` is an `AudioPullSource` the mixer reads on its own clock, so files never drift or overrun. The mixer processes microphones first each chunk, and inputs with ducking on turn down while any unmuted mic is above -40 dBFS. The library (`library.json` plus copies of the song files) lives in a `Music` folder next to the profile.
+- **Suno Player mode** captures the Suno window with a Core Audio process tap (`WebAudioNode`). WebKit plays page audio from helper processes, and the tap includes only the ones macOS holds Parallax responsible for, never Parallax itself (its monitor would feed back) or other apps. `Profile.musicMode` picks which music input runs: the library player or the tap.
 - **Chat overlays are just sources.** The engine renders chat into images the compositor places like any other source.
 
 ## Roadmap

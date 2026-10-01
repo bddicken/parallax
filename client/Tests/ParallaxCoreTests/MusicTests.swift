@@ -153,6 +153,23 @@ private func loudness(_ samples: [Float]) -> Double? {
         #expect(library.gainDB(for: quiet) == 2)
     }
 
+    @Test func musicModePicksWhichMusicInputRuns() throws {
+        var profile = Profile()
+        let mic = AudioSource(name: "Mic", kind: .device(uniqueID: "m"))
+        let library = AudioSource(name: "Music", kind: .music)
+        let web = AudioSource(name: "Suno Player", kind: .webPlayer)
+        profile.audioSources = [mic, library, web]
+        #expect(profile.activeAudioSources.map(\.id) == [mic.id, library.id])
+        #expect(profile.musicSource?.id == library.id)
+        profile.musicMode = .sunoPlayer
+        #expect(profile.activeAudioSources.map(\.id) == [mic.id, web.id])
+        #expect(profile.musicSource?.id == web.id)
+        // Profiles saved before music modes load in library mode.
+        var json = try JSONSerialization.jsonObject(with: JSONEncoder().encode(profile)) as! [String: Any]
+        json["musicMode"] = nil
+        #expect(try JSONDecoder().decode(Profile.self, from: JSONSerialization.data(withJSONObject: json)).musicMode == .library)
+    }
+
     @Test func recognizesSunoSongs() {
         var song = Song(title: "A", fileName: "a.mp3", duration: 1, sourceURL: "https://suno.com/song/abc")
         #expect(song.sunoURL?.absoluteString == "https://suno.com/song/abc")

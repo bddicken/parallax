@@ -122,7 +122,7 @@ extension AudioSourceKind {
         switch self {
         case .device: .microphone
         case .systemAudio: .screenRecording
-        case .music: nil
+        case .music, .webPlayer: nil
         }
     }
 }

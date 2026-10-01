@@ -7,6 +7,10 @@ import UniformTypeIdentifiers
 
 /// The music library and what's playing. Songs play through the Music input
 /// in the mixer, whose fader is the overall music volume.
+///
+/// In Suno Player mode the same controls drive Suno's own web player in the
+/// Suno window instead, whose sound reaches the mixer through the Suno Player
+/// input.
 @Observable
 final class MusicModel {
     enum PlaybackState {
@@ -20,6 +24,19 @@ final class MusicModel {
     private(set) var importing: [String] = []
     /// A short note about the last thing that happened, e.g. a song added.
     private(set) var status: String?
+    /// Set by `AppModel` from the profile.
+    var mode = MusicMode.library {
+        didSet {
+            guard mode != oldValue else { return }
+            suno.mode = mode
+            switch mode {
+            case .library: if suno.isOpen { suno.perform(.pause) }
+            case .sunoPlayer: stop()
+            }
+        }
+    }
+    /// What Suno's web player is doing, once the Suno window has loaded.
+    private(set) var web: SunoPlayerScript.State?
 
     /// Makes sure the mixer has a Music input to play through.
     @ObservationIgnored var ensureOutput: () -> Void = {}
@@ -37,6 +54,8 @@ final class MusicModel {
             self?.importFiles([file], sourceURL: page?.absoluteString, moveFiles: true)
         }
         browser.onProblem = { [weak self] in self?.onProblem($0) }
+        browser.onPlayerState = { [weak self] in self?.web = $0 }
+        browser.mode = mode
         return browser
     }()
 
@@ -50,9 +69,16 @@ final class MusicModel {
     }
 
     var nowPlaying: Song? { library.track(nowPlayingID) }
-    var isPlaying: Bool { state == .playing }
-    /// Seconds into the current song. Not observable; poll it.
-    var position: Double { player.position }
+
+    // What the controls show, for either mode.
+    var isPlaying: Bool { mode == .library ? state == .playing : web?.playing ?? false }
+    var nowPlayingTitle: String? { mode == .library ? nowPlaying?.title : web?.title }
+    var nowPlayingDuration: Double? { mode == .library ? nowPlaying?.duration : web?.duration }
+    /// Whether play/next can do anything.
+    var canPlay: Bool { mode == .sunoPlayer || !library.tracks.isEmpty }
+    var canGoBack: Bool { mode == .sunoPlayer || nowPlaying != nil }
+    /// Seconds into the current song. Not observable in Library mode; poll it.
+    var position: Double { mode == .library ? player.position : web?.position ?? 0 }
 
     // MARK: Playback
 
@@ -65,6 +91,10 @@ final class MusicModel {
     }
 
     func togglePlayPause() {
+        if mode == .sunoPlayer {
+            guard suno.isOpen else { return openSuno() }
+            return suno.perform(isPlaying ? .pause : .play)
+        }
         switch state {
         case .playing: pause()
         case .paused: resume()
@@ -92,6 +122,7 @@ final class MusicModel {
     }
 
     func playNext() {
+        if mode == .sunoPlayer { return suno.perform(.nexttrack) }
         if let id = nextSong(after: nowPlayingID) {
             play(id)
         } else {
@@ -101,6 +132,7 @@ final class MusicModel {
 
     /// Back to the start of the song, or to the one before if it just began.
     func playPrevious() {
+        if mode == .sunoPlayer { return suno.perform(.previoustrack) }
         if position < 3, let id = queue.previous(before: nowPlayingID, in: library.tracks) {
             play(id)
         } else {
@@ -109,6 +141,7 @@ final class MusicModel {
     }
 
     func seek(to seconds: Double) {
+        if mode == .sunoPlayer { return suno.seek(to: seconds) }
         player.seek(to: seconds)
     }
 
