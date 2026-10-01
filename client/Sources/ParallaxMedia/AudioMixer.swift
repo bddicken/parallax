@@ -16,7 +16,8 @@ public struct MixerLevels: Sendable {
 
 /// Pulls fixed 10 ms chunks from every input on the host clock, runs each
 /// through its channel strip, sums them, limits the master, and hands the mix
-/// to the sinks.
+/// to the sinks. The monitor gets the same mix, or with a custom monitor mix,
+/// its own sum of the strips at the monitor's per-input gains.
 final class AudioMixer: @unchecked Sendable {
     static let chunkFrames = 480
 
@@ -28,6 +29,8 @@ final class AudioMixer: @unchecked Sendable {
         var processor: ChannelStripProcessor
         var ducker = Ducker()
         var level = AudioLevel.silent
+        /// Ramps toward the monitor gain so changes don't click.
+        var monitorGain: Float = 1
 
         init(_ settings: AudioSource) {
             self.settings = settings
@@ -45,6 +48,9 @@ final class AudioMixer: @unchecked Sendable {
     private let lock = NSLock()
     private var strips: [UUID: Strip] = [:]
     private var pullSources: [UUID: AudioPullSource] = [:]
+    private var monitor: MediaSink?
+    /// Per-input monitor gains; nil plays the program mix to the monitor.
+    private var monitorGains: [UUID: Float]?
 
     // Only touched on `queue`.
     private var timer: DispatchSourceTimer?
@@ -55,6 +61,9 @@ final class AudioMixer: @unchecked Sendable {
     private var lastLevelReport: Double = 0
     private var scratch = [Float](repeating: 0, count: AudioMixer.chunkFrames * 2)
     private var mix = [Float](repeating: 0, count: AudioMixer.chunkFrames * 2)
+    private var monitorMix = [Float](repeating: 0, count: AudioMixer.chunkFrames * 2)
+    private var monitorLimiter = PeakLimiter()
+    private let monitorSmoothing = Float(1 - exp(-1 / (0.01 * AudioFormat.sampleRate)))
 
     /// Called on the main queue about 20 times a second.
     var onLevels: (@MainActor @Sendable (MixerLevels) -> Void)?
@@ -75,6 +84,17 @@ final class AudioMixer: @unchecked Sendable {
                 strips[source.id] = strip
             }
         }
+    }
+
+    /// The monitor isn't a regular sink: it may hear a different mix.
+    func setMonitor(_ sink: MediaSink?) {
+        lock.withLock { monitor = sink }
+    }
+
+    /// `gains` nil plays the program mix to the monitor; otherwise each input
+    /// at its stream level times its gain (missing inputs at 1).
+    func setMonitorMix(_ gains: [UUID: Float]?) {
+        lock.withLock { monitorGains = gains }
     }
 
     /// Makes `id` read from `source` instead of its queued audio.
@@ -142,10 +162,13 @@ final class AudioMixer: @unchecked Sendable {
         }
     }
 
-    private func mixChunk() {
+    /// Mixes and delivers the next 10 ms. Runs on `queue` (or a test's thread
+    /// when the mixer isn't started).
+    func mixChunk() {
         let n = Self.chunkFrames
         for i in mix.indices { mix[i] = 0 }
-        lock.withLock {
+        for i in monitorMix.indices { monitorMix[i] = 0 }
+        let (monitor, monitorIsProgram) = lock.withLock { () -> (MediaSink?, Bool) in
             // Microphones first, so everything else can duck under them in
             // the same chunk.
             var voiceDB = AudioLevel.silent.rmsDB
@@ -156,10 +179,16 @@ final class AudioMixer: @unchecked Sendable {
             for (id, strip) in strips where !strip.isVoice {
                 mixStrip(id, strip, frames: n, voiceDB: voiceDB)
             }
+            // Once every gain has ramped back to 1, hear the program itself.
+            let isProgram = monitorGains == nil && strips.values.allSatisfy { $0.monitorGain == 1 }
+            return (self.monitor, isProgram)
         }
         mix.withUnsafeMutableBufferPointer { buf in
             limiter.process(buf)
             masterLevel = masterLevel.merged(with: AudioLevel.measure(UnsafeBufferPointer(buf)))
+        }
+        if monitor != nil && !monitorIsProgram {
+            monitorMix.withUnsafeMutableBufferPointer { monitorLimiter.process($0) }
         }
 
         let pts = CMTime(hostSeconds: startTime) + CMTime(value: framesProduced, timescale: CMTimeScale(AudioFormat.sampleRate))
@@ -167,6 +196,11 @@ final class AudioMixer: @unchecked Sendable {
         let outputs = sinks.all
         mix.withUnsafeBufferPointer { buf in
             for sink in outputs { sink.appendAudio(buf, frameCount: n, pts: pts) }
+        }
+        if let monitor {
+            (monitorIsProgram ? mix : monitorMix).withUnsafeBufferPointer {
+                monitor.appendAudio($0, frameCount: n, pts: pts)
+            }
         }
     }
 
@@ -184,6 +218,24 @@ final class AudioMixer: @unchecked Sendable {
         }
         strip.level = strip.level.merged(with: level)
         for i in mix.indices { mix[i] += scratch[i] }
+
+        // The monitor bus follows the strip's gain toward its target, and
+        // ramps back to 1 when the monitor returns to the program mix.
+        let target = monitorGains.map { $0[id] ?? 1 } ?? 1
+        var gain = strip.monitorGain
+        if gain == target {
+            if gain != 0 { for i in monitorMix.indices { monitorMix[i] += scratch[i] * gain } }
+        } else {
+            var i = 0
+            while i + 1 < monitorMix.count {
+                gain += (target - gain) * monitorSmoothing
+                monitorMix[i] += scratch[i] * gain
+                monitorMix[i + 1] += scratch[i + 1] * gain
+                i += 2
+            }
+            if abs(target - gain) < 1e-4 { gain = target }
+        }
+        strip.monitorGain = gain
         return level
     }
 
