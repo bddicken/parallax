@@ -35,6 +35,9 @@ public final class MediaEngine {
     /// Save it so next launch goes straight to the right device.
     public var onVideoSourceResolved: ((UUID, VideoSourceKind) -> Void)?
     public var onAudioSourceResolved: ((UUID, AudioSourceKind) -> Void)?
+    /// A recording file failed partway through. `stopped` is true if the
+    /// recorder couldn't carry on in a new file; call `stopRecording()`.
+    public var onRecordingProblem: ((_ message: String, _ stopped: Bool) -> Void)?
 
     private var feedLines: [ChatOverlayLine] = []
     private var feedSize = ChatOverlayRenderer.feedSize
@@ -228,13 +231,19 @@ public final class MediaEngine {
     public func startRecording(_ settings: RecordingSettings) throws -> URL {
         guard recorder == nil else { throw MediaError("Already recording.") }
         let r = try Recorder(directory: URL(filePath: settings.directoryPath, directoryHint: .isDirectory),
-                             recording: settings, output: compositor.outputSettings)
+                             recording: settings, output: compositor.outputSettings) { [weak self] recorder, message, stopped in
+            Task { @MainActor in
+                // Ignore a recording that has already been stopped.
+                guard let self, self.recorder === recorder else { return }
+                self.onRecordingProblem?(message, stopped)
+            }
+        }
         recorder = r
         sinks.add(r)
         return r.url
     }
 
-    public func stopRecording() async throws -> URL {
+    public func stopRecording() async throws -> RecordingResult {
         guard let r = recorder else { throw MediaError("Not recording.") }
         sinks.remove(r)
         recorder = nil

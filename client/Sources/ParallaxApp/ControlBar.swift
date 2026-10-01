@@ -47,9 +47,9 @@ struct ControlBar: View {
 
             Spacer()
 
-            if let url = model.lastRecordingURL, !model.isRecording {
+            if let url = model.lastRecordingURLs.first, !model.isRecording {
                 Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                    NSWorkspace.shared.activateFileViewerSelecting(model.lastRecordingURLs)
                 } label: {
                     Label(url.lastPathComponent, systemImage: "film")
                         .lineLimit(1)

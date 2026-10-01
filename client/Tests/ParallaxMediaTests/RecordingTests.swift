@@ -28,7 +28,7 @@ import Testing
 
         _ = try engine.startRecording(profile.recording)
         try await Task.sleep(for: .seconds(2))
-        let url = try await engine.stopRecording()
+        let url = try await engine.stopRecording().files[0]
 
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
@@ -77,7 +77,7 @@ import Testing
         try await Task.sleep(for: .milliseconds(200))
         _ = try engine.startRecording(profile.recording)
         try await Task.sleep(for: .seconds(1))
-        let url = try await engine.stopRecording()
+        let url = try await engine.stopRecording().files[0]
 
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         generator.requestedTimeToleranceBefore = .positiveInfinity
@@ -119,7 +119,7 @@ import Testing
         try await Task.sleep(for: .milliseconds(200))
         _ = try engine.startRecording(profile.recording)
         try await Task.sleep(for: .seconds(1))
-        let url = try await engine.stopRecording()
+        let url = try await engine.stopRecording().files[0]
 
         let asset = AVURLAsset(url: url)
         let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
@@ -153,7 +153,7 @@ import Testing
         try await Task.sleep(for: .milliseconds(200))
         _ = try engine.startRecording(profile.recording)
         try await Task.sleep(for: .seconds(2))
-        let url = try await engine.stopRecording()
+        let url = try await engine.stopRecording().files[0]
 
         let asset = AVURLAsset(url: url)
         let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
