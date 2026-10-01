@@ -72,6 +72,7 @@ extension AudioSourceKind {
         case .device(let uniqueID, _, _): "device:\(uniqueID)"
         case .systemAudio: "system"
         case .music: "music"
+        case .webPlayer: "webPlayer"
         }
     }
 }
@@ -195,6 +196,17 @@ public enum AudioSourceKind: Codable, Hashable, Sendable {
     case systemAudio
     /// Parallax's own music player, playing songs from the music library.
     case music
+    /// Whatever plays in Parallax's built-in Suno window, captured straight
+    /// from the web player.
+    case webPlayer
+}
+
+/// Where music comes from.
+public enum MusicMode: String, Codable, CaseIterable, Sendable {
+    /// Songs downloaded into the music library, played by Parallax.
+    case library
+    /// Suno's own web player in Parallax's Suno window.
+    case sunoPlayer
 }
 
 public enum ChannelMode: String, Codable, CaseIterable, Sendable {
@@ -555,6 +567,7 @@ public struct Profile: Codable, Hashable, Sendable {
     public var broadcast = BroadcastSettings()
     public var monitor = MonitorSettings()
     public var chatTextSize = ChatTextSize.small
+    public var musicMode = MusicMode.library
 
     public init() {}
 
@@ -574,6 +587,7 @@ public struct Profile: Codable, Hashable, Sendable {
         broadcast = try c.decodeIfPresent(BroadcastSettings.self, forKey: .broadcast) ?? d.broadcast
         monitor = try c.decodeIfPresent(MonitorSettings.self, forKey: .monitor) ?? d.monitor
         chatTextSize = try c.decodeIfPresent(ChatTextSize.self, forKey: .chatTextSize) ?? d.chatTextSize
+        musicMode = try c.decodeIfPresent(MusicMode.self, forKey: .musicMode) ?? d.musicMode
     }
 
     public static func makeDefault() -> Profile {
@@ -585,5 +599,22 @@ public struct Profile: Codable, Hashable, Sendable {
     }
 
     public func videoSource(_ id: UUID) -> VideoSource? { videoSources.first { $0.id == id } }
+
+    /// The audio inputs that run: only the music input for the current music mode.
+    public var activeAudioSources: [AudioSource] {
+        audioSources.filter {
+            switch $0.kind {
+            case .music: musicMode == .library
+            case .webPlayer: musicMode == .sunoPlayer
+            default: true
+            }
+        }
+    }
+
+    /// The input music plays through in the current mode, if it's been added.
+    public var musicSource: AudioSource? {
+        let kind: AudioSourceKind = musicMode == .library ? .music : .webPlayer
+        return audioSources.first { $0.kind == kind }
+    }
     public func scene(_ id: UUID?) -> StudioScene? { scenes.first { $0.id == id } }
 }

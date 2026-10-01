@@ -1,26 +1,41 @@
 import AppKit
+import ParallaxCore
 import ParallaxMedia
 import UniformTypeIdentifiers
 import WebKit
 
 /// Suno's own website in a Parallax window. You sign in and use Suno as
-/// usual; a song you download with Suno's Download button lands in the music
-/// library instead of your Downloads folder. Downloading through Suno is what
-/// gives you the right to use a song on a stream, so Parallax never fetches
-/// songs any other way.
+/// usual. In Library mode, a song you download with Suno's Download button
+/// lands in the music library instead of your Downloads folder. In Suno
+/// Player mode, what Suno's web player plays goes to the stream (captured by
+/// `WebAudioNode`), and Parallax's music controls drive that player.
 final class SunoBrowser: NSObject {
     static let home = URL(string: "https://suno.com/me")!
 
     /// A finished download and the Suno page it came from.
     var onDownload: ((_ file: URL, _ page: URL?) -> Void)?
     var onProblem: ((String) -> Void)?
+    /// What Suno's player is doing.
+    var onPlayerState: ((SunoPlayerScript.State) -> Void)?
+    var mode = MusicMode.library {
+        didSet { window?.subtitle = subtitle }
+    }
 
     private let incoming: URL
     private var window: NSWindow?
     private var webView: WKWebView?
     private var popups: [WKWebView: NSWindow] = [:]
     private var downloads: [WKDownload: (file: URL?, page: URL?)] = [:]
-    private static let subtitle = "Songs you download here are added to your music"
+
+    private var subtitle: String {
+        switch mode {
+        case .library: "Songs you download here are added to your music"
+        case .sunoPlayer: "What plays here goes to your stream"
+        }
+    }
+
+    /// Whether the page is loaded (and so can be controlled).
+    var isOpen: Bool { webView?.url != nil }
 
     init(incoming: URL) {
         self.incoming = incoming
@@ -42,10 +57,19 @@ final class SunoBrowser: NSObject {
     func showStatus(_ text: String) {
         guard let window else { return }
         window.subtitle = text
-        Task { [weak window] in
+        Task { [weak self, weak window] in
             try? await Task.sleep(for: .seconds(6))
-            if window?.subtitle == text { window?.subtitle = Self.subtitle }
+            if let self, window?.subtitle == text { window?.subtitle = subtitle }
         }
+    }
+
+    /// Drives Suno's player the way media keys would.
+    func perform(_ action: SunoPlayerScript.Action) {
+        webView?.evaluateJavaScript(SunoPlayerScript.perform(action))
+    }
+
+    func seek(to seconds: Double) {
+        webView?.evaluateJavaScript(SunoPlayerScript.seek(to: seconds))
     }
 
     private func makeWebView() -> WKWebView {
@@ -53,6 +77,14 @@ final class SunoBrowser: NSObject {
         config.websiteDataStore = .default()
         // Identify as Safari, which Suno supports; a bare WKWebView names no browser.
         config.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
+        // Keep playing (and reporting) while the window is closed or covered,
+        // and let Parallax's play button start playback.
+        config.preferences.inactiveSchedulingPolicy = .none
+        config.mediaTypesRequiringUserActionForPlayback = []
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: SunoPlayerScript.source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.add(PlayerStateHandler(self), name: SunoPlayerScript.handlerName)
+        config.userContentController = controller
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -68,7 +100,7 @@ final class SunoBrowser: NSObject {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Suno"
-        window.subtitle = Self.subtitle
+        window.subtitle = subtitle
         window.contentView = webView
         // Closing only hides it, so a download in progress still finishes.
         window.isReleasedWhenClosed = false
@@ -212,7 +244,20 @@ extension SunoBrowser: WKDownloadDelegate {
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         let entry = downloads.removeValue(forKey: download)
         if let folder = entry?.file?.deletingLastPathComponent() { try? FileManager.default.removeItem(at: folder) }
-        window?.subtitle = Self.subtitle
+        window?.subtitle = subtitle
         onProblem?("A download from Suno failed: \(error.localizedDescription)")
+    }
+}
+
+/// `WKUserContentController` keeps its handlers alive, so it gets this
+/// instead of the browser itself.
+private final class PlayerStateHandler: NSObject, WKScriptMessageHandler {
+    weak var browser: SunoBrowser?
+    init(_ browser: SunoBrowser) { self.browser = browser }
+
+    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let data = try? JSONSerialization.data(withJSONObject: message.body),
+              let state = try? JSONDecoder().decode(SunoPlayerScript.State.self, from: data) else { return }
+        browser?.onPlayerState?(state)
     }
 }

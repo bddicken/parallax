@@ -13,14 +13,15 @@ struct MixerPanel: View {
                     .help("Master")
                 AddAudioMenu()
             }
-            if model.profile.audioSources.isEmpty {
+            // Only the music input for the current music mode is shown (and runs).
+            if model.profile.activeAudioSources.isEmpty {
                 Text("No audio inputs. Add a microphone or system audio.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     VStack(spacing: 10) {
-                        ForEach(model.profile.audioSources) { source in
+                        ForEach(model.profile.activeAudioSources) { source in
                             ChannelStrip(source: source, level: model.levels[source.id] ?? .silent)
                         }
                     }
@@ -43,7 +44,7 @@ private struct AddAudioMenu: View {
                 }
             }
             Button("System Audio") { model.addAudioSource(kind: .systemAudio, name: "System Audio") }
-            Button("Music") { model.ensureMusicSource() }
+            Button(model.profile.musicMode == .library ? "Music" : "Suno Player") { model.ensureMusicSource() }
                 .disabled(model.musicSource != nil)
         } label: {
             Image(systemName: "plus")
@@ -360,6 +361,7 @@ extension AudioSourceKind {
         case .device: "mic.fill"
         case .systemAudio: "speaker.wave.2.fill"
         case .music: "music.note"
+        case .webPlayer: "globe"
         }
     }
 }
