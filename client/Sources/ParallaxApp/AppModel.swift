@@ -31,7 +31,8 @@ final class AppModel {
     var recordingStartedAt: Date?
     /// Sending video to the server; nil when not streaming.
     var uplinkState: UplinkState?
-    var lastRecordingURL: URL?
+    /// The last recording's files (more than one if a file failed partway).
+    var lastRecordingURLs: [URL] = []
     var sourceErrors: [UUID: String] = [:]
     var banner: String?
     var monitorError: String?
@@ -97,6 +98,11 @@ final class AppModel {
         music.mode = profile.musicMode
         music.ensureOutput = { [weak self] in self?.ensureMusicSource() }
         music.onProblem = { [weak self] in self?.banner = $0 }
+        engine.onRecordingProblem = { [weak self] message, stopped in
+            guard let self else { return }
+            banner = message
+            if stopped { Task { await self.stopRecording() } }
+        }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
         localServer.onStateChanged = { [weak self] _ in self?.updateBroadcastConnection() }
         // Save identities that sources re-found (renumbered display, replugged
@@ -585,7 +591,9 @@ final class AppModel {
         guard isRecording else { return }
         recordingStartedAt = nil
         do {
-            lastRecordingURL = try await engine.stopRecording()
+            let result = try await engine.stopRecording()
+            lastRecordingURLs = result.files
+            if let problem = result.problem { banner = problem }
         } catch {
             banner = "Recording failed: \(error.localizedDescription)"
         }
