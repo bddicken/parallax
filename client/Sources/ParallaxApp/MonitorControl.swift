@@ -81,14 +81,82 @@ private struct MonitorPopover: View {
                 .frame(height: 6)
                 .help("Program audio level")
 
+            Picker("Hear", selection: $model.profile.monitor.mix) {
+                Text("Stream Mix").tag(MonitorSettings.Mix.program)
+                Text("Custom Mix").tag(MonitorSettings.Mix.custom)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(model.profile.monitor.output == .off)
+            .help("Hear exactly what viewers hear, or set your own level for each input")
+
+            if model.profile.monitor.mix == .custom {
+                MonitorLevels()
+                    .disabled(model.profile.monitor.output == .off)
+            }
+
             if let error = model.monitorError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.callout).foregroundStyle(.yellow)
             } else {
-                Text("You hear the program mix, including audio delays. Use headphones so speakers don't feed back into your mic.")
+                Text(caption)
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    private var caption: String {
+        switch model.profile.monitor.mix {
+        case .program:
+            "You hear the program mix, including audio delays. Use headphones so speakers don't feed back into your mic."
+        case .custom:
+            "Only what you hear changes; the stream and recording keep their mix. Use headphones so speakers don't feed back into your mic."
+        }
+    }
+}
+
+/// One slider per input for the custom monitor mix, relative to its stream level.
+private struct MonitorLevels: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        let sources = model.profile.activeAudioSources
+        if sources.isEmpty {
+            Text("No audio inputs.").font(.callout).foregroundStyle(.secondary)
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(sources) { source in
+                    row(source)
+                }
+            }
+        }
+    }
+
+    private func row(_ source: AudioSource) -> some View {
+        let level = level(source.id)
+        return HStack(spacing: 8) {
+            Button {
+                level.wrappedValue = level.wrappedValue > 0 ? 0 : 1
+            } label: {
+                Image(systemName: level.wrappedValue > 0 ? source.kind.symbol : "speaker.slash.fill")
+                    .foregroundStyle(level.wrappedValue > 0 ? Color.secondary : Color.red)
+                    .frame(width: 16)
+            }
+            .buttonStyle(.borderless)
+            .help(level.wrappedValue > 0 ? "Don't hear \(source.name)" : "Hear \(source.name)")
+            Text(source.name).lineLimit(1).frame(width: 90, alignment: .leading)
+            Slider(value: level, in: 0...1)
+            Text("\(Int(level.wrappedValue * 100))%")
+                .monospacedDigit().frame(width: 40, alignment: .trailing)
+        }
+    }
+
+    private func level(_ id: UUID) -> Binding<Double> {
+        Binding {
+            model.profile.monitor.level(for: id)
+        } set: {
+            model.profile.monitor.levels[id] = $0
         }
     }
 }
