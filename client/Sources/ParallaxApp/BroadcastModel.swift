@@ -106,14 +106,16 @@ final class BroadcastModel {
         }
     }
 
+    static let serverTokenAccount = "server-token"
+
     /// The token for a remote server (Settings › Server).
-    static var remoteServerToken: String {
+    static func remoteServerToken(in secrets: SecretStore) -> String {
         #if DEBUG
         // Lets a scratch profile (PARALLAX_PROFILE) talk to a server without
-        // touching the Keychain.
+        // saving a token.
         if let token = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_SERVER_TOKEN"] { return token }
         #endif
-        return Keychain.read("server-token") ?? ""
+        return secrets.read(serverTokenAccount) ?? ""
     }
 
     func refreshDestinations() async {
