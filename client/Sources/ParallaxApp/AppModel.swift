@@ -23,8 +23,10 @@ final class AppModel {
     let music: MusicModel
     /// parallax-server run by the app, when Settings › Server says "This Mac".
     let localServer: LocalServer
-    /// Platform settings for `localServer` (from the Keychain).
-    private(set) var localServerCredentials = LocalServerCredentials.load()
+    /// Server token and platform settings, kept next to the profile.
+    let secrets: SecretStore
+    /// Platform settings for `localServer` (from `secrets`).
+    private(set) var localServerCredentials: LocalServerCredentials
     var selectedItemID: UUID?
     var levels: [UUID: AudioLevel] = [:]
     var masterLevel = AudioLevel.silent
@@ -55,10 +57,18 @@ final class AppModel {
     init() {
         let firstRun = !FileManager.default.fileExists(atPath: store.url.path)
         profile = store.load()
+        let directory = store.url.deletingLastPathComponent()
+        secrets = SecretStore(url: directory.appending(path: "secrets.json"))
+        // A scratch profile (PARALLAX_PROFILE) starts empty instead of
+        // reading, and prompting for, what older builds kept in the Keychain.
+        if ProcessInfo.processInfo.environment["PARALLAX_PROFILE"] == nil {
+            secrets.importFromKeychain([BroadcastModel.serverTokenAccount, LocalServerCredentials.secretAccount])
+        }
+        localServerCredentials = LocalServerCredentials.load(from: secrets)
         // Next to the profile, so a scratch profile (PARALLAX_PROFILE) gets its own sign-ins.
-        localServer = LocalServer(directory: store.url.deletingLastPathComponent().appending(path: "Server"))
+        localServer = LocalServer(directory: directory.appending(path: "Server"))
         // Songs are shared by every profile, but a scratch profile gets its own library.
-        music = MusicModel(player: engine.music, directory: store.url.deletingLastPathComponent().appending(path: "Music"))
+        music = MusicModel(player: engine.music, directory: directory.appending(path: "Music"))
         engine.onLevels = { [weak self] levels in
             self?.levels = levels.inputs
             self?.masterLevel = levels.master
@@ -613,7 +623,7 @@ final class AppModel {
     }
 
     func saveLocalServerCredentials(_ credentials: LocalServerCredentials) {
-        credentials.save()
+        credentials.save(to: secrets)
         localServerCredentials = credentials
         connectBroadcast()
     }
@@ -632,7 +642,7 @@ final class AppModel {
             }
         case .remote:
             if let url = URL(string: settings.serverURL), url.scheme != nil {
-                connection = .server(url, token: BroadcastModel.remoteServerToken)
+                connection = .server(url, token: BroadcastModel.remoteServerToken(in: secrets))
             } else {
                 connection = settings.useMockServer ? .mock : .offline(reason: nil)
             }
