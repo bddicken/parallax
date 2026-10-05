@@ -112,6 +112,7 @@ public final class MediaEngine {
     private func applyMonitor(_ settings: MonitorSettings) {
         let previous = monitorSettings
         monitorSettings = settings
+        mixer.setMonitorMix(settings.customGains)
         if settings.output == previous.output, monitor != nil || settings.output == .off {
             monitor?.setVolume(settings.volume)
             return
@@ -123,7 +124,7 @@ public final class MediaEngine {
     /// system default output changes.
     public func restartMonitor() {
         if let monitor {
-            sinks.remove(monitor)
+            mixer.setMonitor(nil)
             monitor.stop()
         }
         monitor = nil
@@ -146,7 +147,7 @@ public final class MediaEngine {
         do {
             let m = try AudioMonitor(deviceID: deviceID, volume: monitorSettings.volume)
             monitor = m
-            sinks.add(m)
+            mixer.setMonitor(m)
         } catch {
             monitorError = error.localizedDescription
         }

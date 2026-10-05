@@ -472,6 +472,7 @@ final class AppModel {
     func removeAudioSource(_ id: UUID) {
         if profile.audioSources.first(where: { $0.id == id })?.kind == .music { music.stop() }
         profile.audioSources.removeAll { $0.id == id }
+        profile.monitor.levels[id] = nil
         sourceErrors[id] = nil
     }
 
