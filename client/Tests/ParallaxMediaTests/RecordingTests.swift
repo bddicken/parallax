@@ -101,6 +101,38 @@ import Testing
         #expect(inside.r > 200 && inside.g < 60)
     }
 
+    @Test func leavesSourcesOutOfTheRecording() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var profile = Profile.makeDefault()
+        profile.output = OutputSettings(width: 1280, height: 720, fps: 30)
+        let blue = VideoSource(name: "Blue", kind: .color(RGBAColor(red: 0, green: 0, blue: 1)))
+        let overlay = VideoSource(name: "Overlay", kind: .color(RGBAColor(red: 1, green: 0, blue: 0)), isInRecording: false)
+        profile.videoSources = [blue, overlay]
+        profile.scenes[0].items = [
+            SceneItem(sourceID: blue.id, contentMode: .stretch),
+            SceneItem(sourceID: overlay.id, frame: LayoutPreset.rightHalf.rect, contentMode: .stretch),
+        ]
+        profile.recording = RecordingSettings(directoryPath: dir.path)
+
+        let engine = MediaEngine()
+        engine.apply(profile)
+        engine.setProgram(profile.programSceneID, transition: TransitionSettings(kind: .cut))
+        try await Task.sleep(for: .milliseconds(200))
+        _ = try engine.startRecording(profile.recording)
+        try await Task.sleep(for: .seconds(1))
+        let url = try await engine.stopRecording().files[0]
+
+        // The overlay is gone from the recording, leaving what's under it.
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.requestedTimeToleranceBefore = .positiveInfinity
+        generator.requestedTimeToleranceAfter = .positiveInfinity
+        let frame = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let right = try pixel(frame, x: 0.75, y: 0.5)
+        #expect(right.b > 200 && right.r < 30)
+    }
+
     @Test func recordsAtAScaledDownResolution() async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -47,6 +47,27 @@ import Testing
         #expect(monitor.last == program.last)
     }
 
+    @Test func recordingLeavesOutInputsNotInTheRecording() {
+        let sinks = SinkHub()
+        let program = Capture(), recording = Capture()
+        sinks.add(program)
+        sinks.add(recording, feed: .recording)
+        let mixer = AudioMixer(sinks: sinks)
+        var music = music
+        music.isInRecording = false
+        mixer.configure([mic, music])
+
+        mix(mixer, mic: 0.1, music: 0.2, chunks: 5)
+        #expect(program.last.allSatisfy { abs($0 - 0.3) < 0.001 })
+        #expect(recording.last.allSatisfy { abs($0 - 0.1) < 0.001 })
+
+        // Back in the recording: the two match again.
+        music.isInRecording = true
+        mixer.configure([mic, music])
+        mix(mixer, mic: 0.1, music: 0.2, chunks: 5)
+        #expect(recording.last == program.last)
+    }
+
     @Test func customMixDropsTheMicFromTheMonitorOnly() {
         let (mixer, program, monitor) = makeMixer()
         mixer.setMonitorMix([mic.id: 0, music.id: 0.5])

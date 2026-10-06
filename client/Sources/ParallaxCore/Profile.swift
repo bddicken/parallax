@@ -84,12 +84,26 @@ public struct VideoSource: Identifiable, Codable, Hashable, Sendable {
     public var name: String
     public var kind: VideoSourceKind
     public var delayMs: Int
+    /// False keeps it out of the local recording (e.g. chat overlays); the
+    /// stream still shows it.
+    public var isInRecording: Bool
 
-    public init(id: UUID = UUID(), name: String, kind: VideoSourceKind, delayMs: Int = 0) {
+    public init(id: UUID = UUID(), name: String, kind: VideoSourceKind, delayMs: Int = 0, isInRecording: Bool = true) {
         self.id = id
         self.name = name
         self.kind = kind
         self.delayMs = delayMs
+        self.isInRecording = isInRecording
+    }
+
+    // Decodes profiles saved before newer fields existed.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        kind = try c.decode(VideoSourceKind.self, forKey: .kind)
+        delayMs = try c.decode(Int.self, forKey: .delayMs)
+        isInRecording = try c.decodeIfPresent(Bool.self, forKey: .isInRecording) ?? true
     }
 }
 
@@ -277,12 +291,15 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
     public var gate: NoiseGateSettings
     public var eq: EQSettings
     public var duck: DuckSettings
+    /// False keeps it out of the local recording (e.g. music); the stream
+    /// still has it.
+    public var isInRecording: Bool
 
     public init(
         id: UUID = UUID(), name: String, kind: AudioSourceKind, gainDB: Double = 0, isMuted: Bool = false,
         delayMs: Int = 0, channelMode: ChannelMode = .mono, firstChannel: Int = 0,
         highPassEnabled: Bool = false, gate: NoiseGateSettings = NoiseGateSettings(), eq: EQSettings = EQSettings(),
-        duck: DuckSettings = DuckSettings()
+        duck: DuckSettings = DuckSettings(), isInRecording: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -296,6 +313,7 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
         self.gate = gate
         self.eq = eq
         self.duck = duck
+        self.isInRecording = isInRecording
     }
 
     // Decodes profiles saved before newer fields existed.
@@ -313,6 +331,7 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
         gate = try c.decode(NoiseGateSettings.self, forKey: .gate)
         eq = try c.decodeIfPresent(EQSettings.self, forKey: .eq) ?? EQSettings()
         duck = try c.decodeIfPresent(DuckSettings.self, forKey: .duck) ?? DuckSettings()
+        isInRecording = try c.decodeIfPresent(Bool.self, forKey: .isInRecording) ?? true
     }
 }
 

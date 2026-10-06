@@ -65,6 +65,7 @@ private struct SourceRow: View {
                 SourceWarning(message: error, permission: source?.kind.permission)
             }
             Spacer()
+            if source?.isInRecording == false { StreamOnlyBadge() }
             Button {
                 model.updateItem(item.id, undo: "Toggle Visibility") { $0.isVisible.toggle() }
             } label: {
@@ -76,9 +77,23 @@ private struct SourceRow: View {
         .contextMenu {
             Button("Bring Forward") { model.moveItem(item.id, by: 1) }
             Button("Send Backward") { model.moveItem(item.id, by: -1) }
+            if let source {
+                Toggle("Include in Recording", isOn: Binding(get: { source.isInRecording },
+                                                            set: { v in model.updateVideoSource(source.id) { $0.isInRecording = v } }))
+            }
             Divider()
             Button("Remove", role: .destructive) { model.removeItem(item.id) }
         }
+    }
+}
+
+/// Marks a source that's on the stream but left out of the local recording.
+struct StreamOnlyBadge: View {
+    var body: some View {
+        Image(systemName: "antenna.radiowaves.left.and.right")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .help("Stream only: left out of the recording")
     }
 }
 

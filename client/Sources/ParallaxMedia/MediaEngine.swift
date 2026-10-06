@@ -100,7 +100,8 @@ public final class MediaEngine {
             node.start()
         }
 
-        compositor.update(scenes: profile.scenes, output: profile.output)
+        compositor.update(scenes: profile.scenes, output: profile.output,
+                          notRecorded: Set(profile.videoSources.filter { !$0.isInRecording }.map(\.id)))
         scenes = profile.scenes
         chatTextSize = profile.chatTextSize
         resizeChatFeed()
@@ -240,7 +241,7 @@ public final class MediaEngine {
             }
         }
         recorder = r
-        sinks.add(r)
+        sinks.add(r, feed: .recording)
         return r.url
     }
 
