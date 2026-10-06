@@ -77,6 +77,7 @@ struct ControlBar: View {
             }
             .controlSize(.large)
             .help(recordingSummary)
+            RecordingContentsButton()
 
             Button { showingGoLive = true } label: {
                 HStack(spacing: 6) {
@@ -103,7 +104,9 @@ struct ControlBar: View {
         case .high: "HEVC, high quality"
         case .custom: "\(r.codec == .hevc ? "HEVC" : "H.264") \(r.videoBitrateKbps / 1000) Mbps"
         }
-        return "Records \(size.width)×\(size.height) \(model.profile.output.fps) fps, \(quality) (⇧⌘R)"
+        let summary = "Records \(size.width)×\(size.height) \(model.profile.output.fps) fps, \(quality) (⇧⌘R)"
+        let left = model.recordingLeavesOut
+        return left.isEmpty ? summary : summary + "\nLeaves out: " + left.joined(separator: ", ")
     }
 
     private func transitionBinding<T>(_ path: WritableKeyPath<TransitionSettings, T>) -> Binding<T> {

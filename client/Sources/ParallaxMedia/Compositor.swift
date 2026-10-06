@@ -7,7 +7,9 @@ import Metal
 import ParallaxCore
 
 /// Renders the program scene at the output frame rate and hands each frame to
-/// the sinks (preview, recorder, uplink).
+/// the sinks (preview, recorder, uplink). The recorder gets a second render
+/// without the sources left out of the recording, but only while one of them
+/// is on screen; otherwise it shares the program frame.
 final class Compositor: @unchecked Sendable {
     private struct Transition {
         var from: UUID?
@@ -27,6 +29,8 @@ final class Compositor: @unchecked Sendable {
     private var program: UUID?
     private var transition: Transition?
     private var output = OutputSettings()
+    /// Sources drawn in the program but not the recording.
+    private var notRecorded: Set<UUID> = []
 
     // Only touched on `queue`.
     private var timer: DispatchSourceTimer?
@@ -52,10 +56,11 @@ final class Compositor: @unchecked Sendable {
 
     var outputSettings: OutputSettings { lock.withLock { output } }
 
-    func update(scenes: [StudioScene], output: OutputSettings) {
+    func update(scenes: [StudioScene], output: OutputSettings, notRecorded: Set<UUID> = []) {
         lock.withLock {
             self.scenes = Dictionary(uniqueKeysWithValues: scenes.map { ($0.id, $0) })
             self.output = output
+            self.notRecorded = notRecorded
         }
         queue.async { [self] in
             if timer != nil, timerFPS != output.fps { startTimer() }
@@ -98,32 +103,53 @@ final class Compositor: @unchecked Sendable {
 
     private func renderFrame() {
         let now = hostNow()
-        let (scenes, program, transition, output) = lock.withLock { () -> ([UUID: StudioScene], UUID?, Transition?, OutputSettings) in
+        let (scenes, program, transition, output, notRecorded) = lock.withLock {
+            () -> ([UUID: StudioScene], UUID?, Transition?, OutputSettings, Set<UUID>) in
             if let t = self.transition, now - t.start >= t.duration { self.transition = nil }
-            return (self.scenes, self.program, self.transition, self.output)
+            return (self.scenes, self.program, self.transition, self.output, self.notRecorded)
         }
         let canvas = CGRect(x: 0, y: 0, width: output.width, height: output.height)
-
-        var image = render(scenes[program ?? UUID()], time: now, canvas: canvas)
-        if let t = transition {
-            let from = render(t.from.flatMap { scenes[$0] }, time: now, canvas: canvas)
-            let dissolve = CIFilter.dissolveTransition()
-            dissolve.inputImage = from
-            dissolve.targetImage = image
-            dissolve.time = Float(min(1, max(0, (now - t.start) / t.duration)))
-            image = dissolve.outputImage ?? image
+        let pts = CMTime(hostSeconds: now)
+        let (programSinks, recordingSinks) = sinks.byFeed
+        let showing = [program, transition?.from].compactMap { $0.flatMap { scenes[$0] } }
+        let recordingDiffers = !recordingSinks.isEmpty && showing.contains { scene in
+            scene.items.contains { $0.isVisible && notRecorded.contains($0.sourceID) }
         }
 
+        let image = composite(scenes, program: program, transition: transition, time: now, canvas: canvas, leavingOut: [])
         guard let buffer = makeBuffer(width: output.width, height: output.height) else { return }
         context.render(image, to: buffer, bounds: canvas, colorSpace: colorSpace)
-        let pts = CMTime(hostSeconds: now)
-        for sink in sinks.all { sink.appendVideo(buffer, pts: pts) }
+        for sink in programSinks { sink.appendVideo(buffer, pts: pts) }
+
+        var recordingBuffer = buffer
+        if recordingDiffers {
+            let image = composite(scenes, program: program, transition: transition, time: now, canvas: canvas,
+                                  leavingOut: notRecorded)
+            guard let buffer = makeBuffer(width: output.width, height: output.height) else { return }
+            context.render(image, to: buffer, bounds: canvas, colorSpace: colorSpace)
+            recordingBuffer = buffer
+        }
+        for sink in recordingSinks { sink.appendVideo(recordingBuffer, pts: pts) }
     }
 
-    private func render(_ scene: StudioScene?, time: Double, canvas: CGRect) -> CIImage {
+    /// The program scene, mid-fade if a transition is running, without the
+    /// sources in `leavingOut`.
+    private func composite(_ scenes: [UUID: StudioScene], program: UUID?, transition: Transition?, time: Double,
+                           canvas: CGRect, leavingOut: Set<UUID>) -> CIImage {
+        let image = render(scenes[program ?? UUID()], time: time, canvas: canvas, leavingOut: leavingOut)
+        guard let t = transition else { return image }
+        let from = render(t.from.flatMap { scenes[$0] }, time: time, canvas: canvas, leavingOut: leavingOut)
+        let dissolve = CIFilter.dissolveTransition()
+        dissolve.inputImage = from
+        dissolve.targetImage = image
+        dissolve.time = Float(min(1, max(0, (time - t.start) / t.duration)))
+        return dissolve.outputImage ?? image
+    }
+
+    private func render(_ scene: StudioScene?, time: Double, canvas: CGRect, leavingOut: Set<UUID>) -> CIImage {
         var result = CIImage(color: .black).cropped(to: canvas)
         guard let scene else { return result }
-        for item in scene.items where item.isVisible {
+        for item in scene.items where item.isVisible && !leavingOut.contains(item.sourceID) {
             guard let source = registry[item.sourceID]?.image(at: time) else { continue }
             let extent = source.extent
             let frame = item.frame.denormalized(in: canvas.size)

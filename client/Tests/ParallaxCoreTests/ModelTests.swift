@@ -81,6 +81,20 @@ import Testing
         #expect(decoded.gainDB == 3)
     }
 
+    @Test func sourcesFromOlderBuildsAreRecorded() throws {
+        let video = VideoSource(name: "Chat", kind: .chatFeed, isInRecording: false)
+        let audio = AudioSource(name: "Music", kind: .music, isInRecording: false)
+        #expect(try JSONDecoder().decode(VideoSource.self, from: JSONEncoder().encode(video)) == video)
+        #expect(try JSONDecoder().decode(AudioSource.self, from: JSONEncoder().encode(audio)) == audio)
+
+        var videoJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(video)) as! [String: Any]
+        var audioJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(audio)) as! [String: Any]
+        videoJSON["isInRecording"] = nil
+        audioJSON["isInRecording"] = nil
+        #expect(try JSONDecoder().decode(VideoSource.self, from: JSONSerialization.data(withJSONObject: videoJSON)).isInRecording)
+        #expect(try JSONDecoder().decode(AudioSource.self, from: JSONSerialization.data(withJSONObject: audioJSON)).isInRecording)
+    }
+
     @Test func monitorSettingsRoundTrip() throws {
         var profile = Profile.makeDefault()
         profile.monitor = MonitorSettings(output: .device(uid: "BuiltInSpeakerDevice"), volume: 0.25)

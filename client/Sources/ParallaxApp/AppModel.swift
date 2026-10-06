@@ -501,8 +501,11 @@ final class AppModel {
     func ensureMusicSource() {
         guard musicSource == nil else { return }
         let (kind, name): (AudioSourceKind, String) = profile.musicMode == .library ? (.music, "Music") : (.webPlayer, "Suno Player")
+        // Music kept out of recordings in one mode stays out in the other.
+        let otherMusic = profile.audioSources.first { $0.kind == .music || $0.kind == .webPlayer }
         profile.audioSources.append(AudioSource(name: name, kind: kind, gainDB: Self.defaultMusicGainDB,
-                                                channelMode: .stereo, duck: DuckSettings(isEnabled: true)))
+                                                channelMode: .stereo, duck: DuckSettings(isEnabled: true),
+                                                isInRecording: otherMusic?.isInRecording ?? true))
     }
 
     /// Switches between the music library and Suno's own web player.
@@ -585,6 +588,12 @@ final class AppModel {
     // MARK: Recording
 
     var isRecording: Bool { recordingStartedAt != nil }
+
+    /// Names of the sources the stream has but the recording leaves out.
+    var recordingLeavesOut: [String] {
+        profile.videoSources.filter { !$0.isInRecording }.map(\.name)
+            + profile.activeAudioSources.filter { !$0.isInRecording }.map(\.name)
+    }
 
     func toggleRecording() {
         if isRecording {

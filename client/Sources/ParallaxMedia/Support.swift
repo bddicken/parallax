@@ -26,14 +26,30 @@ public protocol MediaSink: AnyObject, Sendable {
     func appendAudio(_ samples: UnsafeBufferPointer<Float>, frameCount: Int, pts: CMTime)
 }
 
+/// Which version of the output a sink gets.
+enum OutputFeed: Sendable {
+    /// Everything: the preview and the stream.
+    case program
+    /// The program minus sources left out of the recording (music, chat
+    /// overlays, …).
+    case recording
+}
+
 /// Thread-safe list of sinks that the compositor and mixer fan out to.
 final class SinkHub: @unchecked Sendable {
     private let lock = NSLock()
-    private var sinks: [ObjectIdentifier: MediaSink] = [:]
+    private var sinks: [ObjectIdentifier: (sink: MediaSink, feed: OutputFeed)] = [:]
 
-    func add(_ sink: MediaSink) { lock.withLock { sinks[ObjectIdentifier(sink)] = sink } }
+    func add(_ sink: MediaSink, feed: OutputFeed = .program) { lock.withLock { sinks[ObjectIdentifier(sink)] = (sink, feed) } }
     func remove(_ sink: MediaSink) { lock.withLock { _ = sinks.removeValue(forKey: ObjectIdentifier(sink)) } }
-    var all: [MediaSink] { lock.withLock { Array(sinks.values) } }
+
+    /// The sinks on each feed.
+    var byFeed: (program: [MediaSink], recording: [MediaSink]) {
+        lock.withLock {
+            let values = sinks.values
+            return (values.filter { $0.feed == .program }.map(\.sink), values.filter { $0.feed == .recording }.map(\.sink))
+        }
+    }
 }
 
 public struct MediaError: LocalizedError, Sendable {

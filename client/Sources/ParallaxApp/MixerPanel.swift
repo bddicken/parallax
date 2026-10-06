@@ -72,6 +72,7 @@ private struct ChannelStrip: View {
                     SourceWarning(message: error, permission: source.kind.permission)
                 }
                 Spacer()
+                if !source.isInRecording { StreamOnlyBadge() }
                 Button { showingEQ.toggle() } label: {
                     Text("EQ").font(.caption.weight(.semibold))
                         .foregroundStyle(source.eq.isEnabled && !source.eq.isFlat ? Color.accentColor : .secondary)
@@ -124,6 +125,7 @@ private struct ChannelStrip: View {
         .contextMenu {
             Button("Reset Gain") { model.updateAudioSource(source.id) { $0.gainDB = 0 } }
             Button("Reset Delay") { model.updateAudioSource(source.id) { $0.delayMs = 0 } }
+            Toggle("Include in Recording", isOn: binding(\.isInRecording))
             Button("Remove", role: .destructive) { model.removeAudioSource(source.id) }
         }
     }
@@ -153,6 +155,13 @@ private struct ChannelOptions: View {
                 }
             } else {
                 Section("Ducking") { DuckingControls(source: source) }
+            }
+            Section {
+                Toggle("Include in recording", isOn: binding(\.isInRecording))
+            } header: {
+                Text("Recording")
+            } footer: {
+                Text("Turn off to keep this input out of your local recording. The stream still has it.")
             }
             Section("Processing") {
                 Toggle("High-pass filter (80 Hz)", isOn: binding(\.highPassEnabled))
