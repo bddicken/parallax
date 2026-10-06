@@ -97,7 +97,13 @@ struct ControlBar: View {
 
     private var recordingSummary: String {
         let r = model.profile.recording, size = r.resolution.size(for: model.profile.output)
-        return "Records \(size.width)×\(size.height) \(model.profile.output.fps) fps, \(r.codec == .hevc ? "HEVC" : "H.264") \(r.videoBitrateKbps / 1000) Mbps (⇧⌘R)"
+        let quality = switch r.quality {
+        case .small: "HEVC, smaller files"
+        case .balanced: "HEVC, balanced quality"
+        case .high: "HEVC, high quality"
+        case .custom: "\(r.codec == .hevc ? "HEVC" : "H.264") \(r.videoBitrateKbps / 1000) Mbps"
+        }
+        return "Records \(size.width)×\(size.height) \(model.profile.output.fps) fps, \(quality) (⇧⌘R)"
     }
 
     private func transitionBinding<T>(_ path: WritableKeyPath<TransitionSettings, T>) -> Binding<T> {

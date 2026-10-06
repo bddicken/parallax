@@ -92,18 +92,26 @@ private struct RecordingSettingsView: View {
         Form {
             Section {
                 ResolutionPicker(canvas: model.profile.output, selection: $model.profile.recording.resolution)
-                Picker("Codec", selection: $model.profile.recording.codec) {
-                    Text("H.264").tag(VideoCodec.h264)
-                    Text("HEVC (smaller files, recommended for 4K)").tag(VideoCodec.hevc)
+                Picker("Quality", selection: $model.profile.recording.quality) {
+                    Text("Smaller files").tag(RecordingQuality.small)
+                    Text("Balanced (recommended)").tag(RecordingQuality.balanced)
+                    Text("High (for editing)").tag(RecordingQuality.high)
+                    Text("Custom bitrate").tag(RecordingQuality.custom)
                 }
-                LabeledContent("Video bitrate") {
-                    HStack {
-                        Stepper("\(rec.videoBitrateKbps / 1000) Mbps",
-                                value: $model.profile.recording.videoBitrateKbps, in: 2_000...150_000, step: 2_000)
-                        Button("Use recommended (\(recommended / 1000) Mbps)") {
-                            model.profile.recording.videoBitrateKbps = recommended
+                if rec.quality == .custom {
+                    Picker("Codec", selection: $model.profile.recording.codec) {
+                        Text("H.264").tag(VideoCodec.h264)
+                        Text("HEVC (smaller files, recommended for 4K)").tag(VideoCodec.hevc)
+                    }
+                    LabeledContent("Video bitrate") {
+                        HStack {
+                            Stepper("\(rec.videoBitrateKbps / 1000) Mbps",
+                                    value: $model.profile.recording.videoBitrateKbps, in: 2_000...150_000, step: 2_000)
+                            Button("Use recommended (\(recommended / 1000) Mbps)") {
+                                model.profile.recording.videoBitrateKbps = recommended
+                            }
+                            .disabled(rec.videoBitrateKbps == recommended)
                         }
-                        .disabled(rec.videoBitrateKbps == recommended)
                     }
                 }
                 Picker("Audio bitrate", selection: $model.profile.recording.audioBitrateKbps) {
@@ -130,8 +138,14 @@ private struct RecordingSettingsView: View {
     }
 
     private func summary(size: (width: Int, height: Int), rec: RecordingSettings) -> String {
-        let gb = Bitrates.gigabytesPerHour(videoKbps: rec.videoBitrateKbps, audioKbps: rec.audioBitrateKbps)
-        return "Records \(size.width) × \(size.height) at \(model.profile.output.fps) fps, \(rec.codec == .hevc ? "HEVC" : "H.264") \(rec.videoBitrateKbps / 1000) Mbps: about \(String(format: "%.0f", gb)) GB per hour."
+        let fps = model.profile.output.fps
+        let head = "Records \(size.width) × \(size.height) at \(fps) fps"
+        guard let estimate = rec.quality.gigabytesPerHour(width: size.width, height: size.height, fps: fps,
+                                                           audioKbps: rec.audioBitrateKbps) else {
+            let gb = Bitrates.gigabytesPerHour(videoKbps: rec.videoBitrateKbps, audioKbps: rec.audioBitrateKbps)
+            return "\(head), \(rec.codec == .hevc ? "HEVC" : "H.264") \(rec.videoBitrateKbps / 1000) Mbps: about \(String(format: "%.0f", gb)) GB per hour."
+        }
+        return "\(head), HEVC at constant quality on the Mac's hardware encoder. Bits go where the picture changes, so the size depends on what you show: about \(String(format: "%.0f–%.0f", estimate.lowerBound, estimate.upperBound)) GB per hour for a screen and camera, more for full-screen video or games."
     }
 
     private func chooseFolder() {

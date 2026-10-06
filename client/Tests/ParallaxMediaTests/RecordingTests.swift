@@ -133,8 +133,8 @@ import Testing
         #expect(left.r > 200 && right.r < 30)
     }
 
-    @Test(arguments: [VideoCodec.h264, .hevc])
-    func records4KCanvas(codec: VideoCodec) async throws {
+    @Test(arguments: [(RecordingQuality.custom, VideoCodec.h264), (.custom, .hevc), (.balanced, .h264)])
+    func records4KCanvas(quality: RecordingQuality, codec: VideoCodec) async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -144,6 +144,7 @@ import Testing
         profile.videoSources = [red]
         profile.scenes[0].items = [SceneItem(sourceID: red.id, frame: LayoutPreset.pipTopRight.rect, contentMode: .stretch)]
         profile.recording = RecordingSettings(directoryPath: dir.path)
+        profile.recording.quality = quality
         profile.recording.codec = codec
         profile.recording.videoBitrateKbps = Bitrates.recording(height: 2160, fps: 30, codec: codec)
 
@@ -161,6 +162,10 @@ import Testing
         #expect(try await asset.load(.duration).seconds > 1.5)
         let fps = try await video.load(.nominalFrameRate)
         #expect(fps > 25, "4K compositing/encoding kept up at \(fps) fps")
+        // The quality modes always use HEVC; custom uses the chosen codec.
+        let format = try #require(try await video.load(.formatDescriptions).first)
+        let expected = profile.recording.effectiveCodec == .hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264
+        #expect(CMFormatDescriptionGetMediaSubType(format) == expected)
     }
 
     private func pixel(_ image: CGImage, x: Double, y: Double) throws -> (r: Int, g: Int, b: Int) {
