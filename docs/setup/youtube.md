@@ -43,13 +43,15 @@ YOUTUBE_CLIENT_SECRET=your-client-secret
 
 ## 7. Go live
 
-Click **Go Live**, check **YouTube**, enter a title, pick Public, Unlisted, or Private, and click **Start Broadcast**. Each Go Live creates a new YouTube broadcast; the stream key named **Parallax** in YouTube Studio is reused, so leave it there.
+Click **Go Live**, check **YouTube**, enter a title, pick Public, Unlisted, or Private, optionally choose a **Thumbnail** image, and click **Start Broadcast**. Each Go Live creates a new YouTube broadcast; the stream key named **Parallax** in YouTube Studio is reused, so leave it there.
+
+Parallax scales the thumbnail to fit 1280 × 720 and uploads it once the broadcast is created. Choosing a different one while live replaces it. Custom thumbnails need a verified channel ([youtube.com/verify](https://www.youtube.com/verify)); if the upload fails, you stay live and the Go Live window says why.
 
 Chat shows in the chat panel while you're live on YouTube, and your replies post as your channel.
 
 ## Quota
 
-Google allows 10,000 API units a day per project. Going live costs about 150, each chat message you send 50, and each chat read 1.
+Google allows 10,000 API units a day per project. Going live costs about 150, a thumbnail 50, each chat message you send 50, and each chat read 1.
 
 ## Troubleshooting
 

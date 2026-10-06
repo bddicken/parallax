@@ -3,8 +3,8 @@
 //! polled if streaming isn't available; sent with `liveChatMessages.insert`).
 //!
 //! Quota: every project gets 10,000 units a day. Going live costs about 200
-//! (create + bind + end the broadcast), each chat message sent 50, and each
-//! chat read 1.
+//! (create + bind + end the broadcast), a thumbnail 50, each chat message
+//! sent 50, and each chat read 1.
 
 use std::{
     collections::{HashSet, VecDeque},
@@ -32,6 +32,7 @@ use crate::{
 
 const SCOPE: &str = "https://www.googleapis.com/auth/youtube";
 const API: &str = "https://www.googleapis.com/youtube/v3";
+const UPLOAD_API: &str = "https://www.googleapis.com/upload/youtube/v3";
 
 type GoogleClient = BasicClient<EndpointNotSet, EndpointSet, EndpointNotSet, EndpointNotSet, EndpointSet>;
 
@@ -327,6 +328,32 @@ impl YouTube {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    /// Sets the current broadcast's thumbnail. `image` is a JPEG or PNG of at
+    /// most 2 MB. Custom thumbnails need a verified channel.
+    pub async fn set_thumbnail(&self, image: Vec<u8>, content_type: &str) -> Result<()> {
+        let Some(broadcast) = self.store.get().youtube_broadcast else {
+            bail!("There's no YouTube broadcast to add a thumbnail to. Go live on YouTube first.");
+        };
+        let token = self.access_token().await?;
+        let response = self
+            .http
+            .post(format!("{UPLOAD_API}/thumbnails/set"))
+            .bearer_auth(token)
+            .query(&[("videoId", broadcast.id.as_str()), ("uploadType", "media")])
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(image)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await?;
+            return Err(anyhow::Error::from(ApiErrorBody::parse_with_status(status, &text))
+                .context("Couldn't set the YouTube thumbnail"));
+        }
+        tracing::info!("set the thumbnail on YouTube broadcast {}", broadcast.id);
         Ok(())
     }
 

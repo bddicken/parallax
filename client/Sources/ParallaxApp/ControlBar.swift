@@ -201,7 +201,7 @@ struct GoLiveSheet: View {
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
 
             if youTubeSelected {
-                YouTubeOptions().disabled(broadcast.status.live)
+                YouTubeOptions()
             }
 
             if let error = broadcast.connectionError {
@@ -228,18 +228,20 @@ struct GoLiveSheet: View {
 }
 
 /// YouTube makes a new video for each broadcast, so it needs a title and
-/// visibility. Remembered for next time.
+/// visibility, and can take a thumbnail. Remembered for next time.
 private struct YouTubeOptions: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
+        let live = model.broadcast.status.live
         Grid(alignment: .leading, verticalSpacing: 8) {
             GridRow {
                 Text("Title")
                 TextField("Title", text: $model.profile.broadcast.title, prompt: Text("What's this stream about?"))
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
+                    .disabled(live)
             }
             GridRow {
                 Text("YouTube")
@@ -249,9 +251,79 @@ private struct YouTubeOptions: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
+                .disabled(live)
+            }
+            GridRow {
+                Text("Thumbnail")
+                ThumbnailPicker()
+            }
+            if let problem = model.broadcast.thumbnailProblem {
+                GridRow {
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .font(.callout)
+    }
+}
+
+/// Picks the image file for the YouTube thumbnail. It's uploaded when you go
+/// live, or right away if you change it while live.
+private struct ThumbnailPicker: View {
+    @Environment(AppModel.self) private var model
+    @State private var preview: NSImage?
+
+    var body: some View {
+        let path = model.profile.broadcast.thumbnailPath
+        HStack(spacing: 8) {
+            if let path {
+                Group {
+                    if let preview {
+                        Image(nsImage: preview).resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            .help("Can't open \(path)")
+                    }
+                }
+                .frame(width: 64, height: 36)
+                .background(.quaternary)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                Text(URL(filePath: path).lastPathComponent)
+                    .lineLimit(1).truncationMode(.middle)
+                    .help(path)
+                Button("Change…", action: choose)
+                Button {
+                    model.profile.broadcast.thumbnailPath = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .help("Don't use a thumbnail")
+            } else {
+                Button("Choose…", action: choose)
+                Text("JPEG or PNG, ideally 1280 × 720").foregroundStyle(.secondary)
+            }
+            if model.broadcast.isUploadingThumbnail {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .task(id: path) { preview = path.flatMap(NSImage.init(contentsOfFile:)) }
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.jpeg, .png, .image]
+        if let path = model.profile.broadcast.thumbnailPath {
+            panel.directoryURL = URL(filePath: path).deletingLastPathComponent()
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.profile.broadcast.thumbnailPath = url.path
+        if model.broadcast.isLive(on: .youtube) {
+            Task { await model.broadcast.setThumbnail(contentsOf: url) }
+        }
     }
 }
 

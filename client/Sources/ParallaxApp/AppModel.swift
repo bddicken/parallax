@@ -660,8 +660,13 @@ final class AppModel {
         let request = StartBroadcastRequest(destinationIDs: destinationIDs,
                                             title: settings.title.trimmingCharacters(in: .whitespaces),
                                             privacy: settings.privacy.rawValue)
-        if await !broadcast.start(request) {
+        broadcast.thumbnailProblem = nil
+        guard await broadcast.start(request) else {
             stopUplink()
+            return
+        }
+        if let path = settings.thumbnailPath, broadcast.includes(.youtube, in: destinationIDs) {
+            await broadcast.setThumbnail(contentsOf: URL(filePath: path))
         }
     }
 
