@@ -26,7 +26,7 @@ What works now:
 
 Sources survive restarts and replugging. Displays are remembered by hardware UUID, cameras and mics by device ID with name and model as a fallback, and windows by app and title. A missing device shows a ⚠︎ "waiting…" on its source and reconnects by itself when it's back.
 
-Settings are saved to `~/Library/Application Support/Parallax/profile.json`, and the server token and platform keys to `secrets.json` beside it (readable only by you). Set `PARALLAX_PROFILE=/some/path.json` to try things without touching either.
+Settings are saved to `~/Library/Application Support/Parallax/profile.json`, and the server token and platform keys to `secrets.json` beside it (readable only by you). Set `PARALLAX_PROFILE=/some/path.json` to try things without touching either. Your music library (`Music/` beside the profile) is always the real one, shared by every running copy of Parallax.
 
 ## Permissions and signing
 
