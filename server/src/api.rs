@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{
-        Path, Request, State,
+        DefaultBodyLimit, Path, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode, header},
@@ -41,6 +42,9 @@ pub struct AppState {
 
 type AppResult<T> = Result<T, ApiError>;
 
+/// YouTube's limit for a thumbnail.
+const THUMBNAIL_LIMIT: usize = 2 * 1024 * 1024;
+
 pub fn router(state: Arc<AppState>) -> Router {
     let v1 = Router::new()
         .route("/status", get(status))
@@ -48,6 +52,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/destinations", get(destinations).put(put_destinations))
         .route("/broadcast/start", post(start))
         .route("/broadcast/stop", post(stop))
+        .route("/broadcast/thumbnail", post(set_thumbnail).layer(DefaultBodyLimit::max(THUMBNAIL_LIMIT)))
         .route("/chat/send", post(send_chat))
         .route("/accounts", get(accounts))
         .route("/accounts/{platform}/connect", post(connect_account))
@@ -212,6 +217,21 @@ async fn stop(State(state): State<Arc<AppState>>) -> StatusCode {
         youtube.end_broadcast().await;
     }
     StatusCode::NO_CONTENT
+}
+
+/// Sets the current broadcast's thumbnail where the platform supports one
+/// (YouTube). The body is the JPEG or PNG itself.
+async fn set_thumbnail(State(state): State<Arc<AppState>>, image: Bytes) -> AppResult<StatusCode> {
+    let content_type = match image.as_ref() {
+        [0xFF, 0xD8, 0xFF, ..] => "image/jpeg",
+        [0x89, b'P', b'N', b'G', ..] => "image/png",
+        _ => return Err(ApiError::bad_request("A thumbnail must be a JPEG or PNG.")),
+    };
+    let Some(youtube) = &state.youtube else {
+        return Err(ApiError::bad_request("YouTube isn't set up on the server."));
+    };
+    youtube.set_thumbnail(image.to_vec(), content_type).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn send_chat(State(state): State<Arc<AppState>>, Json(req): Json<SendChatRequest>) -> AppResult<StatusCode> {

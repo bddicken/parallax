@@ -551,6 +551,8 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
     /// Title for the next broadcast, where the platform asks for one (YouTube).
     public var title = ""
     public var privacy = BroadcastPrivacy.unlisted
+    /// Image file to use as the thumbnail, where the platform takes one (YouTube).
+    public var thumbnailPath: String?
     /// Destinations checked last time. Nil until you pick, which means each
     /// destination's own default.
     public var destinationIDs: [String]?
@@ -568,6 +570,7 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
         stream = try c.decodeIfPresent(StreamSettings.self, forKey: .stream) ?? StreamSettings()
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
         privacy = try c.decodeIfPresent(BroadcastPrivacy.self, forKey: .privacy) ?? .unlisted
+        thumbnailPath = try c.decodeIfPresent(String.self, forKey: .thumbnailPath)
         destinationIDs = try c.decodeIfPresent([String].self, forKey: .destinationIDs)
     }
 }
