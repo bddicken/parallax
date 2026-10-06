@@ -88,6 +88,19 @@ import Testing
         #expect(decoded.monitor == profile.monitor)
     }
 
+    @Test func customMonitorMixRoundTripsAndOlderSettingsHearTheProgram() throws {
+        let mic = UUID()
+        let custom = MonitorSettings(output: .systemDefault, volume: 0.5, mix: .custom, levels: [mic: 0])
+        #expect(try JSONDecoder().decode(MonitorSettings.self, from: JSONEncoder().encode(custom)) == custom)
+        #expect(custom.customGains == [mic: 0])
+        #expect(custom.level(for: UUID()) == 1)
+
+        let old = try JSONDecoder().decode(MonitorSettings.self, from: Data(#"{"output":{"systemDefault":{}},"volume":0.5}"#.utf8))
+        #expect(old.mix == .program)
+        #expect(old.customGains == nil)
+        #expect(old.volume == 0.5)
+    }
+
     @Test func corruptFileFallsBackToDefaultAndIsKept() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: dir) }

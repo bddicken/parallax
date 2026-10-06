@@ -581,13 +581,42 @@ public struct MonitorSettings: Codable, Hashable, Sendable {
         case device(uid: String)
     }
 
+    /// What you hear: exactly what goes out, or your own balance of the inputs.
+    public enum Mix: String, Codable, Hashable, Sendable {
+        case program
+        case custom
+    }
+
     public var output: Output = .off
     /// 0...1
     public var volume: Double = 0.8
+    public var mix: Mix = .program
+    /// Per-input level for the custom mix, 0...1 on top of the input's stream
+    /// level. Inputs without an entry play at 1. Kept while hearing the program
+    /// so switching back restores your balance.
+    public var levels: [UUID: Double] = [:]
 
-    public init(output: Output = .off, volume: Double = 0.8) {
+    public init(output: Output = .off, volume: Double = 0.8, mix: Mix = .program, levels: [UUID: Double] = [:]) {
         self.output = output
         self.volume = volume
+        self.mix = mix
+        self.levels = levels
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = MonitorSettings()
+        output = try c.decodeIfPresent(Output.self, forKey: .output) ?? d.output
+        volume = try c.decodeIfPresent(Double.self, forKey: .volume) ?? d.volume
+        mix = try c.decodeIfPresent(Mix.self, forKey: .mix) ?? d.mix
+        levels = try c.decodeIfPresent([UUID: Double].self, forKey: .levels) ?? d.levels
+    }
+
+    public func level(for id: UUID) -> Double { levels[id] ?? 1 }
+
+    /// Per-input gains for the monitor, or nil when it plays the program mix.
+    public var customGains: [UUID: Float]? {
+        mix == .custom ? levels.mapValues { Float(min(1, max(0, $0))) } : nil
     }
 }
 

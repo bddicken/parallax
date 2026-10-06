@@ -15,7 +15,7 @@ Multistreaming from the Mac means uploading the full stream once per platform: 3
 
 - **Bandwidth**: the Mac uploads once, and the data center handles the fan-out.
 - **Resilience**: per-destination reconnects happen server-side, next to the platforms.
-- **Secrets**: platform OAuth tokens and stream keys live on the server. The client holds one bearer token (in the Keychain).
+- **Secrets**: platform OAuth tokens and stream keys live on the server. The client holds one bearer token (in an owner-only `secrets.json` next to the profile; not the Keychain, which re-prompts after every rebuild of a build without a team ID).
 - **Recording stays local** and uses its own encoder at higher bitrate, so uplink trouble never affects the recording.
 
 Costs: roughly 0.5–1 s of extra latency from the extra hop, plus a small VM. Prefer a host with generous included egress (DigitalOcean, Hetzner) over AWS, where egress is billed per GB.

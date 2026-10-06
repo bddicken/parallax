@@ -335,7 +335,7 @@ private struct LocalServerPlatformsSection: View {
                     Link("YouTube", destination: Self.guide("youtube"))
                     Link("X", destination: Self.guide("x"))
                 }
-                Text("Kept in your Keychain. Fill in only the platforms you use.")
+                Text("Kept on this Mac, readable only by you. Fill in only the platforms you use.")
             }
             .foregroundStyle(.secondary)
         }
@@ -375,20 +375,20 @@ private struct RemoteServerSection: View {
             TextField("Server URL", text: $url, prompt: Text("https://relay.example.com"))
             SecureField("Token", text: $token)
         } footer: {
-            Text("Leave the URL empty to stay offline (turn on Mock in the chat panel to try things with fake chat). The token is stored in your Keychain.")
+            Text("Leave the URL empty to stay offline (turn on Mock in the chat panel to try things with fake chat). The token is kept on this Mac, readable only by you.")
                 .foregroundStyle(.secondary)
         }
         HStack {
             Spacer()
             Button("Save & Reconnect") {
-                Keychain.write(token.trimmingCharacters(in: .whitespacesAndNewlines), for: "server-token")
+                model.secrets.write(token.trimmingCharacters(in: .whitespacesAndNewlines), for: BroadcastModel.serverTokenAccount)
                 model.profile.broadcast.serverURL = url.trimmingCharacters(in: .whitespaces)
                 model.connectBroadcast(force: true)
             }
         }
         .onAppear {
             url = model.profile.broadcast.serverURL
-            token = Keychain.read("server-token") ?? ""
+            token = model.secrets.read(BroadcastModel.serverTokenAccount) ?? ""
         }
     }
 }
