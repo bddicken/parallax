@@ -410,9 +410,58 @@ public enum RecordingContainer: String, Codable, CaseIterable, Sendable {
     case mov, mp4
 }
 
+/// How a recording trades file size for picture quality.
+public enum RecordingQuality: String, Codable, CaseIterable, Sendable {
+    /// Constant quality (HEVC): the encoder spends bits only where the
+    /// picture changes, so a mostly still screen + camera is far smaller than
+    /// at a fixed bitrate, and busy scenes still look good.
+    case small, balanced, high
+    /// A fixed average bitrate and codec, chosen by hand.
+    case custom
+
+    /// VideoToolbox quality (0–1) for the constant-quality modes.
+    public var encoderQuality: Double? {
+        switch self {
+        case .small: QualityTuning.small
+        case .balanced: QualityTuning.balanced
+        case .high: QualityTuning.high
+        case .custom: nil
+        }
+    }
+
+    /// Rough video + audio size in GB per hour for the constant-quality
+    /// modes, for a screen and camera. Busier pictures (full-screen video,
+    /// games) take more.
+    public func gigabytesPerHour(width: Int, height: Int, fps: Int, audioKbps: Int) -> ClosedRange<Double>? {
+        let typical: ClosedRange<Double>
+        switch self {
+        case .small: typical = QualityTuning.smallTypical4K
+        case .balanced: typical = QualityTuning.balancedTypical4K
+        case .high: typical = QualityTuning.highTypical4K
+        case .custom: return nil
+        }
+        // Bits needed relative to 4K30. Grows slower than the pixel count,
+        // since larger frames compress better.
+        let scale = (Double(width * height) / (3840 * 2160)).squareRoot() * (fps > 30 ? 1.5 : 1)
+        let audio = Bitrates.gigabytesPerHour(videoKbps: 0, audioKbps: audioKbps)
+        return (typical.lowerBound * scale + audio)...(typical.upperBound * scale + audio)
+    }
+}
+
+/// Measured by re-encoding 4K30 screen + camera streams recorded with
+/// Parallax. Balanced matches H.264 at 16 Mbps (VMAF) at about a quarter of
+/// the size. There's no bitrate cap: VideoToolbox's DataRateLimits steers
+/// its quality mode rather than only clipping peaks.
+enum QualityTuning {
+    static let small = 0.65, balanced = 0.75, high = 0.85
+    static let smallTypical4K = 1.0...3.0, balancedTypical4K = 1.5...5.0, highTypical4K = 4.0...11.0
+}
+
 public struct RecordingSettings: Codable, Hashable, Sendable {
     public var directoryPath: String
     public var resolution: OutputResolution = .canvas
+    public var quality: RecordingQuality = .balanced
+    /// Codec and bitrate for `.custom` quality. The other modes use HEVC.
     public var codec: VideoCodec = .h264
     public var container: RecordingContainer = .mov
     public var videoBitrateKbps: Int = 16_000
@@ -427,11 +476,15 @@ public struct RecordingSettings: Codable, Hashable, Sendable {
         let d = RecordingSettings()
         directoryPath = try c.decodeIfPresent(String.self, forKey: .directoryPath) ?? d.directoryPath
         resolution = try c.decodeIfPresent(OutputResolution.self, forKey: .resolution) ?? d.resolution
+        quality = try c.decodeIfPresent(RecordingQuality.self, forKey: .quality) ?? d.quality
         codec = try c.decodeIfPresent(VideoCodec.self, forKey: .codec) ?? d.codec
         container = try c.decodeIfPresent(RecordingContainer.self, forKey: .container) ?? d.container
         videoBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .videoBitrateKbps) ?? d.videoBitrateKbps
         audioBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? d.audioBitrateKbps
     }
+
+    /// The codec actually used: HEVC unless the bitrate is chosen by hand.
+    public var effectiveCodec: VideoCodec { quality == .custom ? codec : .hevc }
 
     public static var defaultDirectory: String {
         FileManager.default.homeDirectoryForCurrentUser

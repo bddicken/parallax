@@ -50,6 +50,51 @@ import Testing
         #expect(recorded > 2)
     }
 
+    /// The encoder failing (say, the hardware encoder resets) must not split
+    /// the recording: a new encoder takes over in the same file.
+    @Test func keepsOneFileWhenTheEncoderFails() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let problems = Problems()
+        let recorder = try Recorder(directory: dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
+                                    onProblem: problems.add)
+        let feed = Feed(recorder)
+
+        try await feed.run(seconds: 5)
+        recorder.simulateEncoderFailureForTesting()
+        try await feed.run(seconds: 5)
+        let result = try await recorder.finish()
+
+        #expect(problems.all.isEmpty)
+        #expect(result.problem == nil)
+        #expect(result.files.count == 1)
+        let recorded = try await duration(result.files[0])
+        #expect(recorded > 9 && recorded < 11)
+        // Frames from both encoders decode.
+        #expect(try await decodedFrames(result.files[0]) > 240)
+    }
+
+    @Test func stopsIfTheEncoderKeepsFailing() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let problems = Problems()
+        let recorder = try Recorder(directory: dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
+                                    onProblem: problems.add)
+        let feed = Feed(recorder)
+
+        try await feed.run(seconds: 2)
+        for _ in 0...Recorder.maxEncoderRestartsPerMinute {
+            recorder.simulateEncoderFailureForTesting()
+            try await feed.run(seconds: 1)
+        }
+        let result = try await recorder.finish()
+
+        #expect(problems.all.map(\.stopped) == [true])
+        #expect(problems.all.first?.message.contains("keeps failing") == true)
+        #expect(result.files.count == 1)
+        #expect(try await duration(result.files[0]) > 6)
+    }
+
     /// A real writer failure: the disk fills up partway through. Before,
     /// stopping deleted the whole file.
     @Test func keepsTheFileWhenTheDiskFills() async throws {
@@ -87,6 +132,21 @@ import Testing
 
     private func duration(_ url: URL) async throws -> Double {
         try await AVURLAsset(url: url).load(.duration).seconds
+    }
+
+    private func decodedFrames(_ url: URL) async throws -> Int {
+        let asset = AVURLAsset(url: url)
+        let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        reader.add(output)
+        reader.startReading()
+        var count = 0
+        while let sample = output.copyNextSampleBuffer() {
+            if CMSampleBufferGetImageBuffer(sample) != nil { count += 1 }
+        }
+        #expect(reader.status == .completed, "\(String(describing: reader.error))")
+        return count
     }
 
     private func hdiutil(_ args: String...) throws {
