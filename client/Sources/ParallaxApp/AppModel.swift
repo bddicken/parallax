@@ -589,6 +589,12 @@ final class AppModel {
 
     var isRecording: Bool { recordingStartedAt != nil }
 
+    /// Names of the sources the stream has but the recording leaves out.
+    var recordingLeavesOut: [String] {
+        profile.videoSources.filter { !$0.isInRecording }.map(\.name)
+            + profile.activeAudioSources.filter { !$0.isInRecording }.map(\.name)
+    }
+
     func toggleRecording() {
         if isRecording {
             Task { await stopRecording() }

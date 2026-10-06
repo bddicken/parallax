@@ -77,6 +77,7 @@ struct ControlBar: View {
             }
             .controlSize(.large)
             .help(recordingSummary)
+            RecordingContentsButton()
 
             Button { showingGoLive = true } label: {
                 HStack(spacing: 6) {
@@ -104,8 +105,7 @@ struct ControlBar: View {
         case .custom: "\(r.codec == .hevc ? "HEVC" : "H.264") \(r.videoBitrateKbps / 1000) Mbps"
         }
         let summary = "Records \(size.width)×\(size.height) \(model.profile.output.fps) fps, \(quality) (⇧⌘R)"
-        let p = model.profile
-        let left = p.videoSources.filter { !$0.isInRecording }.map(\.name) + p.activeAudioSources.filter { !$0.isInRecording }.map(\.name)
+        let left = model.recordingLeavesOut
         return left.isEmpty ? summary : summary + "\nLeaves out: " + left.joined(separator: ", ")
     }
 

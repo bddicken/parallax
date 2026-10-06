@@ -61,10 +61,38 @@ import Testing
         #expect(program.last.allSatisfy { abs($0 - 0.3) < 0.001 })
         #expect(recording.last.allSatisfy { abs($0 - 0.1) < 0.001 })
 
-        // Back in the recording: the two match again.
+        // Back in the recording: after fading in, the two match again.
         music.isInRecording = true
         mixer.configure([mic, music])
+        mix(mixer, mic: 0.1, music: 0.2, chunks: 20)
+        #expect(recording.last == program.last)
+    }
+
+    @Test func takingMusicOutMidRecordingFadesInsteadOfCutting() {
+        let sinks = SinkHub()
+        let program = Capture(), recording = Capture()
+        sinks.add(program)
+        sinks.add(recording, feed: .recording)
+        let mixer = AudioMixer(sinks: sinks)
+        var music = music
+        mixer.configure([mic, music])
         mix(mixer, mic: 0.1, music: 0.2, chunks: 5)
+        #expect(recording.last == program.last)
+
+        music.isInRecording = false
+        mixer.configure([mic, music])
+        mix(mixer, mic: 0.1, music: 0.2)
+        // Starts near the full mix and eases down rather than jumping.
+        #expect(abs(recording.last[0] - 0.3) < 0.01)
+        #expect(recording.last.last! < 0.3 && recording.last.last! > 0.1)
+        mix(mixer, mic: 0.1, music: 0.2, chunks: 20)
+        #expect(recording.last.allSatisfy { abs($0 - 0.1) < 0.001 })
+        #expect(program.last.allSatisfy { abs($0 - 0.3) < 0.001 })
+
+        // And back in.
+        music.isInRecording = true
+        mixer.configure([mic, music])
+        mix(mixer, mic: 0.1, music: 0.2, chunks: 20)
         #expect(recording.last == program.last)
     }
 

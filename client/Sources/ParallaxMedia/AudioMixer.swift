@@ -19,7 +19,7 @@ public struct MixerLevels: Sendable {
 /// to the sinks. The monitor gets the same mix, or with a custom monitor mix,
 /// its own sum of the strips at the monitor's per-input gains. While
 /// recording, the recorder gets its own sum without the inputs left out of the
-/// recording.
+/// recording; taking one in or out mid-recording fades rather than cuts.
 final class AudioMixer: @unchecked Sendable {
     static let chunkFrames = 480
 
@@ -33,10 +33,13 @@ final class AudioMixer: @unchecked Sendable {
         var level = AudioLevel.silent
         /// Ramps toward the monitor gain so changes don't click.
         var monitorGain: Float = 1
+        /// Ramps toward 1 or 0 as it's taken into or out of the recording.
+        var recordingGain: Float
 
         init(_ settings: AudioSource) {
             self.settings = settings
             processor = ChannelStripProcessor(source: settings)
+            recordingGain = settings.isInRecording ? 1 : 0
         }
 
         /// Microphones and interfaces: what "talking" means for ducking.
@@ -230,28 +233,34 @@ final class AudioMixer: @unchecked Sendable {
         }
         strip.level = strip.level.merged(with: level)
         for i in mix.indices { mix[i] += scratch[i] }
-        if recording && strip.settings.isInRecording {
-            for i in recordingMix.indices { recordingMix[i] += scratch[i] }
-        }
+        let recordingTarget: Float = strip.settings.isInRecording ? 1 : 0
+        strip.recordingGain = recording
+            ? Self.add(scratch, to: &recordingMix, gain: strip.recordingGain, toward: recordingTarget, smoothing: monitorSmoothing)
+            : recordingTarget
 
         // The monitor bus follows the strip's gain toward its target, and
         // ramps back to 1 when the monitor returns to the program mix.
         let target = monitorGains.map { $0[id] ?? 1 } ?? 1
-        var gain = strip.monitorGain
-        if gain == target {
-            if gain != 0 { for i in monitorMix.indices { monitorMix[i] += scratch[i] * gain } }
-        } else {
-            var i = 0
-            while i + 1 < monitorMix.count {
-                gain += (target - gain) * monitorSmoothing
-                monitorMix[i] += scratch[i] * gain
-                monitorMix[i + 1] += scratch[i + 1] * gain
-                i += 2
-            }
-            if abs(target - gain) < 1e-4 { gain = target }
-        }
-        strip.monitorGain = gain
+        strip.monitorGain = Self.add(scratch, to: &monitorMix, gain: strip.monitorGain, toward: target, smoothing: monitorSmoothing)
         return level
+    }
+
+    /// Adds `samples` to `bus` at `gain`, easing it toward `target` so a
+    /// change doesn't click. Returns where the gain ended up.
+    private static func add(_ samples: [Float], to bus: inout [Float], gain: Float, toward target: Float, smoothing: Float) -> Float {
+        var gain = gain
+        if gain == target {
+            if gain != 0 { for i in bus.indices { bus[i] += samples[i] * gain } }
+            return gain
+        }
+        var i = 0
+        while i + 1 < bus.count {
+            gain += (target - gain) * smoothing
+            bus[i] += samples[i] * gain
+            bus[i + 1] += samples[i + 1] * gain
+            i += 2
+        }
+        return abs(target - gain) < 1e-4 ? target : gain
     }
 
     private func reportLevels() {
