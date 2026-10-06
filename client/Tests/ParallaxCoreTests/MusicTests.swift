@@ -193,6 +193,70 @@ private func loudness(_ samples: [Float]) -> Double? {
         #expect(loaded.shuffle == false)
     }
 
+    @Test func mergeKeepsSongsEitherSideAddedAndDropsOnesEitherRemoved() {
+        let a = Song(title: "A", fileName: "a.mp3", duration: 1)
+        let b = Song(title: "B", fileName: "b.mp3", duration: 1)
+        let c = Song(title: "C", fileName: "c.mp3", duration: 1)
+        let base = MusicLibrary(tracks: [a, b])
+        var ours = base
+        ours.tracks.insert(c, at: 0)
+        ours.tracks[1].playCount = 3
+        let theirs = MusicLibrary(tracks: [Song(title: "D", fileName: "d.mp3", duration: 1), a])
+        let merged = MusicLibrary.merge(base: base, ours: ours, theirs: theirs)
+        #expect(merged.tracks.map(\.title) == ["C", "D", "A"])
+        #expect(merged.tracks[2].playCount == 3)
+    }
+
+    @Test func mergeTakesTheirEditsUnlessWeMadeOne() {
+        let a = Song(title: "A", fileName: "a.mp3", duration: 1)
+        let b = Song(title: "B", fileName: "b.mp3", duration: 1)
+        let base = MusicLibrary(tracks: [a, b])
+        var ours = base
+        ours.tracks[0].trimDB = 2
+        var theirs = base
+        theirs.tracks[0].trimDB = -2
+        theirs.tracks[1].isExcluded = true
+        theirs.tracks.reverse()
+        theirs.shuffle = false
+        let merged = MusicLibrary.merge(base: base, ours: ours, theirs: theirs)
+        #expect(merged.tracks.map(\.title) == ["B", "A"])
+        #expect(merged.tracks[1].trimDB == 2)
+        #expect(merged.tracks[0].isExcluded)
+        #expect(!merged.shuffle)
+        // When we reordered too, our order wins.
+        ours.tracks.append(Song(title: "C", fileName: "c.mp3", duration: 1))
+        ours.tracks.swapAt(0, 1)
+        theirs.tracks.reverse()
+        #expect(MusicLibrary.merge(base: base, ours: ours, theirs: theirs).tracks.map(\.title) == ["B", "A", "C"])
+    }
+
+    @Test func syncMergesWhatAnotherInstanceSaved() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = MusicLibraryStore(directory: dir)
+        let base = MusicLibrary(tracks: [Song(title: "A", fileName: "a.mp3", duration: 1)])
+        try store.save(base)
+        // Another instance adds a song...
+        var theirs = base
+        theirs.tracks.insert(Song(title: "B", fileName: "b.mp3", duration: 1), at: 0)
+        try store.save(theirs)
+        // ...and this one, still on `base`, adds another.
+        var ours = base
+        ours.tracks.insert(Song(title: "C", fileName: "c.mp3", duration: 1), at: 0)
+        let merged = try store.sync(base: base, ours: ours)
+        #expect(merged.tracks.map(\.title) == ["C", "B", "A"])
+        #expect(store.load() == merged)
+        // Nothing new on disk: ours is saved as is.
+        var next = merged
+        next.tracks.removeLast()
+        #expect(try store.sync(base: merged, ours: next) == next)
+        #expect(store.load() == next)
+    }
+
+    @Test func libraryIsSharedByEveryProfile() {
+        #expect(MusicLibraryStore().directory.path.hasSuffix("Application Support/Parallax/Music"))
+    }
+
     @Test func decodesMinimalTrack() throws {
         let json = #"{"tracks":[{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"A","fileName":"a.mp3"}]}"#
         let library = try JSONDecoder().decode(MusicLibrary.self, from: Data(json.utf8))

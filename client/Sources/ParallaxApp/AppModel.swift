@@ -67,8 +67,9 @@ final class AppModel {
         localServerCredentials = LocalServerCredentials.load(from: secrets)
         // Next to the profile, so a scratch profile (PARALLAX_PROFILE) gets its own sign-ins.
         localServer = LocalServer(directory: directory.appending(path: "Server"))
-        // Songs are shared by every profile, but a scratch profile gets its own library.
-        music = MusicModel(player: engine.music, directory: directory.appending(path: "Music"))
+        // One library for every profile, scratch ones included, so songs
+        // downloaded while trying a test build stay.
+        music = MusicModel(player: engine.music)
         engine.onLevels = { [weak self] levels in
             self?.levels = levels.inputs
             self?.masterLevel = levels.master

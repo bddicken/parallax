@@ -43,13 +43,20 @@ final class MusicModel {
     @ObservationIgnored var onProblem: (String) -> Void = { _ in }
     @ObservationIgnored private(set) var queue = MusicQueue()
     @ObservationIgnored let store: MusicLibraryStore
+    /// The library as last read or saved, to merge in what other running
+    /// copies of Parallax change.
+    @ObservationIgnored private var synced: MusicLibrary
+    /// Where downloads land before they're imported; this instance's own, so
+    /// another copy of Parallax starting up can't delete them mid-download.
+    @ObservationIgnored private let incoming = FileManager.default.temporaryDirectory
+        .appending(path: "Parallax-Incoming-\(UUID().uuidString)", directoryHint: .isDirectory)
     @ObservationIgnored private let player: SongPlayer
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var statusTask: Task<Void, Never>?
     /// Songs that wouldn't play this session; left out of what plays next.
     @ObservationIgnored private var unplayable = Set<UUID>()
     @ObservationIgnored private lazy var suno: SunoBrowser = {
-        let browser = SunoBrowser(incoming: store.incomingDirectory)
+        let browser = SunoBrowser(incoming: incoming)
         browser.onDownload = { [weak self] file, page in
             self?.importFiles([file], sourceURL: page?.absoluteString, moveFiles: true)
         }
@@ -59,13 +66,19 @@ final class MusicModel {
         return browser
     }()
 
-    init(player: SongPlayer, directory: URL) {
-        store = MusicLibraryStore(directory: directory)
-        library = store.load()
-        // Leftovers from downloads interrupted by a quit or crash.
-        try? FileManager.default.removeItem(at: store.incomingDirectory)
+    init(player: SongPlayer, store: MusicLibraryStore = MusicLibraryStore()) {
+        self.store = store
+        let saved = store.load()
+        library = saved
+        synced = saved
         self.player = player
         player.onEvent = { [weak self] event in self?.handle(event) }
+        // Pick up songs another copy of Parallax added while this one was in the background.
+        Task { [weak self] in
+            for await _ in NotificationCenter.default.notifications(named: NSApplication.didBecomeActiveNotification) {
+                self?.saveNow()
+            }
+        }
     }
 
     var nowPlaying: Song? { library.track(nowPlayingID) }
@@ -264,9 +277,23 @@ final class MusicModel {
         }
     }
 
+    /// Saves the library, merging in what other copies of Parallax saved.
     func saveNow() {
         saveTask?.cancel()
-        do { try store.save(library) } catch { onProblem("Couldn't save your music library: \(error.localizedDescription)") }
+        do {
+            let merged = try store.sync(base: synced, ours: library)
+            synced = merged
+            guard merged != library else { return }
+            let kept = Set(merged.tracks.map(\.id))
+            for track in library.tracks where !kept.contains(track.id) {
+                queue.remove(track.id)
+                if track.id == nowPlayingID { stop() }
+            }
+            library = merged
+            refreshUpcoming()
+        } catch {
+            onProblem("Couldn't save your music library: \(error.localizedDescription)")
+        }
     }
 
     private func showStatus(_ text: String) {
@@ -315,7 +342,7 @@ final class MusicModel {
             if let i = importing.firstIndex(of: name) { importing.remove(at: i) }
             // Downloads land in a folder of their own under Incoming.
             let folder = url.deletingLastPathComponent()
-            if moveFile, folder.path.hasPrefix(store.incomingDirectory.path) { try? FileManager.default.removeItem(at: folder) }
+            if moveFile, folder.path.hasPrefix(incoming.path) { try? FileManager.default.removeItem(at: folder) }
         }
         do {
             let (hash, analysis) = try await Task.detached(priority: .userInitiated) {

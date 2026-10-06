@@ -96,6 +96,37 @@ public struct MusicLibrary: Codable, Hashable, Sendable {
 
     public func track(_ id: UUID?) -> Song? { tracks.first { $0.id == id } }
 
+    /// Combines changes two Parallax instances made to the same library since
+    /// `base`, the version both started from. Songs either one added are kept,
+    /// songs either one removed are dropped, and where both changed the same
+    /// thing, `ours` wins.
+    public static func merge(base: MusicLibrary, ours: MusicLibrary, theirs: MusicLibrary) -> MusicLibrary {
+        let baseByID = Dictionary(base.tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let oursByID = Dictionary(ours.tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let theirsByID = Dictionary(theirs.tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+
+        // Follow their order unless we reordered the songs we both had.
+        let weReordered = ours.tracks.map(\.id).filter { baseByID[$0] != nil }
+            != base.tracks.map(\.id).filter { oursByID[$0] != nil }
+        let (skeleton, rest) = weReordered ? (ours.tracks, theirs.tracks) : (theirs.tracks, ours.tracks)
+        let skeletonIDs = Set(skeleton.map(\.id))
+        // What the other side added goes first, where new songs go.
+        let added = rest.filter { baseByID[$0.id] == nil && !skeletonIDs.contains($0.id) }
+
+        var merged = MusicLibrary(shuffle: ours.shuffle == base.shuffle ? theirs.shuffle : ours.shuffle,
+                                  matchLoudness: ours.matchLoudness == base.matchLoudness ? theirs.matchLoudness : ours.matchLoudness)
+        for track in added + skeleton {
+            let o = oursByID[track.id], t = theirsByID[track.id]
+            if let b = baseByID[track.id] {
+                guard let o, let t else { continue } // Removed by one side.
+                merged.tracks.append(o == b ? t : o)
+            } else {
+                merged.tracks.append(o ?? track)
+            }
+        }
+        return merged
+    }
+
     /// How much to turn a song up or down: loudness matching plus its trim.
     /// Matching boosts at most 8 dB so a quiet intro-heavy song isn't blasted.
     public func gainDB(for track: Song) -> Double {
@@ -178,14 +209,18 @@ public struct MusicQueue: Sendable {
 public struct MusicLibraryStore: Sendable {
     public let directory: URL
 
-    public init(directory: URL) {
+    public init(directory: URL = MusicLibraryStore.defaultDirectory) {
         self.directory = directory
+    }
+
+    /// ~/Library/Application Support/Parallax/Music, whatever the profile, so
+    /// songs downloaded in a test build (PARALLAX_PROFILE) aren't lost with it.
+    public static var defaultDirectory: URL {
+        URL.applicationSupportDirectory.appending(path: "Parallax/Music", directoryHint: .isDirectory)
     }
 
     public var libraryURL: URL { directory.appending(path: "library.json") }
     public var songsDirectory: URL { directory.appending(path: "Songs", directoryHint: .isDirectory) }
-    /// Where in-progress downloads land before they're imported.
-    public var incomingDirectory: URL { directory.appending(path: "Incoming", directoryHint: .isDirectory) }
 
     public func fileURL(for track: Song) -> URL {
         songsDirectory.appending(path: track.fileName)
@@ -194,7 +229,28 @@ public struct MusicLibraryStore: Sendable {
     /// Returns the saved library, or an empty one. An unreadable file is
     /// moved aside rather than silently overwritten.
     public func load() -> MusicLibrary {
-        guard let data = try? Data(contentsOf: libraryURL) else { return MusicLibrary() }
+        withLock { readOrSetAside() } ?? MusicLibrary()
+    }
+
+    public func save(_ library: MusicLibrary) throws {
+        try withLock { _ = try write(library) }
+    }
+
+    /// Saves `ours` after merging in what other Parallax instances saved since
+    /// `base`, and returns the library as saved (dates lose fractions of a
+    /// second on disk). Every instance shares the library.
+    public func sync(base: MusicLibrary, ours: MusicLibrary) throws -> MusicLibrary {
+        try withLock {
+            guard let theirs = readOrSetAside() else { return try write(ours) }
+            let merged = theirs == base ? ours : MusicLibrary.merge(base: base, ours: ours, theirs: theirs)
+            return merged == theirs ? theirs : try write(merged)
+        }
+    }
+
+    /// The saved library, or nil if there isn't one. An unreadable file is
+    /// moved aside rather than silently overwritten.
+    private func readOrSetAside() -> MusicLibrary? {
+        guard let data = try? Data(contentsOf: libraryURL) else { return nil }
         do {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
@@ -202,15 +258,29 @@ public struct MusicLibraryStore: Sendable {
         } catch {
             let backup = directory.appending(path: "library.corrupt-\(Int(Date().timeIntervalSince1970)).json")
             try? FileManager.default.moveItem(at: libraryURL, to: backup)
-            return MusicLibrary()
+            return nil
         }
     }
 
-    public func save(_ library: MusicLibrary) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    /// Writes `library` and returns it as it reads back.
+    private func write(_ library: MusicLibrary) throws -> MusicLibrary {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        try encoder.encode(library).write(to: libraryURL, options: .atomic)
+        let data = try encoder.encode(library)
+        try data.write(to: libraryURL, options: .atomic)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(MusicLibrary.self, from: data)
+    }
+
+    /// Runs `body` holding a lock that other Parallax instances respect, so
+    /// one's read-merge-write can't interleave with another's.
+    private func withLock<T>(_ body: () throws -> T) rethrows -> T {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let fd = open(directory.appending(path: ".lock").path, O_CREAT | O_RDWR, 0o644)
+        if fd >= 0 { flock(fd, LOCK_EX) }
+        defer { if fd >= 0 { flock(fd, LOCK_UN); close(fd) } }
+        return try body()
     }
 }
