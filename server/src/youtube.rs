@@ -256,10 +256,9 @@ impl YouTube {
         // A broadcast left over from last time would otherwise sit in "Upcoming".
         self.end_broadcast().await;
         let stream = self.stream().await?;
-        let title: String = title.trim().chars().take(100).collect();
         let body = json!({
             "snippet": {
-                "title": if title.is_empty() { "Live".into() } else { title },
+                "title": broadcast_title(title),
                 "scheduledStartTime": Utc::now().to_rfc3339(),
             },
             "status": { "privacyStatus": privacy, "selfDeclaredMadeForKids": false },
@@ -567,6 +566,22 @@ impl YouTube {
         serde_json::from_str(if text.trim().is_empty() { "null" } else { &text })
             .with_context(|| format!("unexpected response from YouTube {path}"))
     }
+}
+
+/// A title YouTube accepts: at most 100 characters, and no `<` or `>` (it
+/// answers "Title is invalid"), so those become lookalikes.
+fn broadcast_title(title: &str) -> String {
+    let title: String = title
+        .trim()
+        .chars()
+        .map(|c| match c {
+            '<' => '‹',
+            '>' => '›',
+            c => c,
+        })
+        .take(100)
+        .collect();
+    if title.is_empty() { "Live".into() } else { title }
 }
 
 // MARK: Chat parsing
@@ -921,6 +936,14 @@ mod tests {
         }
         assert_eq!(count, 2);
         assert_eq!(reader.page_token.as_deref(), Some("p2"));
+    }
+
+    #[test]
+    fn makes_titles_youtube_accepts() {
+        assert_eq!(broadcast_title("FAST database > SLOW database"), "FAST database › SLOW database");
+        assert_eq!(broadcast_title("<b>hi</b>"), "‹b›hi‹/b›");
+        assert_eq!(broadcast_title("  "), "Live");
+        assert_eq!(broadcast_title(&"x".repeat(150)).chars().count(), 100);
     }
 
     #[test]
