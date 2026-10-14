@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import ParallaxCore
+import ParallaxMedia
 import ParallaxRemote
 
 /// Connection to parallax-server (or the mock): destinations, live status,
@@ -15,6 +16,10 @@ final class BroadcastModel {
     var featuredMessageID: String?
     var connectionError: String?
     var isBusy = false
+    var isUploadingThumbnail = false
+    /// Why the last thumbnail didn't upload. Kept apart from
+    /// `connectionError`, which the next event clears.
+    var thumbnailProblem: String?
 
     @ObservationIgnored var onChatChanged: (() -> Void)?
     @ObservationIgnored private var eventsTask: Task<Void, Never>?
@@ -106,14 +111,16 @@ final class BroadcastModel {
         }
     }
 
+    static let serverTokenAccount = "server-token"
+
     /// The token for a remote server (Settings › Server).
-    static var remoteServerToken: String {
+    static func remoteServerToken(in secrets: SecretStore) -> String {
         #if DEBUG
         // Lets a scratch profile (PARALLAX_PROFILE) talk to a server without
-        // touching the Keychain.
+        // saving a token.
         if let token = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_SERVER_TOKEN"] { return token }
         #endif
-        return Keychain.read("server-token") ?? ""
+        return secrets.read(serverTokenAccount) ?? ""
     }
 
     func refreshDestinations() async {
@@ -129,6 +136,31 @@ final class BroadcastModel {
     @discardableResult
     func start(_ request: StartBroadcastRequest) async -> Bool {
         await perform { try await $0.startBroadcast(request) }
+    }
+
+    /// Whether any of `destinationIDs` is on `platform`.
+    func includes(_ platform: Platform, in destinationIDs: some Sequence<String>) -> Bool {
+        let ids = Set(destinationIDs)
+        return destinations.contains { $0.platform == platform && ids.contains($0.id) }
+    }
+
+    /// Whether the broadcast under way includes `platform`.
+    func isLive(on platform: Platform) -> Bool {
+        status.live && includes(platform, in: status.destinations.map(\.destinationID))
+    }
+
+    /// Uploads the image at `url` as the current broadcast's thumbnail. A
+    /// failure only sets `thumbnailProblem`; the broadcast carries on.
+    func setThumbnail(contentsOf url: URL) async {
+        isUploadingThumbnail = true
+        defer { isUploadingThumbnail = false }
+        do {
+            let image = try await Task.detached { try Thumbnail.jpegData(contentsOf: url) }.value
+            try await service.setThumbnail(image)
+            thumbnailProblem = nil
+        } catch {
+            thumbnailProblem = "The thumbnail didn't upload. \(error.localizedDescription)"
+        }
     }
 
     func stop() async {

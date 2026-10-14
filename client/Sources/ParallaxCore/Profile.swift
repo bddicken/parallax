@@ -71,6 +71,8 @@ extension AudioSourceKind {
         switch self {
         case .device(let uniqueID, _, _): "device:\(uniqueID)"
         case .systemAudio: "system"
+        case .music: "music"
+        case .webPlayer: "webPlayer"
         }
     }
 }
@@ -82,12 +84,26 @@ public struct VideoSource: Identifiable, Codable, Hashable, Sendable {
     public var name: String
     public var kind: VideoSourceKind
     public var delayMs: Int
+    /// False keeps it out of the local recording (e.g. chat overlays); the
+    /// stream still shows it.
+    public var isInRecording: Bool
 
-    public init(id: UUID = UUID(), name: String, kind: VideoSourceKind, delayMs: Int = 0) {
+    public init(id: UUID = UUID(), name: String, kind: VideoSourceKind, delayMs: Int = 0, isInRecording: Bool = true) {
         self.id = id
         self.name = name
         self.kind = kind
         self.delayMs = delayMs
+        self.isInRecording = isInRecording
+    }
+
+    // Decodes profiles saved before newer fields existed.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        kind = try c.decode(VideoSourceKind.self, forKey: .kind)
+        delayMs = try c.decode(Int.self, forKey: .delayMs)
+        isInRecording = try c.decodeIfPresent(Bool.self, forKey: .isInRecording) ?? true
     }
 }
 
@@ -192,6 +208,19 @@ public enum AudioSourceKind: Codable, Hashable, Sendable {
     case device(uniqueID: String, name: String? = nil, modelID: String? = nil)
     /// Everything the Mac is playing, via ScreenCaptureKit (minus Parallax itself).
     case systemAudio
+    /// Parallax's own music player, playing songs from the music library.
+    case music
+    /// Whatever plays in Parallax's built-in Suno window, captured straight
+    /// from the web player.
+    case webPlayer
+}
+
+/// Where music comes from.
+public enum MusicMode: String, Codable, CaseIterable, Sendable {
+    /// Songs downloaded into the music library, played by Parallax.
+    case library
+    /// Suno's own web player in Parallax's Suno window.
+    case sunoPlayer
 }
 
 public enum ChannelMode: String, Codable, CaseIterable, Sendable {
@@ -233,6 +262,21 @@ public struct EQSettings: Codable, Hashable, Sendable {
     }
 }
 
+/// Turns an input down while you're talking into a microphone, e.g. music
+/// under your voice.
+public struct DuckSettings: Codable, Hashable, Sendable {
+    public static let amountRange: ClosedRange<Double> = -30 ... -3
+
+    public var isEnabled: Bool = false
+    /// How far to turn it down while you talk.
+    public var amountDB: Double = -12
+
+    public init(isEnabled: Bool = false, amountDB: Double = -12) {
+        self.isEnabled = isEnabled
+        self.amountDB = amountDB
+    }
+}
+
 public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var name: String
@@ -246,11 +290,16 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
     public var highPassEnabled: Bool
     public var gate: NoiseGateSettings
     public var eq: EQSettings
+    public var duck: DuckSettings
+    /// False keeps it out of the local recording (e.g. music); the stream
+    /// still has it.
+    public var isInRecording: Bool
 
     public init(
         id: UUID = UUID(), name: String, kind: AudioSourceKind, gainDB: Double = 0, isMuted: Bool = false,
         delayMs: Int = 0, channelMode: ChannelMode = .mono, firstChannel: Int = 0,
-        highPassEnabled: Bool = false, gate: NoiseGateSettings = NoiseGateSettings(), eq: EQSettings = EQSettings()
+        highPassEnabled: Bool = false, gate: NoiseGateSettings = NoiseGateSettings(), eq: EQSettings = EQSettings(),
+        duck: DuckSettings = DuckSettings(), isInRecording: Bool = true
     ) {
         self.id = id
         self.name = name
@@ -263,6 +312,8 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
         self.highPassEnabled = highPassEnabled
         self.gate = gate
         self.eq = eq
+        self.duck = duck
+        self.isInRecording = isInRecording
     }
 
     // Decodes profiles saved before newer fields existed.
@@ -279,6 +330,8 @@ public struct AudioSource: Identifiable, Codable, Hashable, Sendable {
         highPassEnabled = try c.decode(Bool.self, forKey: .highPassEnabled)
         gate = try c.decode(NoiseGateSettings.self, forKey: .gate)
         eq = try c.decodeIfPresent(EQSettings.self, forKey: .eq) ?? EQSettings()
+        duck = try c.decodeIfPresent(DuckSettings.self, forKey: .duck) ?? DuckSettings()
+        isInRecording = try c.decodeIfPresent(Bool.self, forKey: .isInRecording) ?? true
     }
 }
 
@@ -376,13 +429,61 @@ public enum RecordingContainer: String, Codable, CaseIterable, Sendable {
     case mov, mp4
 }
 
-/// One file written per take. The program is what's live, fades included;
-/// a scene is recorded on its own whatever is live, e.g. the camera full
-/// frame in one file and the screen in another, to edit together later.
+/// How a recording trades file size for picture quality.
+public enum RecordingQuality: String, Codable, CaseIterable, Sendable {
+    /// Constant quality (HEVC): the encoder spends bits only where the
+    /// picture changes, so a mostly still screen + camera is far smaller than
+    /// at a fixed bitrate, and busy scenes still look good.
+    case small, balanced, high
+    /// A fixed average bitrate and codec, chosen by hand.
+    case custom
+
+    /// VideoToolbox quality (0–1) for the constant-quality modes.
+    public var encoderQuality: Double? {
+        switch self {
+        case .small: QualityTuning.small
+        case .balanced: QualityTuning.balanced
+        case .high: QualityTuning.high
+        case .custom: nil
+        }
+    }
+
+    /// Rough video + audio size in GB per hour for the constant-quality
+    /// modes, for a screen and camera. Busier pictures (full-screen video,
+    /// games) take more.
+    public func gigabytesPerHour(width: Int, height: Int, fps: Int, audioKbps: Int) -> ClosedRange<Double>? {
+        let typical: ClosedRange<Double>
+        switch self {
+        case .small: typical = QualityTuning.smallTypical4K
+        case .balanced: typical = QualityTuning.balancedTypical4K
+        case .high: typical = QualityTuning.highTypical4K
+        case .custom: return nil
+        }
+        // Bits needed relative to 4K30. Grows slower than the pixel count,
+        // since larger frames compress better.
+        let scale = (Double(width * height) / (3840 * 2160)).squareRoot() * (fps > 30 ? 1.5 : 1)
+        let audio = Bitrates.gigabytesPerHour(videoKbps: 0, audioKbps: audioKbps)
+        return (typical.lowerBound * scale + audio)...(typical.upperBound * scale + audio)
+    }
+}
+
+/// Measured by re-encoding 4K30 screen + camera streams recorded with
+/// Parallax. Balanced matches H.264 at 16 Mbps (VMAF) at about a quarter of
+/// the size. There's no bitrate cap: VideoToolbox's DataRateLimits steers
+/// its quality mode rather than only clipping peaks.
+enum QualityTuning {
+    static let small = 0.65, balanced = 0.75, high = 0.85
+    static let smallTypical4K = 1.0...3.0, balancedTypical4K = 1.5...5.0, highTypical4K = 4.0...11.0
+}
+
+/// One file written per recording. The program is what's live, fades
+/// included; a scene is recorded on its own whatever is live, e.g. the camera
+/// full frame in one file and the screen in another, to edit together later.
 public struct RecordingOutput: Codable, Hashable, Sendable {
     /// nil records the program.
     public var sceneID: UUID?
     public var resolution: OutputResolution = .canvas
+    /// Used with `.custom` quality.
     public var videoBitrateKbps: Int = 16_000
 
     public init(sceneID: UUID? = nil, resolution: OutputResolution = .canvas, videoBitrateKbps: Int = 16_000) {
@@ -406,6 +507,9 @@ public struct RecordingSettings: Codable, Hashable, Sendable {
     public var directoryPath: String
     /// Every file recorded at once, all starting and stopping on the same frame.
     public var outputs: [RecordingOutput] = [RecordingOutput()]
+    public var quality: RecordingQuality = .balanced
+    /// Codec for `.custom` quality (each output has its own bitrate). The
+    /// other modes use HEVC.
     public var codec: VideoCodec = .h264
     public var container: RecordingContainer = .mov
     public var audioBitrateKbps: Int = 256
@@ -421,6 +525,7 @@ public struct RecordingSettings: Codable, Hashable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = RecordingSettings()
         directoryPath = try c.decodeIfPresent(String.self, forKey: .directoryPath) ?? d.directoryPath
+        quality = try c.decodeIfPresent(RecordingQuality.self, forKey: .quality) ?? d.quality
         codec = try c.decodeIfPresent(VideoCodec.self, forKey: .codec) ?? d.codec
         container = try c.decodeIfPresent(RecordingContainer.self, forKey: .container) ?? d.container
         audioBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? d.audioBitrateKbps
@@ -474,6 +579,9 @@ public struct RecordingSettings: Codable, Hashable, Sendable {
             return "\(base) - \(unique)"
         }
     }
+
+    /// The codec actually used: HEVC unless the bitrate is chosen by hand.
+    public var effectiveCodec: VideoCodec { quality == .custom ? codec : .hevc }
 
     public static var defaultDirectory: String {
         FileManager.default.homeDirectoryForCurrentUser
@@ -540,6 +648,8 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
     /// Title for the next broadcast, where the platform asks for one (YouTube).
     public var title = ""
     public var privacy = BroadcastPrivacy.unlisted
+    /// Image file to use as the thumbnail, where the platform takes one (YouTube).
+    public var thumbnailPath: String?
     /// Destinations checked last time. Nil until you pick, which means each
     /// destination's own default.
     public var destinationIDs: [String]?
@@ -557,6 +667,7 @@ public struct BroadcastSettings: Codable, Hashable, Sendable {
         stream = try c.decodeIfPresent(StreamSettings.self, forKey: .stream) ?? StreamSettings()
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
         privacy = try c.decodeIfPresent(BroadcastPrivacy.self, forKey: .privacy) ?? .unlisted
+        thumbnailPath = try c.decodeIfPresent(String.self, forKey: .thumbnailPath)
         destinationIDs = try c.decodeIfPresent([String].self, forKey: .destinationIDs)
     }
 }
@@ -570,13 +681,42 @@ public struct MonitorSettings: Codable, Hashable, Sendable {
         case device(uid: String)
     }
 
+    /// What you hear: exactly what goes out, or your own balance of the inputs.
+    public enum Mix: String, Codable, Hashable, Sendable {
+        case program
+        case custom
+    }
+
     public var output: Output = .off
     /// 0...1
     public var volume: Double = 0.8
+    public var mix: Mix = .program
+    /// Per-input level for the custom mix, 0...1 on top of the input's stream
+    /// level. Inputs without an entry play at 1. Kept while hearing the program
+    /// so switching back restores your balance.
+    public var levels: [UUID: Double] = [:]
 
-    public init(output: Output = .off, volume: Double = 0.8) {
+    public init(output: Output = .off, volume: Double = 0.8, mix: Mix = .program, levels: [UUID: Double] = [:]) {
         self.output = output
         self.volume = volume
+        self.mix = mix
+        self.levels = levels
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = MonitorSettings()
+        output = try c.decodeIfPresent(Output.self, forKey: .output) ?? d.output
+        volume = try c.decodeIfPresent(Double.self, forKey: .volume) ?? d.volume
+        mix = try c.decodeIfPresent(Mix.self, forKey: .mix) ?? d.mix
+        levels = try c.decodeIfPresent([UUID: Double].self, forKey: .levels) ?? d.levels
+    }
+
+    public func level(for id: UUID) -> Double { levels[id] ?? 1 }
+
+    /// Per-input gains for the monitor, or nil when it plays the program mix.
+    public var customGains: [UUID: Float]? {
+        mix == .custom ? levels.mapValues { Float(min(1, max(0, $0))) } : nil
     }
 }
 
@@ -609,6 +749,7 @@ public struct Profile: Codable, Hashable, Sendable {
     public var broadcast = BroadcastSettings()
     public var monitor = MonitorSettings()
     public var chatTextSize = ChatTextSize.small
+    public var musicMode = MusicMode.library
 
     public init() {}
 
@@ -628,6 +769,7 @@ public struct Profile: Codable, Hashable, Sendable {
         broadcast = try c.decodeIfPresent(BroadcastSettings.self, forKey: .broadcast) ?? d.broadcast
         monitor = try c.decodeIfPresent(MonitorSettings.self, forKey: .monitor) ?? d.monitor
         chatTextSize = try c.decodeIfPresent(ChatTextSize.self, forKey: .chatTextSize) ?? d.chatTextSize
+        musicMode = try c.decodeIfPresent(MusicMode.self, forKey: .musicMode) ?? d.musicMode
     }
 
     public static func makeDefault() -> Profile {
@@ -639,5 +781,22 @@ public struct Profile: Codable, Hashable, Sendable {
     }
 
     public func videoSource(_ id: UUID) -> VideoSource? { videoSources.first { $0.id == id } }
+
+    /// The audio inputs that run: only the music input for the current music mode.
+    public var activeAudioSources: [AudioSource] {
+        audioSources.filter {
+            switch $0.kind {
+            case .music: musicMode == .library
+            case .webPlayer: musicMode == .sunoPlayer
+            default: true
+            }
+        }
+    }
+
+    /// The input music plays through in the current mode, if it's been added.
+    public var musicSource: AudioSource? {
+        let kind: AudioSourceKind = musicMode == .library ? .music : .webPlayer
+        return audioSources.first { $0.kind == kind }
+    }
     public func scene(_ id: UUID?) -> StudioScene? { scenes.first { $0.id == id } }
 }

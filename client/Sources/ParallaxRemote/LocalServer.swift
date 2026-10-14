@@ -4,8 +4,8 @@ import Observation
 import Security
 
 /// Platform settings for the built-in server, which reads them from its
-/// environment (see server/README.md). Kept in the Keychain, since some are
-/// secrets.
+/// environment (see server/README.md). Kept in a `SecretStore`, since some
+/// are secrets.
 public struct LocalServerCredentials: Codable, Hashable, Sendable {
     public var twitchClientID = ""
     /// Only for Twitch apps registered as Confidential.
@@ -16,7 +16,7 @@ public struct LocalServerCredentials: Codable, Hashable, Sendable {
     public var xStreamKey = ""
     public var xUsername = ""
 
-    private static let keychainAccount = "local-server-credentials"
+    public static let secretAccount = "local-server-credentials"
 
     public init() {}
 
@@ -72,15 +72,15 @@ public struct LocalServerCredentials: Codable, Hashable, Sendable {
         }
     }
 
-    public static func load() -> LocalServerCredentials {
-        guard let json = Keychain.read(keychainAccount),
+    public static func load(from secrets: SecretStore) -> LocalServerCredentials {
+        guard let json = secrets.read(secretAccount),
               let saved = try? JSONDecoder().decode(LocalServerCredentials.self, from: Data(json.utf8)) else { return .init() }
         return saved
     }
 
-    public func save() {
+    public func save(to secrets: SecretStore) {
         let json = (try? JSONEncoder().encode(self)).flatMap { String(data: $0, encoding: .utf8) }
-        Keychain.write(json, for: Self.keychainAccount)
+        secrets.write(json, for: Self.secretAccount)
     }
 }
 

@@ -61,8 +61,9 @@ import Testing
             == [RecordingOutput(resolution: .p1080, videoBitrateKbps: 30_000)], "old settings become the program output")
         var many = RecordingSettings()
         many.outputs = [RecordingOutput(sceneID: UUID(), resolution: .p720)]
-        let roundTrip = try JSONDecoder().decode(RecordingSettings.self, from: JSONEncoder().encode(many))
-        #expect(roundTrip == many, "no outputs from new settings are mistaken for old ones")
+        #expect(try JSONDecoder().decode(RecordingSettings.self, from: JSONEncoder().encode(many)) == many,
+                "new settings aren't mistaken for old ones")
+        #expect(r.quality == .balanced, "older profiles move to the constant-quality default")
         let broadcast = #"{"serverURL":"","uplinkVideoBitrateKbps":8000}"#
         let b = try JSONDecoder().decode(BroadcastSettings.self, from: Data(broadcast.utf8))
         #expect(b.stream == StreamSettings())
@@ -71,5 +72,26 @@ import Testing
         let remote = #"{"serverURL":"https://relay.example.com"}"#
         #expect(try JSONDecoder().decode(BroadcastSettings.self, from: Data(remote.utf8)).serverMode == .remote,
                 "keeps a server set up before the built-in one existed")
+    }
+
+    @Test func qualityModesUseHEVCAtRisingQuality() throws {
+        var r = RecordingSettings(directoryPath: "/tmp/x")
+        r.codec = .h264
+        #expect(r.effectiveCodec == .hevc)
+        r.quality = .custom
+        #expect(r.effectiveCodec == .h264)
+        #expect(RecordingQuality.custom.encoderQuality == nil)
+        #expect(RecordingQuality.custom.gigabytesPerHour(width: 3840, height: 2160, fps: 30, audioKbps: 256) == nil)
+
+        let modes: [RecordingQuality] = [.small, .balanced, .high]
+        let qualities = modes.compactMap(\.encoderQuality)
+        #expect(qualities == qualities.sorted() && Set(qualities).count == 3 && qualities.allSatisfy { $0 > 0 && $0 < 1 })
+        let sizes = try modes.map { try #require($0.gigabytesPerHour(width: 3840, height: 2160, fps: 30, audioKbps: 256)) }
+        #expect(sizes.map(\.upperBound) == sizes.map(\.upperBound).sorted())
+        // Two hours of 4K30 screen + camera at Balanced fits in 10 GB.
+        #expect(sizes[1].upperBound * 2 <= 10.5)
+        let hd = try #require(RecordingQuality.balanced.gigabytesPerHour(width: 1920, height: 1080, fps: 30, audioKbps: 256))
+        let uhd60 = try #require(RecordingQuality.balanced.gigabytesPerHour(width: 3840, height: 2160, fps: 60, audioKbps: 256))
+        #expect(hd.upperBound < sizes[1].upperBound && uhd60.upperBound > sizes[1].upperBound)
     }
 }

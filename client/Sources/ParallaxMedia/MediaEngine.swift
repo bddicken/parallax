@@ -9,6 +9,8 @@ import ParallaxCore
 @MainActor
 public final class MediaEngine {
     public let preview = PreviewSink()
+    /// Plays into the mixer through the profile's Music input, if it has one.
+    public let music = SongPlayer()
     public var onLevels: ((MixerLevels) -> Void)?
     public var onSourceIssue: ((UUID, SourceIssue) -> Void)?
 
@@ -32,6 +34,9 @@ public final class MediaEngine {
     /// Save it so next launch goes straight to the right device.
     public var onVideoSourceResolved: ((UUID, VideoSourceKind) -> Void)?
     public var onAudioSourceResolved: ((UUID, AudioSourceKind) -> Void)?
+    /// A recording file failed partway through. `stopped` is true if the
+    /// recorder couldn't carry on in a new file; call `stopRecording()`.
+    public var onRecordingProblem: ((_ message: String, _ stopped: Bool) -> Void)?
 
     private var feedLines: [ChatOverlayLine] = []
     private var feedSize = ChatOverlayRenderer.feedSize
@@ -80,19 +85,22 @@ public final class MediaEngine {
             registry[source.id]?.setDelay(ms: source.delayMs)
         }
 
-        let wantedAudio = Dictionary(uniqueKeysWithValues: profile.audioSources.map { ($0.id, $0) })
+        // Only the music input for the current music mode runs.
+        let audioSources = profile.activeAudioSources
+        let wantedAudio = Dictionary(uniqueKeysWithValues: audioSources.map { ($0.id, $0) })
         for (id, running) in audioNodes where wantedAudio[id]?.kind != running.kind {
             running.node.stop()
             audioNodes[id] = nil
         }
-        mixer.configure(profile.audioSources)
-        for source in profile.audioSources where audioNodes[source.id] == nil {
+        mixer.configure(audioSources)
+        for source in audioSources where audioNodes[source.id] == nil {
             let node = makeAudioNode(source)
             audioNodes[source.id] = (source.kind, node)
             node.start()
         }
 
-        compositor.update(scenes: profile.scenes, output: profile.output)
+        compositor.update(scenes: profile.scenes, output: profile.output,
+                          notRecorded: Set(profile.videoSources.filter { !$0.isInRecording }.map(\.id)))
         scenes = profile.scenes
         chatTextSize = profile.chatTextSize
         resizeChatFeed()
@@ -104,6 +112,7 @@ public final class MediaEngine {
     private func applyMonitor(_ settings: MonitorSettings) {
         let previous = monitorSettings
         monitorSettings = settings
+        mixer.setMonitorMix(settings.customGains)
         if settings.output == previous.output, monitor != nil || settings.output == .off {
             monitor?.setVolume(settings.volume)
             return
@@ -115,7 +124,7 @@ public final class MediaEngine {
     /// system default output changes.
     public func restartMonitor() {
         if let monitor {
-            sinks.remove(monitor)
+            mixer.setMonitor(nil)
             monitor.stop()
         }
         monitor = nil
@@ -138,7 +147,7 @@ public final class MediaEngine {
         do {
             let m = try AudioMonitor(deviceID: deviceID, volume: monitorSettings.volume)
             monitor = m
-            sinks.add(m)
+            mixer.setMonitor(m)
         } catch {
             monitorError = error.localizedDescription
         }
@@ -184,7 +193,7 @@ public final class MediaEngine {
     /// the canvas and the chosen text size.
     private func resizeChatFeed() {
         let size = chatFeedBoxSize() ?? feedSize
-        let scale = CGFloat(max(canvas.height, 1)) / 1080 * chatTextSize.scale
+        let scale = CGFloat(Double(max(canvas.height, 1)) / 1080 * chatTextSize.scale)
         guard size != feedSize || scale != feedScale else { return }
         feedSize = size
         feedScale = scale
@@ -218,43 +227,22 @@ public final class MediaEngine {
 
     // MARK: Recording
 
-    /// Recording in progress: one file per output, all started and stopped on
-    /// the same frame.
-    private struct Take {
-        struct Output {
-            let settings: RecordingOutput
-            /// File name without extension, e.g. "Parallax 2026-09-25 14.02.11 - Camera".
-            let name: String
-            /// nil once it has given up after repeated failures.
-            var recorder: Recorder?
-            var part = 1
-            var partStarted = hostNow()
-            var quickFailures = 0
-        }
+    /// One per output being recorded (the program and/or scenes on their
+    /// own), all started and stopped on the same frame.
+    private var recorders: [Recorder] = []
+    /// Recorders that couldn't carry on. Recording as a whole stops only
+    /// once none can.
+    private var stoppedRecorders: Set<ObjectIdentifier> = []
 
-        let id = UUID()
-        let settings: RecordingSettings
-        let directory: URL
-        let canvas: OutputSettings
-        let timecode = TimecodeClock()
-        var outputs: [Output] = []
-        /// Every file, in the order it was started.
-        var recorders: [Recorder] = []
-    }
-
-    private var take: Take?
-    /// Something went wrong mid-recording. Called on the main actor.
-    public var onRecordingIssue: ((String) -> Void)?
-
-    public var isRecording: Bool { take != nil }
+    public var isRecording: Bool { !recorders.isEmpty }
 
     /// The files being written now (for tests).
-    var activeRecorders: [Recorder] { take?.outputs.compactMap(\.recorder) ?? [] }
+    var activeRecorders: [Recorder] { recorders }
 
-    /// Starts recording every output in `settings`: the program and/or
-    /// individual scenes, each to its own file. Returns the files' URLs.
+    /// Starts recording every output in `settings`, each to its own file:
+    /// the program and/or scenes on their own. Returns the files' URLs.
     public func startRecording(_ settings: RecordingSettings) throws -> [URL] {
-        guard take == nil else { throw MediaError("Already recording.") }
+        guard recorders.isEmpty else { throw MediaError("Already recording.") }
         let sceneNames = Dictionary(scenes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         let outputs = settings.outputs.filter { $0.sceneID.map { sceneNames[$0] != nil } ?? true }
         guard !outputs.isEmpty else {
@@ -266,86 +254,72 @@ public final class MediaEngine {
             "\(year: .defaultDigits)-\(month: .twoDigits)-\(day: .twoDigits) \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)).\(minute: .twoDigits).\(second: .twoDigits)",
             timeZone: .current, calendar: .current))
         let names = RecordingSettings.fileNames(stamp: stamp, scenes: outputs.map { $0.sceneID.map { sceneNames[$0] ?? "" } })
-
-        var t = Take(settings: settings, directory: directory, canvas: compositor.outputSettings)
-        t.outputs = zip(outputs, names).map { Take.Output(settings: $0, name: $1) }
+        let timecode = TimecodeClock()
+        let canvas = compositor.outputSettings
+        var made: [Recorder] = []
         do {
-            for i in t.outputs.indices {
-                let r = try makeRecorder(t, output: i)
-                t.outputs[i].recorder = r
-                t.recorders.append(r)
+            for (file, name) in zip(outputs, names) {
+                let url = directory.appending(path: "\(name).\(settings.container.rawValue)")
+                made.append(try Recorder(url: url, recording: settings, target: file, output: canvas, timecode: timecode) {
+                    [weak self] recorder, message, stopped in
+                    Task { @MainActor in self?.recorderProblem(recorder, message, stopped: stopped) }
+                })
             }
         } catch {
-            t.recorders.forEach { $0.discard() }
+            made.forEach { $0.discard() }
             throw error
         }
-        take = t
+        recorders = made
+        stoppedRecorders = []
         // All at once, so every file starts on the same frame.
-        sinks.add(t.outputs.map { ($0.recorder!, $0.settings.sceneID) })
+        sinks.add(zip(made, outputs).map { ($0, $1.sceneID.map(OutputFeed.scene) ?? .recording) })
         updateActivity()
-        return t.recorders.map(\.url)
+        return made.map(\.url)
     }
 
-    /// Stops every file in the take. Returns the files written, and anything
-    /// that went wrong along the way.
-    public func stopRecording() async -> FinishedRecording {
-        guard let t = take else { return FinishedRecording(urls: [], problems: ["Not recording."]) }
-        take = nil
+    private func recorderProblem(_ recorder: Recorder, _ message: String, stopped: Bool) {
+        // Ignore a recording that has already been stopped.
+        guard recorders.contains(where: { $0 === recorder }) else { return }
+        if stopped { stoppedRecorders.insert(ObjectIdentifier(recorder)) }
+        let named = recorders.count > 1 ? "\(recorder.url.lastPathComponent): \(message)" : message
+        onRecordingProblem?(named, stoppedRecorders.count == recorders.count)
+    }
+
+    /// Stops every file. Throws only if nothing at all was saved.
+    public func stopRecording() async throws -> RecordingResult {
+        guard !recorders.isEmpty else { throw MediaError("Not recording.") }
+        let stopping = recorders
+        recorders = []
         updateActivity()
-        sinks.remove(t.outputs.compactMap(\.recorder))
+        sinks.remove(stopping)
         // Let frames and audio already handed out reach every file, so they
         // all end on the same frame and sample.
         await compositor.flush()
         await mixer.flush()
-        var results = [Recorder.Result](repeating: Recorder.Result(), count: t.recorders.count)
-        await withTaskGroup(of: (Int, Recorder.Result).self) { group in
-            for (i, r) in t.recorders.enumerated() { group.addTask { (i, await r.finish()) } }
+        var results = [Result<RecordingResult, Error>?](repeating: nil, count: stopping.count)
+        await withTaskGroup(of: (Int, Result<RecordingResult, Error>).self) { group in
+            for (i, r) in stopping.enumerated() {
+                group.addTask {
+                    do { return (i, .success(try await r.finish())) } catch { return (i, .failure(error)) }
+                }
+            }
             for await (i, result) in group { results[i] = result }
         }
-        return FinishedRecording(urls: results.compactMap(\.url), problems: results.compactMap(\.problem))
-    }
-
-    private func makeRecorder(_ t: Take, output index: Int) throws -> Recorder {
-        let output = t.outputs[index]
-        let name = output.part == 1 ? output.name : "\(output.name) (part \(output.part))"
-        let url = t.directory.appending(path: "\(name).\(t.settings.container.rawValue)")
-        let takeID = t.id, part = output.part
-        return try Recorder(url: url, recording: t.settings, output: output.settings, canvas: t.canvas,
-                            timecode: t.timecode) { [weak self] message in
-            Task { @MainActor in self?.recorderFailed(take: takeID, output: index, part: part, message) }
+        var files: [URL] = [], problems: [String] = []
+        for (recorder, result) in zip(stopping, results) {
+            let prefix = stopping.count > 1 ? "\(recorder.url.lastPathComponent): " : ""
+            switch result {
+            case .success(let r):
+                files += r.files
+                if let problem = r.problem { problems.append(prefix + problem) }
+            case .failure(let error):
+                problems.append(prefix + error.localizedDescription)
+            case nil:
+                break
+            }
         }
-    }
-
-    /// A file stopped being written partway (e.g. the encoder was reset or
-    /// the disk hiccuped). Everything up to then is kept; carry on in a new
-    /// part so a long take loses a moment instead of the rest of the take.
-    /// The parts share the take's time-of-day timecode, so they still line up.
-    private func recorderFailed(take id: UUID, output index: Int, part: Int, _ message: String) {
-        guard var t = take, t.id == id, t.outputs[index].part == part, let failed = t.outputs[index].recorder else { return }
-        sinks.remove(failed)
-        let file = failed.url.lastPathComponent
-        var output = t.outputs[index]
-        output.quickFailures = hostNow() - output.partStarted < 10 ? output.quickFailures + 1 : 0
-        output.recorder = nil
-        output.part += 1
-        output.partStarted = hostNow()
-        t.outputs[index] = output
-        defer { take = t }
-
-        // Failing again straight away (disk full, folder gone) won't fix itself.
-        guard output.quickFailures < 3 else {
-            onRecordingIssue?("Stopped recording \(file): \(message). What was recorded is saved.")
-            return
-        }
-        do {
-            let r = try makeRecorder(t, output: index)
-            t.outputs[index].recorder = r
-            t.recorders.append(r)
-            sinks.add(r, sceneID: output.settings.sceneID)
-            onRecordingIssue?("\(file) hit an error (\(message)). Recording continues in part \(output.part); everything before the error is saved.")
-        } catch {
-            onRecordingIssue?("Stopped recording \(file): \(message). What was recorded is saved. Could not start a new part: \(error.localizedDescription)")
-        }
+        guard !files.isEmpty else { throw MediaError(problems.first ?? "Nothing was recorded.") }
+        return RecordingResult(files: files, problem: problems.isEmpty ? nil : problems.joined(separator: "\n"))
     }
 
     // MARK: Power
@@ -354,9 +328,9 @@ public final class MediaEngine {
 
     /// While recording or streaming, keep the Mac and its displays awake
     /// (a sleeping display captures as black) and opt out of App Nap, which
-    /// would throttle capture and encoding when Parallax is in the background.
+    /// would throttle capture and encoding while Parallax is in the background.
     private func updateActivity() {
-        let busy = take != nil || uplink != nil
+        let busy = !recorders.isEmpty || uplink != nil
         if busy, activity == nil {
             activity = ProcessInfo.processInfo.beginActivity(
                 options: [.userInitiated, .idleDisplaySleepDisabled, .latencyCritical],
@@ -447,14 +421,10 @@ public final class MediaEngine {
             return DeviceAudioNode(uniqueID: uniqueID, name: name, modelID: modelID, onBuffer: onBuffer,
                                    onError: onError, onResolved: onResolved)
         case .systemAudio: return SystemAudioNode(onBuffer: onBuffer, onError: onError)
+        case .music: return MusicNode(player: music, mixer: mixer, id: id)
+        case .webPlayer: return WebAudioNode(onBuffer: onBuffer, onError: onError)
         }
     }
-}
-
-/// The files a take left on disk, and anything that went wrong along the way.
-public struct FinishedRecording: Sendable {
-    public var urls: [URL]
-    public var problems: [String]
 }
 
 extension VideoSourceKind {

@@ -81,11 +81,38 @@ import Testing
         #expect(decoded.gainDB == 3)
     }
 
+    @Test func sourcesFromOlderBuildsAreRecorded() throws {
+        let video = VideoSource(name: "Chat", kind: .chatFeed, isInRecording: false)
+        let audio = AudioSource(name: "Music", kind: .music, isInRecording: false)
+        #expect(try JSONDecoder().decode(VideoSource.self, from: JSONEncoder().encode(video)) == video)
+        #expect(try JSONDecoder().decode(AudioSource.self, from: JSONEncoder().encode(audio)) == audio)
+
+        var videoJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(video)) as! [String: Any]
+        var audioJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(audio)) as! [String: Any]
+        videoJSON["isInRecording"] = nil
+        audioJSON["isInRecording"] = nil
+        #expect(try JSONDecoder().decode(VideoSource.self, from: JSONSerialization.data(withJSONObject: videoJSON)).isInRecording)
+        #expect(try JSONDecoder().decode(AudioSource.self, from: JSONSerialization.data(withJSONObject: audioJSON)).isInRecording)
+    }
+
     @Test func monitorSettingsRoundTrip() throws {
         var profile = Profile.makeDefault()
         profile.monitor = MonitorSettings(output: .device(uid: "BuiltInSpeakerDevice"), volume: 0.25)
         let decoded = try JSONDecoder().decode(Profile.self, from: JSONEncoder().encode(profile))
         #expect(decoded.monitor == profile.monitor)
+    }
+
+    @Test func customMonitorMixRoundTripsAndOlderSettingsHearTheProgram() throws {
+        let mic = UUID()
+        let custom = MonitorSettings(output: .systemDefault, volume: 0.5, mix: .custom, levels: [mic: 0])
+        #expect(try JSONDecoder().decode(MonitorSettings.self, from: JSONEncoder().encode(custom)) == custom)
+        #expect(custom.customGains == [mic: 0])
+        #expect(custom.level(for: UUID()) == 1)
+
+        let old = try JSONDecoder().decode(MonitorSettings.self, from: Data(#"{"output":{"systemDefault":{}},"volume":0.5}"#.utf8))
+        #expect(old.mix == .program)
+        #expect(old.customGains == nil)
+        #expect(old.volume == 0.5)
     }
 
     @Test func corruptFileFallsBackToDefaultAndIsKept() throws {

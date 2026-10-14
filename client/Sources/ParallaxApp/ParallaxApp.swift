@@ -33,7 +33,10 @@ struct ParallaxApp: App {
                 .frame(minWidth: 1180, minHeight: 720)
                 .onAppear { delegate.model = model }
         }
-        .commands { SceneCommands(model: model) }
+        .commands {
+            SceneCommands(model: model)
+            MusicCommands(model: model)
+        }
 
         Settings {
             SettingsView()

@@ -15,7 +15,7 @@ Multistreaming from the Mac means uploading the full stream once per platform: 3
 
 - **Bandwidth**: the Mac uploads once, and the data center handles the fan-out.
 - **Resilience**: per-destination reconnects happen server-side, next to the platforms.
-- **Secrets**: platform OAuth tokens and stream keys live on the server. The client holds one bearer token (in the Keychain).
+- **Secrets**: platform OAuth tokens and stream keys live on the server. The client holds one bearer token (in an owner-only `secrets.json` next to the profile; not the Keychain, which re-prompts after every rebuild of a build without a team ID).
 - **Recording stays local** and uses its own encoder at higher bitrate, so uplink trouble never affects the recording.
 
 Costs: roughly 0.5–1 s of extra latency from the extra hop, plus a small VM. Prefer a host with generous included egress (DigitalOcean, Hetzner) over AWS, where egress is billed per GB.
@@ -34,6 +34,9 @@ Mic / interface ─┐
 System audio ────┴─▶ PCMNormalizer ─▶ DelayBuffer ─▶ ChannelStrip ─▶ AudioMixer ─▶ same sinks
                      (48 kHz float)   (sync delay,   (HPF, gate, EQ, (10 ms chunks,
                                       jitter, drift) gain, mute)     host clock, limiter)
+Music library ──▶ SongPlayer ──────── (pulled) ──▶ Ducker ─▶ ChannelStrip ─┘
+                  (decodes ahead,                  (under mics)
+                   gapless, fades)
 ```
 
 Modules (`client/Sources`):
@@ -50,8 +53,9 @@ Key decisions:
 - **Sources are global, scenes reference them.** A camera used in five scenes is captured once, and its delay applies everywhere.
 - **Everything runs on the host clock** (`CACurrentMediaTime`). The compositor ticks at the output fps. The mixer pulls 10 ms chunks and absorbs device clock drift in each input's `DelayBuffer`.
 - **Delays**: video delay keeps a short history of frames (copied out of the capture pool). Audio delay is a ring-buffer offset, and changing it live inserts silence or drops audio.
-- **Recording can write several files at once**: the program and/or individual scenes (say, a full-frame camera scene and a screen scene to edit together later). The compositor renders each recorded scene in the same tick as the program, with the same timestamp. Recorders are added to and removed from the sinks together, so every file starts and ends on the same frame and audio sample. QuickTime files also carry a matching time-of-day timecode track.
-- **Long recordings survive errors.** Files are written in 2 s fragments, so a failure mid-take loses about 2 s at most, and the file is never deleted. Recording then continues in a "(part 2)" file. While recording or streaming, the engine keeps the Mac and its displays awake and opts out of App Nap.
+- **Music is pulled, not pushed.** Captures push audio into a `DelayBuffer`, but `SongPlayer` is an `AudioPullSource` the mixer reads on its own clock, so files never drift or overrun. The mixer processes microphones first each chunk, and inputs with ducking on turn down while any unmuted mic is above -40 dBFS. The library (`library.json` plus copies of the song files) lives in a `Music` folder next to the profile.
+- **Suno Player mode** captures the Suno window with a Core Audio process tap (`WebAudioNode`). WebKit plays page audio from helper processes, and the tap includes only the ones macOS holds Parallax responsible for, never Parallax itself (its monitor would feed back) or other apps. `Profile.musicMode` picks which music input runs: the library player or the tap.
+- **Recording can write several files at once**: the program and/or scenes on their own (say, a full-frame camera scene and a screen scene to edit together later). Each recorded scene is a feed the compositor renders in the program's tick, with the same timestamp and without sources left out of the recording. Recorders join and leave the sinks together and hold audio that arrives before their first frame, so every file starts and ends on the same frame and audio sample. QuickTime files also carry matching time-of-day timecode. While recording or streaming, the engine keeps the Mac and its displays awake and opts out of App Nap.
 - **Chat overlays are just sources.** The engine renders chat into images the compositor places like any other source.
 
 ## Roadmap

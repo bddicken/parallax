@@ -11,7 +11,7 @@ struct StudioView: View {
             VStack(spacing: 0) {
                 ScenesPanel()
                 Divider()
-                SourcesPanel()
+                SourcesOrMusicPanel()
             }
             .frame(minWidth: 220, idealWidth: 250, maxWidth: 340)
 

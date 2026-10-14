@@ -38,6 +38,8 @@ public actor MockBroadcastService: BroadcastService {
         broadcast(.status(current))
     }
 
+    public func setThumbnail(_ image: Data) async throws {}
+
     public func sendChat(_ request: SendChatRequest) async throws {
         let platforms = request.platforms ?? Platform.allCases.filter(\.supportsChat)
         for platform in platforms {

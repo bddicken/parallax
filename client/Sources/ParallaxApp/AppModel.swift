@@ -20,17 +20,20 @@ final class AppModel {
 
     let devices = DeviceCatalog()
     let broadcast = BroadcastModel()
+    let music: MusicModel
     /// parallax-server run by the app, when Settings › Server says "This Mac".
     let localServer: LocalServer
-    /// Platform settings for `localServer` (from the Keychain).
-    private(set) var localServerCredentials = LocalServerCredentials.load()
+    /// Server token and platform settings, kept next to the profile.
+    let secrets: SecretStore
+    /// Platform settings for `localServer` (from `secrets`).
+    private(set) var localServerCredentials: LocalServerCredentials
     var selectedItemID: UUID?
     var levels: [UUID: AudioLevel] = [:]
     var masterLevel = AudioLevel.silent
     var recordingStartedAt: Date?
     /// Sending video to the server; nil when not streaming.
     var uplinkState: UplinkState?
-    /// The files from the last take, to show in Finder.
+    /// The last recording's files (more than one if a file failed partway).
     var lastRecordingURLs: [URL] = []
     var sourceErrors: [UUID: String] = [:]
     var banner: String?
@@ -54,8 +57,19 @@ final class AppModel {
     init() {
         let firstRun = !FileManager.default.fileExists(atPath: store.url.path)
         profile = store.load()
+        let directory = store.url.deletingLastPathComponent()
+        secrets = SecretStore(url: directory.appending(path: "secrets.json"))
+        // A scratch profile (PARALLAX_PROFILE) starts empty instead of
+        // reading, and prompting for, what older builds kept in the Keychain.
+        if ProcessInfo.processInfo.environment["PARALLAX_PROFILE"] == nil {
+            secrets.importFromKeychain([BroadcastModel.serverTokenAccount, LocalServerCredentials.secretAccount])
+        }
+        localServerCredentials = LocalServerCredentials.load(from: secrets)
         // Next to the profile, so a scratch profile (PARALLAX_PROFILE) gets its own sign-ins.
-        localServer = LocalServer(directory: store.url.deletingLastPathComponent().appending(path: "Server"))
+        localServer = LocalServer(directory: directory.appending(path: "Server"))
+        // One library for every profile, scratch ones included, so songs
+        // downloaded while trying a test build stay.
+        music = MusicModel(player: engine.music)
         engine.onLevels = { [weak self] levels in
             self?.levels = levels.inputs
             self?.masterLevel = levels.master
@@ -92,6 +106,14 @@ final class AppModel {
                 sourceErrors[id] = nil
             }
         }
+        music.mode = profile.musicMode
+        music.ensureOutput = { [weak self] in self?.ensureMusicSource() }
+        music.onProblem = { [weak self] in self?.banner = $0 }
+        engine.onRecordingProblem = { [weak self] message, stopped in
+            guard let self else { return }
+            banner = message
+            if stopped { Task { await self.stopRecording() } }
+        }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
         localServer.onStateChanged = { [weak self] _ in self?.updateBroadcastConnection() }
         // Save identities that sources re-found (renumbered display, replugged
@@ -105,7 +127,6 @@ final class AppModel {
             profile.audioSources[i].kind = kind
         }
         engine.onMonitorStateChanged = { [weak self] in self?.monitorError = self?.engine.monitorError }
-        engine.onRecordingIssue = { [weak self] message in self?.banner = message }
         // Follow device changes: a plugged-in headset, a new system default.
         devices.onOutputsChanged = { [weak self] in
             guard let self, profile.monitor.output != .off else { return }
@@ -162,6 +183,7 @@ final class AppModel {
     func saveNow() {
         saveTask?.cancel()
         try? store.save(profile)
+        music.saveNow()
     }
 
     // MARK: Undo
@@ -198,6 +220,10 @@ final class AppModel {
         let live = profile.programSceneID
         var next = snapshot
         if next.scene(live) != nil { next.programSceneID = live }
+        // Audio changes aren't undo steps, so undoing a layout edit mustn't
+        // roll back a fader (or remove the input music is playing through).
+        next.audioSources = profile.audioSources
+        next.musicMode = profile.musicMode
         profile = next
         if next.programSceneID != live { engine.setProgram(next.programSceneID, transition: profile.transition) }
         if selectedItem == nil { selectedItemID = nil }
@@ -456,8 +482,50 @@ final class AppModel {
     }
 
     func removeAudioSource(_ id: UUID) {
+        if profile.audioSources.first(where: { $0.id == id })?.kind == .music { music.stop() }
         profile.audioSources.removeAll { $0.id == id }
+        profile.monitor.levels[id] = nil
         sourceErrors[id] = nil
+    }
+
+    // MARK: Music
+
+    static let musicVolumeRange: ClosedRange<Double> = -40...6
+    /// Music starts well under your voice.
+    private static let defaultMusicGainDB = -12.0
+
+    /// The mixer input music plays through in the current mode.
+    var musicSource: AudioSource? { profile.musicSource }
+
+    /// Adds the current mode's music input to the mixer if it isn't there,
+    /// ducking under your mic from the start.
+    func ensureMusicSource() {
+        guard musicSource == nil else { return }
+        let (kind, name): (AudioSourceKind, String) = profile.musicMode == .library ? (.music, "Music") : (.webPlayer, "Suno Player")
+        // Music kept out of recordings in one mode stays out in the other.
+        let otherMusic = profile.audioSources.first { $0.kind == .music || $0.kind == .webPlayer }
+        profile.audioSources.append(AudioSource(name: name, kind: kind, gainDB: Self.defaultMusicGainDB,
+                                                channelMode: .stereo, duck: DuckSettings(isEnabled: true),
+                                                isInRecording: otherMusic?.isInRecording ?? true))
+    }
+
+    /// Switches between the music library and Suno's own web player.
+    func setMusicMode(_ mode: MusicMode) {
+        guard mode != profile.musicMode else { return }
+        profile.musicMode = mode
+        music.mode = mode
+        if mode == .sunoPlayer {
+            ensureMusicSource()
+            music.openSuno()
+        }
+    }
+
+    var musicVolumeDB: Double { musicSource?.gainDB ?? Self.defaultMusicGainDB }
+
+    func setMusicVolume(_ db: Double) {
+        ensureMusicSource()
+        guard let id = musicSource?.id else { return }
+        updateAudioSource(id) { $0.gainDB = min(max(db, -60), 20) }
     }
 
     // MARK: Permissions
@@ -522,6 +590,12 @@ final class AppModel {
 
     var isRecording: Bool { recordingStartedAt != nil }
 
+    /// Names of the sources the stream has but the recording leaves out.
+    var recordingLeavesOut: [String] {
+        profile.videoSources.filter { !$0.isInRecording }.map(\.name)
+            + profile.activeAudioSources.filter { !$0.isInRecording }.map(\.name)
+    }
+
     func toggleRecording() {
         if isRecording {
             Task { await stopRecording() }
@@ -539,10 +613,12 @@ final class AppModel {
     func stopRecording() async {
         guard isRecording else { return }
         recordingStartedAt = nil
-        let result = await engine.stopRecording()
-        lastRecordingURLs = result.urls
-        if !result.problems.isEmpty {
-            banner = "Recording problem: " + result.problems.joined(separator: " ")
+        do {
+            let result = try await engine.stopRecording()
+            lastRecordingURLs = result.files
+            if let problem = result.problem { banner = problem }
+        } catch {
+            banner = "Recording failed: \(error.localizedDescription)"
         }
     }
 
@@ -573,7 +649,7 @@ final class AppModel {
     }
 
     func saveLocalServerCredentials(_ credentials: LocalServerCredentials) {
-        credentials.save()
+        credentials.save(to: secrets)
         localServerCredentials = credentials
         connectBroadcast()
     }
@@ -592,7 +668,7 @@ final class AppModel {
             }
         case .remote:
             if let url = URL(string: settings.serverURL), url.scheme != nil {
-                connection = .server(url, token: BroadcastModel.remoteServerToken)
+                connection = .server(url, token: BroadcastModel.remoteServerToken(in: secrets))
             } else {
                 connection = settings.useMockServer ? .mock : .offline(reason: nil)
             }
@@ -610,8 +686,13 @@ final class AppModel {
         let request = StartBroadcastRequest(destinationIDs: destinationIDs,
                                             title: settings.title.trimmingCharacters(in: .whitespaces),
                                             privacy: settings.privacy.rawValue)
-        if await !broadcast.start(request) {
+        broadcast.thumbnailProblem = nil
+        guard await broadcast.start(request) else {
             stopUplink()
+            return
+        }
+        if let path = settings.thumbnailPath, broadcast.includes(.youtube, in: destinationIDs) {
+            await broadcast.setThumbnail(contentsOf: URL(filePath: path))
         }
     }
 

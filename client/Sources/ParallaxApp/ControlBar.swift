@@ -8,7 +8,22 @@ struct ControlBar: View {
     @State private var showingGoLive = false
 
     var body: some View {
-        HStack(spacing: 14) {
+        // The bar must never be wider than the column: that would stretch the
+        // preview, inspector, and mixer above it past the column's edge. As
+        // space runs out, the music controls shrink, then go (the Music tab
+        // still has them).
+        ViewThatFits(in: .horizontal) {
+            ForEach(MusicMiniPlayer.Style.allCases, id: \.self) { bar(music: $0) }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .sheet(isPresented: $showingGoLive) {
+            GoLiveSheet().environment(model)
+        }
+    }
+
+    private func bar(music: MusicMiniPlayer.Style) -> some View {
+        HStack(spacing: 12) {
             Picker("Transition", selection: transitionBinding(\.kind)) {
                 Text("Cut").tag(TransitionKind.cut)
                 Text("Fade").tag(TransitionKind.fade)
@@ -18,22 +33,28 @@ struct ControlBar: View {
             .frame(width: 110)
             if model.profile.transition.kind == .fade {
                 Stepper(value: transitionBinding(\.durationMs), in: 100...3000, step: 100) {
-                    Text("\(model.profile.transition.durationMs) ms").monospacedDigit()
+                    Text("\(model.profile.transition.durationMs) ms").monospacedDigit().fixedSize()
                 }
             }
 
             Divider().frame(height: 20)
-            MonitorControl()
+            // Music buttons matter more than the full headphone name.
+            MonitorControl(maxLabelWidth: music == .full || music == .noTitle ? 170 : 100)
+            if music != .hidden {
+                Divider().frame(height: 20)
+                MusicMiniPlayer(style: music)
+            }
 
             Spacer()
 
             if let first = model.lastRecordingURLs.first, !model.isRecording {
                 let urls = model.lastRecordingURLs
                 Button {
-                    NSWorkspace.shared.activateFileViewerSelecting(urls)
+                    NSWorkspace.shared.activateFileViewerSelecting(model.lastRecordingURLs)
                 } label: {
                     Label(urls.count == 1 ? first.lastPathComponent : "\(urls.count) files", systemImage: "film")
                         .lineLimit(1)
+                        .frame(maxWidth: 180)
                 }
                 .buttonStyle(.borderless)
                 .help(urls.count == 1 ? "Show in Finder" : "Show in Finder: " + urls.map(\.lastPathComponent).joined(separator: ", "))
@@ -57,6 +78,7 @@ struct ControlBar: View {
             }
             .controlSize(.large)
             .help(recordingSummary)
+            RecordingContentsButton()
 
             Button { showingGoLive = true } label: {
                 HStack(spacing: 6) {
@@ -73,21 +95,25 @@ struct ControlBar: View {
                 .buttonStyle(.borderless)
                 .help("Settings")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .sheet(isPresented: $showingGoLive) {
-            GoLiveSheet().environment(model)
-        }
     }
 
     private var recordingSummary: String {
         let r = model.profile.recording
         let files = r.outputs.map { output in
             let size = output.resolution.size(for: model.profile.output)
-            return "\(model.recordingLabel(output)) \(size.width)×\(size.height) \(output.videoBitrateKbps / 1000) Mbps"
+            let bitrate = r.quality == .custom ? " \(output.videoBitrateKbps / 1000) Mbps" : ""
+            return "\(model.recordingLabel(output)) \(size.width)×\(size.height)\(bitrate)"
         }
         guard !files.isEmpty else { return "Nothing to record: choose what to record in Settings › Recording" }
-        return "Records \(files.joined(separator: ", ")) at \(model.profile.output.fps) fps, \(r.codec == .hevc ? "HEVC" : "H.264") (⇧⌘R)"
+        let quality = switch r.quality {
+        case .small: "HEVC, smaller files"
+        case .balanced: "HEVC, balanced quality"
+        case .high: "HEVC, high quality"
+        case .custom: r.codec == .hevc ? "HEVC" : "H.264"
+        }
+        let summary = "Records \(files.joined(separator: ", ")) at \(model.profile.output.fps) fps, \(quality) (⇧⌘R)"
+        let left = model.recordingLeavesOut
+        return left.isEmpty ? summary : summary + "\nLeaves out: " + left.joined(separator: ", ")
     }
 
     private func transitionBinding<T>(_ path: WritableKeyPath<TransitionSettings, T>) -> Binding<T> {
@@ -185,7 +211,7 @@ struct GoLiveSheet: View {
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
 
             if youTubeSelected {
-                YouTubeOptions().disabled(broadcast.status.live)
+                YouTubeOptions()
             }
 
             if let error = broadcast.connectionError {
@@ -212,18 +238,20 @@ struct GoLiveSheet: View {
 }
 
 /// YouTube makes a new video for each broadcast, so it needs a title and
-/// visibility. Remembered for next time.
+/// visibility, and can take a thumbnail. Remembered for next time.
 private struct YouTubeOptions: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
+        let live = model.broadcast.status.live
         Grid(alignment: .leading, verticalSpacing: 8) {
             GridRow {
                 Text("Title")
                 TextField("Title", text: $model.profile.broadcast.title, prompt: Text("What's this stream about?"))
                     .textFieldStyle(.roundedBorder)
                     .labelsHidden()
+                    .disabled(live)
             }
             GridRow {
                 Text("YouTube")
@@ -233,9 +261,79 @@ private struct YouTubeOptions: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .fixedSize()
+                .disabled(live)
+            }
+            GridRow {
+                Text("Thumbnail")
+                ThumbnailPicker()
+            }
+            if let problem = model.broadcast.thumbnailProblem {
+                GridRow {
+                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
         .font(.callout)
+    }
+}
+
+/// Picks the image file for the YouTube thumbnail. It's uploaded when you go
+/// live, or right away if you change it while live.
+private struct ThumbnailPicker: View {
+    @Environment(AppModel.self) private var model
+    @State private var preview: NSImage?
+
+    var body: some View {
+        let path = model.profile.broadcast.thumbnailPath
+        HStack(spacing: 8) {
+            if let path {
+                Group {
+                    if let preview {
+                        Image(nsImage: preview).resizable().aspectRatio(contentMode: .fill)
+                    } else {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                            .help("Can't open \(path)")
+                    }
+                }
+                .frame(width: 64, height: 36)
+                .background(.quaternary)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                Text(URL(filePath: path).lastPathComponent)
+                    .lineLimit(1).truncationMode(.middle)
+                    .help(path)
+                Button("Change…", action: choose)
+                Button {
+                    model.profile.broadcast.thumbnailPath = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .help("Don't use a thumbnail")
+            } else {
+                Button("Choose…", action: choose)
+                Text("JPEG or PNG, ideally 1280 × 720").foregroundStyle(.secondary)
+            }
+            if model.broadcast.isUploadingThumbnail {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .task(id: path) { preview = path.flatMap(NSImage.init(contentsOfFile:)) }
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.jpeg, .png, .image]
+        if let path = model.profile.broadcast.thumbnailPath {
+            panel.directoryURL = URL(filePath: path).deletingLastPathComponent()
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        model.profile.broadcast.thumbnailPath = url.path
+        if model.broadcast.isLive(on: .youtube) {
+            Task { await model.broadcast.setThumbnail(contentsOf: url) }
+        }
     }
 }
 

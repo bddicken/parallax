@@ -1,82 +1,94 @@
 import AVFoundation
 import Foundation
+import os
 import ParallaxCore
+import VideoToolbox
+
+private let log = Logger(subsystem: "com.bddicken.parallax", category: "recording")
+
+/// What a recording left on disk.
+public struct RecordingResult: Sendable {
+    /// Every file written, in order. There's more than one if a file failed
+    /// partway through and recording carried on in a new one.
+    public let files: [URL]
+    /// What went wrong, if anything did. The files are still worth keeping.
+    public let problem: String?
+}
 
 /// Writes one recording output (the program or a single scene) to a local
 /// file. Recording is independent of streaming so a flaky uplink never
 /// affects the local copy.
+///
+/// The recorder runs the hardware video encoder itself and AVAssetWriter
+/// only writes the file. If the encoder fails, a new one takes over and the
+/// same file carries on, missing at most a moment of video.
+///
+/// Files are fragmented, so whatever was written plays even if the file is
+/// never finished. If the file itself fails partway through (a full disk),
+/// it is kept as-is and recording carries on in a new file ("… (2).mp4").
 public final class Recorder: MediaSink, @unchecked Sendable {
-    /// What `finish` left on disk: the file, if anything was recorded, and
-    /// what went wrong, if anything.
-    struct Result: Sendable {
-        var url: URL?
-        var problem: String?
-    }
-
+    /// The first file.
     public let url: URL
     /// The recording's frame size (the canvas, or scaled down from it).
     public let encodedSize: CGSize
-    private let writer: AVAssetWriter
-    private let videoInput: AVAssetWriterInput
-    private let audioInput: AVAssetWriterInput
-    private let timecodeInput: AVAssetWriterInput?
-    private let adaptor: AVAssetWriterInputPixelBufferAdaptor
-    private let audioFormat: CMAudioFormatDescription
-    private let timecodeFormat: CMTimeCodeFormatDescription?
+    private let recording: RecordingSettings
+    private let output: OutputSettings
     private let timecode: TimecodeClock
-    private let fps: Int
-    private let onFailure: @Sendable (String) -> Void
+    private let audioFormat: CMAudioFormatDescription
+    /// What the encoder produces; each file needs it up front.
+    private let videoFormat: CMFormatDescription
+    private let onProblem: @Sendable (Recorder, _ message: String, _ stopped: Bool) -> Void
     private let queue = DispatchQueue(label: "parallax.recorder", qos: .userInitiated)
+    private var encoder: RecordingEncoder!
+
+    /// A file that fails sooner than this after starting probably fails for
+    /// a reason a new file won't fix (a full disk), so recording stops.
+    static let minFileSecondsToRetry: Double = 10
+    private static let maxFiles = 20
+    /// More encoder failures than this in a minute means a new encoder isn't
+    /// helping, so recording stops.
+    static let maxEncoderRestartsPerMinute = 5
 
     // Only touched on `queue`.
-    private var sessionStart: CMTime?
-    private var lastVideoPTS: CMTime?
-    /// Audio that arrived before the first frame. Every file in a take gets
-    /// the same frames and audio, but not always in the same order, so hold
-    /// early audio rather than dropping it; then all files start on the same
-    /// sample.
-    private var pendingAudio: [CMSampleBuffer] = []
+    private var file: File?
+    private var files: [File] = []
+    private var problems: [String] = []
+    /// The first frame of the first file, for "error at 32:10" messages.
+    private var recordingStart: CMTime?
+    /// False once `finish()` starts: no new frames go in.
+    private var accepting = true
     private var finished = false
-    private var failure: String?
+    /// Ask the encoder for a keyframe with the next frame.
+    private var needsKeyFrame = true
+    /// Drop encoded frames until a keyframe: a file has to start with one,
+    /// and so does the video after frames were lost.
+    private var waitingForKeyFrame = true
+    /// Encoded frames waiting for the file to take them.
+    private var pending: [CMSampleBuffer] = []
+    /// Audio that arrived before the file's first frame. Every recorder in a
+    /// recording gets the same frames and audio, but the encoders return
+    /// their first frame at different times, so hold early audio rather than
+    /// drop it; then all files start on the same sample.
+    private var earlyAudio: [CMSampleBuffer] = []
+    private var encoderRestarts: [Double] = []
+    private var encoderGaveUp = false
+    private var droppedFrames = 0
 
-    /// `timecode` should be shared by every recorder in a take, so the files
-    /// carry matching timecode. `onFailure` is called once, on a background
-    /// queue, if writing fails mid-recording.
-    init(url: URL, recording: RecordingSettings, output: RecordingOutput, canvas: OutputSettings,
-         timecode: TimecodeClock, onFailure: @escaping @Sendable (String) -> Void) throws {
+    /// `target` is what this recorder records and at what size.
+    /// `onProblem` is called on the recorder's queue when a file fails
+    /// partway through; `stopped` is true if recording couldn't carry on.
+    /// `timecode` should be shared by every recorder started together, so
+    /// their files carry matching timecode.
+    init(url: URL, recording: RecordingSettings, target: RecordingOutput, output: OutputSettings,
+         timecode: TimecodeClock = TimecodeClock(),
+         onProblem: @escaping @Sendable (Recorder, _ message: String, _ stopped: Bool) -> Void = { _, _, _ in }) throws {
         self.url = url
-        self.timecode = timecode
-        fps = canvas.fps
-        self.onFailure = onFailure
-
-        writer = try AVAssetWriter(outputURL: url, fileType: recording.container == .mov ? .mov : .mp4)
-        // Fragmented output keeps everything up to the last fragment if we
-        // crash or writing fails, so at most this much is lost.
-        writer.movieFragmentInterval = CMTime(seconds: 2, preferredTimescale: 600)
-
-        let size = output.resolution.size(for: canvas)
+        let size = target.resolution.size(for: output)
         encodedSize = CGSize(width: size.width, height: size.height)
-        let video: [String: Any] = [
-            AVVideoCodecKey: recording.codec == .hevc ? AVVideoCodecType.hevc : AVVideoCodecType.h264,
-            AVVideoWidthKey: size.width,
-            AVVideoHeightKey: size.height,
-            // The canvas may be larger than the recording; scale to fit.
-            AVVideoScalingModeKey: AVVideoScalingModeResizeAspect,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: output.videoBitrateKbps * 1000,
-                AVVideoExpectedSourceFrameRateKey: canvas.fps,
-                AVVideoMaxKeyFrameIntervalKey: canvas.fps * 2,
-                AVVideoAllowFrameReorderingKey: true,
-            ],
-            AVVideoColorPropertiesKey: [
-                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
-                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
-            ],
-        ]
-        videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: video)
-        videoInput.expectsMediaDataInRealTime = true
-        adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: nil)
+        self.recording = recording
+        self.output = output
+        self.timecode = timecode
+        self.onProblem = onProblem
 
         var asbd = AudioStreamBasicDescription(
             mSampleRate: AudioFormat.sampleRate, mFormatID: kAudioFormatLinearPCM,
@@ -88,183 +100,280 @@ public final class Recorder: MediaSink, @unchecked Sendable {
                                        magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &desc)
         guard let desc else { throw MediaError("Could not create audio format.") }
         audioFormat = desc
-        let audio: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: AudioFormat.sampleRate,
-            AVNumberOfChannelsKey: 2,
-            AVEncoderBitRateKey: recording.audioBitrateKbps * 1000,
-        ]
-        audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audio, sourceFormatHint: desc)
-        audioInput.expectsMediaDataInRealTime = true
 
-        guard writer.canAdd(videoInput), writer.canAdd(audioInput) else { throw MediaError("Unsupported recording settings.") }
-        writer.add(videoInput)
-        writer.add(audioInput)
-
-        // A time-of-day timecode track (QuickTime only), so editors can line
-        // up the files from one take automatically.
-        var tcFormat: CMTimeCodeFormatDescription?
-        if recording.container == .mov {
-            CMTimeCodeFormatDescriptionCreate(
-                allocator: nil, timeCodeFormatType: kCMTimeCodeFormatType_TimeCode32,
-                frameDuration: CMTime(value: 1, timescale: CMTimeScale(canvas.fps)), frameQuanta: UInt32(canvas.fps),
-                flags: kCMTimeCodeFlag_24HourMax, extensions: nil, formatDescriptionOut: &tcFormat)
-        }
-        if let tcFormat {
-            let input = AVAssetWriterInput(mediaType: .timecode, outputSettings: nil, sourceFormatHint: tcFormat)
-            input.expectsMediaDataInRealTime = true
-            let association = AVAssetTrack.AssociationType.timecode.rawValue
-            if writer.canAdd(input) {
-                writer.add(input)
-                if videoInput.canAddTrackAssociation(withTrackOf: input, type: association) {
-                    videoInput.addTrackAssociation(withTrackOf: input, type: association)
-                }
-                timecodeInput = input
-            } else {
-                timecodeInput = nil
-            }
-        } else {
-            timecodeInput = nil
-        }
-        timecodeFormat = tcFormat
-
-        guard writer.startWriting() else {
-            throw MediaError("Could not start recording: \(writer.error?.localizedDescription ?? "unknown error")")
+        let config = RecordingEncoder.Config(recording: recording, target: target, output: output)
+        videoFormat = try RecordingEncoder.formatDescription(for: config, sourceWidth: output.width, sourceHeight: output.height)
+        let first = try File(url: url, recording: recording, fps: output.fps, videoFormat: videoFormat, audioFormat: desc)
+        file = first
+        files = [first]
+        encoder = try RecordingEncoder(config: config) { [weak self] generation, status, sample in
+            guard let self else { return }
+            let sample = sample.map(Unchecked.init)
+            queue.async { self.encoded(sample?.value, status: status, generation: generation) }
         }
     }
 
     public func appendVideo(_ pixelBuffer: CVPixelBuffer, pts: CMTime) {
         let pb = Unchecked(pixelBuffer)
         queue.async { [self] in
-            guard !finished, writer.status == .writing else { return checkFailed() }
-            if sessionStart == nil { startSession(at: pts) }
-            if videoInput.isReadyForMoreMediaData {
-                adaptor.append(pb.value, withPresentationTime: pts)
-                lastVideoPTS = pts
+            guard accepting, !encoderGaveUp, let file else { return }
+            guard file.writer.status == .writing else { return failed(file, at: pts) }
+            // The encoder is a second behind: skip this frame rather than
+            // queue up more.
+            if encoder.inFlight >= output.fps {
+                droppedFrames += 1
+                return
             }
-            checkFailed()
+            let status = encoder.encode(pb.value, pts: pts, keyFrame: needsKeyFrame)
+            if status == noErr {
+                needsKeyFrame = false
+            } else {
+                encoderFailed(status, generation: encoder.generation, at: pts)
+            }
         }
     }
 
     public func appendAudio(_ samples: UnsafeBufferPointer<Float>, frameCount: Int, pts: CMTime) {
         let data = Data(buffer: samples)
         queue.async { [self] in
-            guard !finished, writer.status == .writing,
-                  let sample = makeAudioSample(data, frames: frameCount, pts: pts) else { return }
-            guard let start = sessionStart else {
-                pendingAudio.append(sample)
-                // A few frames' worth is plenty; older audio would be cut anyway.
-                if pendingAudio.count > 50 { pendingAudio.removeFirst() }
+            guard accepting, let file else { return }
+            guard let start = file.sessionStart else {
+                if let sample = makeAudioSample(data, frames: frameCount, pts: pts) {
+                    earlyAudio.append(sample)
+                    // Encoders return their first frame well within this.
+                    if earlyAudio.count > 300 { earlyAudio.removeFirst() }
+                }
                 return
             }
-            if pts >= start, audioInput.isReadyForMoreMediaData { audioInput.append(sample) }
-            checkFailed()
+            guard pts >= start else { return }
+            guard file.writer.status == .writing else { return failed(file, at: pts) }
+            if file.audioInput.isReadyForMoreMediaData, let sample = makeAudioSample(data, frames: frameCount, pts: pts),
+               !file.audioInput.append(sample) {
+                return failed(file, at: pts)
+            }
+            drain()
         }
     }
 
-    private func startSession(at pts: CMTime) {
-        writer.startSession(atSourceTime: pts)
-        sessionStart = pts
-        appendTimecode(at: pts)
-        for sample in pendingAudio where CMSampleBufferGetPresentationTimeStamp(sample) >= pts {
-            if audioInput.isReadyForMoreMediaData { audioInput.append(sample) }
-        }
-        pendingAudio = []
-    }
-
-    /// The whole timecode track is one sample: the timecode of the first
-    /// frame. Players and editors count on from there. Finished right away so
-    /// the writer never holds other tracks back waiting for more timecode.
-    private func appendTimecode(at pts: CMTime) {
-        guard let timecodeInput, let timecodeFormat else { return }
-        defer { timecodeInput.markAsFinished() }
-        var frame = timecode.frameNumber(at: pts, fps: fps).bigEndian
-        var block: CMBlockBuffer?
-        guard CMBlockBufferCreateWithMemoryBlock(
-            allocator: nil, memoryBlock: nil, blockLength: 4, blockAllocator: nil, customBlockSource: nil,
-            offsetToData: 0, dataLength: 4, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
-            let block,
-            CMBlockBufferReplaceDataBytes(with: &frame, blockBuffer: block, offsetIntoDestination: 0, dataLength: 4) == noErr
-        else { return }
-        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(fps)),
-                                        presentationTimeStamp: pts, decodeTimeStamp: .invalid)
-        var size = 4
-        var sample: CMSampleBuffer?
-        CMSampleBufferCreateReady(allocator: nil, dataBuffer: block, formatDescription: timecodeFormat, sampleCount: 1,
-                                  sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 1,
-                                  sampleSizeArray: &size, sampleBufferOut: &sample)
-        if let sample, timecodeInput.isReadyForMoreMediaData { timecodeInput.append(sample) }
-    }
-
-    /// Reports a mid-recording failure once, as soon as it happens, rather
-    /// than only when the user presses Stop.
-    private func checkFailed() {
-        guard writer.status == .failed, failure == nil else { return }
-        let message = describe(writer.error)
-        failure = message
-        onFailure(message)
-    }
-
-    /// Deletes the file; for a take that couldn't start.
-    func discard() {
-        queue.sync {
-            finished = true
-            writer.cancelWriting()
-        }
-    }
-
-    /// Finishes the file. Never deletes one with anything playable in it: if
-    /// writing failed partway, the fragments written before that still play.
-    func finish() async -> Result {
-        let (recorded, failure) = await finishWriting()
-        guard let recorded else { return Result(problem: failure ?? "Nothing was recorded.") }
-        guard let failure else { return Result(url: url) }
-        let name = url.lastPathComponent, time = recorded.formatted(.time(pattern: .hourMinuteSecond))
-        if (try? await AVURLAsset(url: url).load(.duration).seconds) ?? 0 > 0 {
-            return Result(url: url, problem: "\(name) stopped after \(time): \(failure). It keeps everything up to a moment before that.")
-        }
-        try? FileManager.default.removeItem(at: url)
-        return Result(problem: "\(name) failed after \(time), before anything could be saved: \(failure).")
-    }
-
-    /// How long was recorded (nil if nothing), and what went wrong, if anything.
-    private func finishWriting() async -> (Duration?, String?) {
-        await withCheckedContinuation { (cont: CheckedContinuation<(Duration?, String?), Never>) in
+    /// Finishes the file. Throws only if nothing at all was saved.
+    public func finish() async throws -> RecordingResult {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<RecordingResult, Error>) in
             queue.async { [self] in
-                finished = true
-                checkFailed()
-                guard let start = sessionStart else {
-                    writer.cancelWriting()
-                    return cont.resume(returning: (nil, failure))
-                }
-                let recorded = Duration.seconds(((lastVideoPTS ?? start) - start).seconds)
-                guard writer.status == .writing else {
-                    return cont.resume(returning: (recorded, failure ?? describe(writer.error)))
-                }
-                videoInput.markAsFinished()
-                audioInput.markAsFinished()
-                let writer = Unchecked(writer)
-                writer.value.finishWriting {
-                    let ok = writer.value.status == .completed
-                    cont.resume(returning: (recorded, ok ? nil : "could not finish the file: \(self.describe(writer.value.error))"))
-                }
+                accepting = false
+                // Frames still in the encoder come out onto the queue, ahead
+                // of the block below.
+                encoder.flush()
+                queue.async { [self] in finishFile(cont) }
             }
         }
     }
 
-    /// AVFoundation's descriptions are often just "The operation could not be
-    /// completed", so include the underlying error, which says what happened.
-    private func describe(_ error: Error?) -> String {
-        guard let error = error as NSError? else { return "unknown error" }
-        var text = error.localizedDescription
-        if let reason = error.localizedFailureReason { text += " (\(reason))" }
-        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
-            text += " [\(underlying.domain) \(underlying.code)]"
-        } else {
-            text += " [\(error.domain) \(error.code)]"
+    /// Stops and deletes the file; for a recording that couldn't start.
+    func discard() {
+        queue.sync {
+            accepting = false
+            finished = true
+            encoder.invalidate()
+            file?.writer.cancelWriting()
+            file = nil
         }
-        return text
     }
+
+    private func finishFile(_ cont: CheckedContinuation<RecordingResult, Error>) {
+        finished = true
+        encoder.invalidate()
+        if droppedFrames > 0 { log.info("Recording skipped \(self.droppedFrames) frames while the encoder caught up") }
+        guard let file else { return complete(cont) }
+        drain(waiting: true)
+        self.file = nil
+        guard file.sessionStart != nil else {
+            // Nothing in it; this deletes the file.
+            file.writer.cancelWriting()
+            return complete(cont)
+        }
+        guard file.writer.status == .writing else {
+            noteFailure(of: file, at: nil)
+            return complete(cont)
+        }
+        file.videoInput.markAsFinished()
+        file.audioInput.markAsFinished()
+        let writer = Unchecked(file.writer)
+        writer.value.finishWriting { [self] in
+            queue.async { [self] in
+                if writer.value.status != .completed { noteFailure(of: file, at: nil) }
+                complete(cont)
+            }
+        }
+    }
+
+    // MARK: Encoded video
+
+    private func encoded(_ sample: CMSampleBuffer?, status: OSStatus, generation: Int) {
+        guard !finished, generation == encoder.generation else { return }
+        guard status == noErr, let sample else {
+            return encoderFailed(status, generation: generation, at: nil)
+        }
+        guard let file else { return }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+        guard file.writer.status == .writing else { return failed(file, at: pts) }
+        if waitingForKeyFrame {
+            guard sample.isKeyFrame else { return }
+            waitingForKeyFrame = false
+        }
+        if file.sessionStart == nil {
+            file.start(at: pts, timecodeFrame: timecode.frameNumber(at: pts, fps: output.fps))
+            if recordingStart == nil { recordingStart = pts }
+            for sample in earlyAudio where CMSampleBufferGetPresentationTimeStamp(sample) >= pts {
+                if file.audioInput.isReadyForMoreMediaData { file.audioInput.append(sample) }
+            }
+            earlyAudio.removeAll()
+        }
+        pending.append(sample)
+        drain()
+    }
+
+    /// Hands waiting frames to the file as it's ready for them.
+    private func drain(waiting: Bool = false) {
+        guard let file else { return pending.removeAll() }
+        var waited = 0
+        while let sample = pending.first {
+            guard file.writer.status == .writing else { return }
+            guard file.videoInput.isReadyForMoreMediaData else {
+                // Only when finishing: give the file up to a couple of seconds.
+                guard waiting, waited < 1000 else { break }
+                waited += 1
+                usleep(2000)
+                continue
+            }
+            pending.removeFirst()
+            if !file.videoInput.append(sample) {
+                return failed(file, at: CMSampleBufferGetPresentationTimeStamp(sample))
+            }
+        }
+        // The file has fallen seconds behind. Drop what's waiting and pick up
+        // again at the next keyframe, rather than pile up memory.
+        if pending.count > output.fps * 3 {
+            log.warning("Recording dropped \(self.pending.count) frames the file couldn't take in time")
+            droppedFrames += pending.count
+            pending.removeAll()
+            waitingForKeyFrame = true
+            needsKeyFrame = true
+        }
+    }
+
+    // MARK: Failures
+
+    /// The encoder stopped working. Start a new one; the file carries on
+    /// from its first keyframe. Frames still waiting for the file are fine.
+    private func encoderFailed(_ status: OSStatus, generation: Int, at pts: CMTime?) {
+        guard !encoderGaveUp, generation == encoder.generation else { return }
+        let reason = RecordingEncoder.describe(status)
+        log.error("Recording video encoder failed (\(reason, privacy: .public)); starting a new one")
+        let now = hostNow()
+        encoderRestarts = encoderRestarts.filter { now - $0 < 60 } + [now]
+        var failure: String?
+        if encoderRestarts.count > Self.maxEncoderRestartsPerMinute {
+            failure = "the video encoder keeps failing (\(reason))"
+        } else {
+            do {
+                try encoder.restart()
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+        needsKeyFrame = true
+        waitingForKeyFrame = true
+        guard let failure else { return }
+        encoderGaveUp = true
+        var message = "Recording error"
+        if let pts, let start = recordingStart { message += " at \(Self.clock((pts - start).seconds))" }
+        message += ": \(failure). Recording stopped; everything before it is saved."
+        log.error("\(message, privacy: .public)")
+        problems.append(message)
+        onProblem(self, message, true)
+    }
+
+    /// The file stopped accepting samples. Keep it as-is (fragmented, so it
+    /// plays up to its last fragment; `cancelWriting` would delete it) and
+    /// carry on in a new file if that's likely to help.
+    private func failed(_ failed: File, at pts: CMTime) {
+        guard file === failed else { return }
+        file = nil
+        pending.removeAll()
+        needsKeyFrame = true
+        waitingForKeyFrame = true
+        if failed.writer.status == .writing {
+            // Not failed for good, just refusing samples: close it properly.
+            failed.videoInput.markAsFinished()
+            failed.audioInput.markAsFinished()
+            failed.writer.finishWriting {}
+        }
+        var message = noteFailure(of: failed, at: pts)
+        let fileSeconds = failed.sessionStart.map { (pts - $0).seconds } ?? 0
+        var stopped = true
+        if fileSeconds >= Self.minFileSecondsToRetry, files.count < Self.maxFiles {
+            let next = url.deletingPathExtension().lastPathComponent + " (\(files.count + 1))." + url.pathExtension
+            do {
+                let new = try File(url: url.deletingLastPathComponent().appending(path: next), recording: recording,
+                                   fps: output.fps, videoFormat: videoFormat, audioFormat: audioFormat)
+                file = new
+                files.append(new)
+                message += " Recording continues in \"\(next)\"."
+                stopped = false
+            } catch {
+                log.error("Couldn't start \(next, privacy: .public): \(String(describing: error), privacy: .public)")
+                message += " Couldn't start a new file (\(error.localizedDescription)), so recording stopped."
+            }
+        } else {
+            message += " Recording stopped."
+        }
+        onProblem(self, message, stopped)
+    }
+
+    /// Logs and remembers why `file` failed, and returns a message for the user.
+    @discardableResult
+    private func noteFailure(of file: File, at pts: CMTime?) -> String {
+        let name = file.url.lastPathComponent
+        log.error("Recording to \(name, privacy: .public) failed: \(String(describing: file.writer.error), privacy: .public)")
+        var reason = file.writer.error?.localizedDescription ?? "unknown error"
+        if let underlying = (file.writer.error as NSError?)?.userInfo[NSUnderlyingErrorKey] as? NSError {
+            reason += " (\(underlying.domain) \(underlying.code))"
+        }
+        var message = "Recording error"
+        if let pts, let start = recordingStart { message += " at \(Self.clock((pts - start).seconds))" }
+        message += ": \(reason)."
+        if file.sessionStart != nil { message += " \"\(name)\" is saved up to about then." }
+        problems.append(message)
+        return message
+    }
+
+    private func complete(_ cont: CheckedContinuation<RecordingResult, Error>) {
+        let kept = files.filter { $0.sessionStart != nil }.map(\.url)
+        if kept.isEmpty {
+            cont.resume(throwing: MediaError(problems.first ?? "Nothing was recorded."))
+        } else {
+            cont.resume(returning: RecordingResult(files: kept, problem: problems.isEmpty ? nil : problems.joined(separator: "\n")))
+        }
+    }
+
+    /// Treats the current file as failed, as if the writer had rejected a
+    /// sample at `pts`.
+    func simulateFailureForTesting(at pts: CMTime) {
+        queue.async { [self] in if let file { failed(file, at: pts) } }
+    }
+
+    /// Treats the encoder as failed, as if it had reported an error.
+    func simulateEncoderFailureForTesting() {
+        queue.async { [self] in encoderFailed(kVTVideoEncoderMalfunctionErr, generation: encoder.generation, at: nil) }
+    }
+
+    static func clock(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds))
+        return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60)
+                         : String(format: "%d:%02d", s / 60, s % 60)
+    }
+
+    // MARK: Samples
 
     private func makeAudioSample(_ data: Data, frames: Int, pts: CMTime) -> CMSampleBuffer? {
         var block: CMBlockBuffer?
@@ -284,8 +393,116 @@ public final class Recorder: MediaSink, @unchecked Sendable {
     }
 }
 
-/// Time-of-day timecode for host-clock times. One is shared by every file in
-/// a take, so files that start on the same frame carry the same timecode.
+private extension CMSampleBuffer {
+    var isKeyFrame: Bool {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(self, createIfNecessary: false) as? [[CFString: Any]],
+              let first = attachments.first else { return true }
+        return !(first[kCMSampleAttachmentKey_NotSync] as? Bool ?? false)
+    }
+}
+
+/// One output file. Only touched on the recorder's queue.
+private final class File {
+    let url: URL
+    let writer: AVAssetWriter
+    let videoInput: AVAssetWriterInput
+    let audioInput: AVAssetWriterInput
+    /// A time-of-day timecode track (QuickTime only), so editors can line up
+    /// files recorded together.
+    private let timecodeInput: AVAssetWriterInput?
+    private let timecodeFormat: CMTimeCodeFormatDescription?
+    private let fps: Int
+    var sessionStart: CMTime?
+
+    init(url: URL, recording: RecordingSettings, fps: Int, videoFormat: CMFormatDescription,
+         audioFormat: CMAudioFormatDescription) throws {
+        self.url = url
+        self.fps = fps
+        writer = try AVAssetWriter(outputURL: url, fileType: recording.container == .mov ? .mov : .mp4)
+        // Fragmented output keeps everything up to the last fragment if we
+        // crash or the writer fails.
+        writer.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)
+
+        // Already encoded by RecordingEncoder; the writer only stores it.
+        videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: nil, sourceFormatHint: videoFormat)
+        videoInput.expectsMediaDataInRealTime = true
+
+        let audio: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: AudioFormat.sampleRate,
+            AVNumberOfChannelsKey: 2,
+            AVEncoderBitRateKey: recording.audioBitrateKbps * 1000,
+        ]
+        audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: audio, sourceFormatHint: audioFormat)
+        audioInput.expectsMediaDataInRealTime = true
+
+        guard writer.canAdd(videoInput), writer.canAdd(audioInput) else { throw MediaError("Unsupported recording settings.") }
+        writer.add(videoInput)
+        writer.add(audioInput)
+
+        var tcFormat: CMTimeCodeFormatDescription?
+        if recording.container == .mov {
+            CMTimeCodeFormatDescriptionCreate(
+                allocator: nil, timeCodeFormatType: kCMTimeCodeFormatType_TimeCode32,
+                frameDuration: CMTime(value: 1, timescale: CMTimeScale(fps)), frameQuanta: UInt32(fps),
+                flags: kCMTimeCodeFlag_24HourMax, extensions: nil, formatDescriptionOut: &tcFormat)
+        }
+        var tcInput: AVAssetWriterInput?
+        if let tcFormat {
+            let input = AVAssetWriterInput(mediaType: .timecode, outputSettings: nil, sourceFormatHint: tcFormat)
+            input.expectsMediaDataInRealTime = true
+            let association = AVAssetTrack.AssociationType.timecode.rawValue
+            if writer.canAdd(input) {
+                writer.add(input)
+                if videoInput.canAddTrackAssociation(withTrackOf: input, type: association) {
+                    videoInput.addTrackAssociation(withTrackOf: input, type: association)
+                }
+                tcInput = input
+            }
+        }
+        timecodeInput = tcInput
+        timecodeFormat = tcFormat
+
+        guard writer.startWriting() else {
+            throw MediaError("Could not start recording: \(writer.error?.localizedDescription ?? "unknown error")")
+        }
+    }
+
+    /// Starts the file at its first frame, `timecodeFrame` frames since midnight.
+    func start(at pts: CMTime, timecodeFrame: Int32) {
+        writer.startSession(atSourceTime: pts)
+        sessionStart = pts
+        appendTimecode(timecodeFrame, at: pts)
+    }
+
+    /// The whole timecode track is one sample: the first frame's timecode.
+    /// Players and editors count on from there. Finished right away so the
+    /// writer never holds the other tracks back waiting for more.
+    private func appendTimecode(_ frameNumber: Int32, at pts: CMTime) {
+        guard let timecodeInput, let timecodeFormat else { return }
+        defer { timecodeInput.markAsFinished() }
+        var frame = frameNumber.bigEndian
+        var block: CMBlockBuffer?
+        guard CMBlockBufferCreateWithMemoryBlock(
+            allocator: nil, memoryBlock: nil, blockLength: 4, blockAllocator: nil, customBlockSource: nil,
+            offsetToData: 0, dataLength: 4, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
+            let block,
+            CMBlockBufferReplaceDataBytes(with: &frame, blockBuffer: block, offsetIntoDestination: 0, dataLength: 4) == noErr
+        else { return }
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(fps)),
+                                        presentationTimeStamp: pts, decodeTimeStamp: .invalid)
+        var size = 4
+        var sample: CMSampleBuffer?
+        CMSampleBufferCreateReady(allocator: nil, dataBuffer: block, formatDescription: timecodeFormat, sampleCount: 1,
+                                  sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 1,
+                                  sampleSizeArray: &size, sampleBufferOut: &sample)
+        if let sample, timecodeInput.isReadyForMoreMediaData { timecodeInput.append(sample) }
+    }
+}
+
+/// Time-of-day timecode for host-clock times. One is shared by every file
+/// recorded together, so files that start on the same frame carry the same
+/// timecode.
 struct TimecodeClock: Sendable {
     /// Seconds since local midnight at host time zero.
     private let offset: Double

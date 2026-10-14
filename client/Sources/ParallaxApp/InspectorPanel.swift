@@ -121,6 +121,15 @@ private struct ItemInspector: View {
                 cropSlider("Right", \.right)
             }
 
+            section("Recording") {
+                Toggle("Include in recording", isOn: sourceBinding(\.isInRecording))
+                    .controlSize(.small)
+                Text(source.isInRecording
+                     ? "Applies to this source in every scene."
+                     : "Only on the stream. Your local recording leaves it out, in every scene.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             if source.kind.isLive {
                 section("Video Delay") {
                     HStack {

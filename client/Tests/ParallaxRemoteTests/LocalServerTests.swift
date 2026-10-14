@@ -37,6 +37,31 @@ import Testing
         #expect(c.twitchClientID == "abc" && c.xUsername == "")
     }
 
+    @Test func secretsRoundTripInAnOwnerOnlyFile() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secrets = SecretStore(url: dir.appending(path: "secrets.json"))
+        #expect(secrets.read("server-token") == nil)
+
+        var c = LocalServerCredentials()
+        c.twitchClientID = "abc"
+        c.save(to: secrets)
+        secrets.write("tok", for: "server-token")
+        #expect(LocalServerCredentials.load(from: secrets) == c)
+        #expect(secrets.read("server-token") == "tok")
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: secrets.url.path)
+        #expect((attributes[.posixPermissions] as? Int) == 0o600)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: dir.path) == ["secrets.json"])
+
+        secrets.write("", for: "server-token")
+        #expect(secrets.read("server-token") == nil)
+        // Once the file exists, the Keychain is never read again.
+        secrets.importFromKeychain(["server-token"])
+        #expect(secrets.read("server-token") == nil)
+        #expect(LocalServerCredentials.load(from: secrets) == c)
+    }
+
     @Test func freePortsAreDistinct() throws {
         let ports = try #require(LocalServer.freePorts([SOCK_STREAM, SOCK_STREAM, SOCK_DGRAM, SOCK_STREAM]))
         #expect(ports.count == 4)

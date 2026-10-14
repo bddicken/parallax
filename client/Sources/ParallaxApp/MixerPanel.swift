@@ -13,14 +13,15 @@ struct MixerPanel: View {
                     .help("Master")
                 AddAudioMenu()
             }
-            if model.profile.audioSources.isEmpty {
+            // Only the music input for the current music mode is shown (and runs).
+            if model.profile.activeAudioSources.isEmpty {
                 Text("No audio inputs. Add a microphone or system audio.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     VStack(spacing: 10) {
-                        ForEach(model.profile.audioSources) { source in
+                        ForEach(model.profile.activeAudioSources) { source in
                             ChannelStrip(source: source, level: model.levels[source.id] ?? .silent)
                         }
                     }
@@ -43,6 +44,8 @@ private struct AddAudioMenu: View {
                 }
             }
             Button("System Audio") { model.addAudioSource(kind: .systemAudio, name: "System Audio") }
+            Button(model.profile.musicMode == .library ? "Music" : "Suno Player") { model.ensureMusicSource() }
+                .disabled(model.musicSource != nil)
         } label: {
             Image(systemName: "plus")
         }
@@ -62,13 +65,14 @@ private struct ChannelStrip: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                Image(systemName: source.kind == .systemAudio ? "speaker.wave.2.fill" : "mic.fill")
+                Image(systemName: source.kind.symbol)
                     .foregroundStyle(.secondary)
                 Text(source.name).lineLimit(1)
                 if let error = model.sourceErrors[source.id] {
                     SourceWarning(message: error, permission: source.kind.permission)
                 }
                 Spacer()
+                if !source.isInRecording { StreamOnlyBadge() }
                 Button { showingEQ.toggle() } label: {
                     Text("EQ").font(.caption.weight(.semibold))
                         .foregroundStyle(source.eq.isEnabled && !source.eq.isFlat ? Color.accentColor : .secondary)
@@ -103,22 +107,25 @@ private struct ChannelStrip: View {
             }
             // Applied live: raising it inserts a gap of silence, lowering it
             // skips ahead, so you can dial in sync by ear while talking.
-            HStack {
-                Text("Delay").font(.caption).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
-                Slider(value: Binding(get: { Double(min(source.delayMs, Self.maxDelayMs)) },
-                                      set: { v in model.updateAudioSource(source.id) { $0.delayMs = Int(v.rounded()) } }),
-                       in: 0...Double(Self.maxDelayMs))
-                    .controlSize(.small)
-                Text("\(source.delayMs) ms")
-                    .font(.caption).monospacedDigit().frame(width: 60, alignment: .trailing)
+            if source.kind != .music {
+                HStack {
+                    Text("Delay").font(.caption).foregroundStyle(.secondary).frame(width: 36, alignment: .leading)
+                    Slider(value: Binding(get: { Double(min(source.delayMs, Self.maxDelayMs)) },
+                                          set: { v in model.updateAudioSource(source.id) { $0.delayMs = Int(v.rounded()) } }),
+                           in: 0...Double(Self.maxDelayMs))
+                        .controlSize(.small)
+                    Text("\(source.delayMs) ms")
+                        .font(.caption).monospacedDigit().frame(width: 60, alignment: .trailing)
+                }
+                .help("Delay this input to line up with a slower camera")
             }
-            .help("Delay this input to line up with a slower camera")
         }
         .padding(8)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
         .contextMenu {
             Button("Reset Gain") { model.updateAudioSource(source.id) { $0.gainDB = 0 } }
             Button("Reset Delay") { model.updateAudioSource(source.id) { $0.delayMs = 0 } }
+            Toggle("Include in Recording", isOn: binding(\.isInRecording))
             Button("Remove", role: .destructive) { model.removeAudioSource(source.id) }
         }
     }
@@ -146,6 +153,15 @@ private struct ChannelOptions: View {
                     Stepper("Input \(source.firstChannel + 1)\(source.channelMode == .stereo ? "–\(source.firstChannel + 2)" : "")",
                             value: binding(\.firstChannel), in: 0...31)
                 }
+            } else {
+                Section("Ducking") { DuckingControls(source: source) }
+            }
+            Section {
+                Toggle("Include in recording", isOn: binding(\.isInRecording))
+            } header: {
+                Text("Recording")
+            } footer: {
+                Text("Turn off to keep this input out of your local recording. The stream still has it.")
             }
             Section("Processing") {
                 Toggle("High-pass filter (80 Hz)", isOn: binding(\.highPassEnabled))
@@ -345,5 +361,16 @@ struct LevelMeter: View {
 
     private func fraction(_ db: Float) -> CGFloat {
         CGFloat(min(1, max(0, (db + 60) / 60)))
+    }
+}
+
+extension AudioSourceKind {
+    var symbol: String {
+        switch self {
+        case .device: "mic.fill"
+        case .systemAudio: "speaker.wave.2.fill"
+        case .music: "music.note"
+        case .webPlayer: "globe"
+        }
     }
 }

@@ -102,19 +102,27 @@ private struct RecordingSettingsView: View {
             } header: {
                 Text("Record")
             } footer: {
-                Text("Each one is saved to its own file. They all start and stop on the same frame and share time-of-day timecode, so they line up in your editor. For example, record a full-frame camera scene and a screen scene to cut between later.")
+                Text("Each one is saved to its own file. They all start and stop on the same frame, so they line up in your editor. For example, record a full-frame camera scene and a screen scene to cut between later.")
                     .foregroundStyle(.secondary)
             }
             ForEach(rec.outputs, id: \.sceneID) { output in
                 Section(model.recordingLabel(output)) {
                     ResolutionPicker(canvas: model.profile.output, selection: outputSetting(output.sceneID, \.resolution))
-                    bitrate(output)
+                    if rec.quality == .custom { bitrate(output) }
                 }
             }
             Section {
-                Picker("Codec", selection: $model.profile.recording.codec) {
-                    Text("H.264").tag(VideoCodec.h264)
-                    Text("HEVC (smaller files, recommended for 4K)").tag(VideoCodec.hevc)
+                Picker("Quality", selection: $model.profile.recording.quality) {
+                    Text("Smaller files").tag(RecordingQuality.small)
+                    Text("Balanced (recommended)").tag(RecordingQuality.balanced)
+                    Text("High (for editing)").tag(RecordingQuality.high)
+                    Text("Custom bitrate").tag(RecordingQuality.custom)
+                }
+                if rec.quality == .custom {
+                    Picker("Codec", selection: $model.profile.recording.codec) {
+                        Text("H.264").tag(VideoCodec.h264)
+                        Text("HEVC (smaller files, recommended for 4K)").tag(VideoCodec.hevc)
+                    }
                 }
                 Picker("Audio bitrate", selection: $model.profile.recording.audioBitrateKbps) {
                     ForEach([128, 192, 256, 320], id: \.self) { Text("\($0) kbps").tag($0) }
@@ -140,8 +148,10 @@ private struct RecordingSettingsView: View {
                     Text("MPEG-4 (.mp4)").tag(RecordingContainer.mp4)
                 }
             } footer: {
-                if rec.outputs.count > 1, rec.container == .mp4 {
-                    Text("Only QuickTime files carry timecode. With MPEG-4, line the files up by their audio instead.")
+                if rec.outputs.count > 1 {
+                    Text(rec.container == .mov
+                         ? "QuickTime files carry matching time-of-day timecode, so editors can sync them automatically."
+                         : "Only QuickTime files carry timecode. With MPEG-4, sync the files by their audio instead.")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -182,14 +192,22 @@ private struct RecordingSettingsView: View {
 
     private func summary(_ rec: RecordingSettings) -> String {
         guard !rec.outputs.isEmpty else { return "Nothing is recorded. Turn on the program or a scene above." }
-        let fps = model.profile.output.fps, codec = rec.codec == .hevc ? "HEVC" : "H.264"
-        let gb = rec.outputs.reduce(0) { $0 + Bitrates.gigabytesPerHour(videoKbps: $1.videoBitrateKbps, audioKbps: rec.audioBitrateKbps) }
-        let perHour = "about \(String(format: "%.0f", gb)) GB per hour"
-        if let only = rec.outputs.first, rec.outputs.count == 1 {
-            let size = only.resolution.size(for: model.profile.output)
-            return "Records \(size.width) × \(size.height) at \(fps) fps, \(codec) \(only.videoBitrateKbps / 1000) Mbps: \(perHour)."
+        let fps = model.profile.output.fps, canvas = model.profile.output
+        let sizes = rec.outputs.map { $0.resolution.size(for: canvas) }
+        let head = sizes.count == 1
+            ? "Records \(sizes[0].width) × \(sizes[0].height) at \(fps) fps"
+            : "Records \(sizes.count) files at \(fps) fps"
+        let total = sizes.count == 1 ? "" : " in total"
+        guard rec.quality != .custom else {
+            let gb = rec.outputs.reduce(0) { $0 + Bitrates.gigabytesPerHour(videoKbps: $1.videoBitrateKbps, audioKbps: rec.audioBitrateKbps) }
+            let rate = sizes.count == 1 ? " \(rec.outputs[0].videoBitrateKbps / 1000) Mbps" : ""
+            return "\(head), \(rec.codec == .hevc ? "HEVC" : "H.264")\(rate): about \(String(format: "%.0f", gb)) GB per hour\(total)."
         }
-        return "Records \(rec.outputs.count) files at \(fps) fps, \(codec): \(perHour) in total."
+        let estimates = sizes.compactMap {
+            rec.quality.gigabytesPerHour(width: $0.width, height: $0.height, fps: fps, audioKbps: rec.audioBitrateKbps)
+        }
+        let low = estimates.map(\.lowerBound).reduce(0, +), high = estimates.map(\.upperBound).reduce(0, +)
+        return "\(head), HEVC at constant quality on the Mac's hardware encoder. Bits go where the picture changes, so the size depends on what you show: about \(String(format: "%.0f–%.0f", low, high)) GB per hour\(total) for a screen and camera, more for full-screen video or games."
     }
 
     private func chooseFolder() {
@@ -379,7 +397,7 @@ private struct LocalServerPlatformsSection: View {
                     Link("YouTube", destination: Self.guide("youtube"))
                     Link("X", destination: Self.guide("x"))
                 }
-                Text("Kept in your Keychain. Fill in only the platforms you use.")
+                Text("Kept on this Mac, readable only by you. Fill in only the platforms you use.")
             }
             .foregroundStyle(.secondary)
         }
@@ -419,20 +437,20 @@ private struct RemoteServerSection: View {
             TextField("Server URL", text: $url, prompt: Text("https://relay.example.com"))
             SecureField("Token", text: $token)
         } footer: {
-            Text("Leave the URL empty to stay offline (turn on Mock in the chat panel to try things with fake chat). The token is stored in your Keychain.")
+            Text("Leave the URL empty to stay offline (turn on Mock in the chat panel to try things with fake chat). The token is kept on this Mac, readable only by you.")
                 .foregroundStyle(.secondary)
         }
         HStack {
             Spacer()
             Button("Save & Reconnect") {
-                Keychain.write(token.trimmingCharacters(in: .whitespacesAndNewlines), for: "server-token")
+                model.secrets.write(token.trimmingCharacters(in: .whitespacesAndNewlines), for: BroadcastModel.serverTokenAccount)
                 model.profile.broadcast.serverURL = url.trimmingCharacters(in: .whitespaces)
                 model.connectBroadcast(force: true)
             }
         }
         .onAppear {
             url = model.profile.broadcast.serverURL
-            token = Keychain.read("server-token") ?? ""
+            token = model.secrets.read(BroadcastModel.serverTokenAccount) ?? ""
         }
     }
 }

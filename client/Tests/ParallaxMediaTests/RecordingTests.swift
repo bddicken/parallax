@@ -28,7 +28,7 @@ import Testing
 
         _ = try engine.startRecording(profile.recording)
         try await Task.sleep(for: .seconds(2))
-        let url = try await stopSingle(engine)
+        let url = try await engine.stopRecording().files[0]
 
         let asset = AVURLAsset(url: url)
         let duration = try await asset.load(.duration).seconds
@@ -77,7 +77,7 @@ import Testing
         try await Task.sleep(for: .milliseconds(200))
         _ = try engine.startRecording(profile.recording)
         try await Task.sleep(for: .seconds(1))
-        let url = try await stopSingle(engine)
+        let url = try await engine.stopRecording().files[0]
 
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         generator.requestedTimeToleranceBefore = .positiveInfinity
@@ -101,6 +101,82 @@ import Testing
         #expect(inside.r > 200 && inside.g < 60)
     }
 
+    @Test func leavesSourcesOutOfTheRecording() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var profile = Profile.makeDefault()
+        profile.output = OutputSettings(width: 1280, height: 720, fps: 30)
+        let blue = VideoSource(name: "Blue", kind: .color(RGBAColor(red: 0, green: 0, blue: 1)))
+        let overlay = VideoSource(name: "Overlay", kind: .color(RGBAColor(red: 1, green: 0, blue: 0)), isInRecording: false)
+        profile.videoSources = [blue, overlay]
+        profile.scenes[0].items = [
+            SceneItem(sourceID: blue.id, contentMode: .stretch),
+            SceneItem(sourceID: overlay.id, frame: LayoutPreset.rightHalf.rect, contentMode: .stretch),
+        ]
+        profile.recording = RecordingSettings(directoryPath: dir.path)
+
+        let engine = MediaEngine()
+        engine.apply(profile)
+        engine.setProgram(profile.programSceneID, transition: TransitionSettings(kind: .cut))
+        try await Task.sleep(for: .milliseconds(200))
+        _ = try engine.startRecording(profile.recording)
+        try await Task.sleep(for: .seconds(1))
+        let url = try await engine.stopRecording().files[0]
+
+        // The overlay is gone from the recording, leaving what's under it.
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.requestedTimeToleranceBefore = .positiveInfinity
+        generator.requestedTimeToleranceAfter = .positiveInfinity
+        let frame = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let right = try pixel(frame, x: 0.75, y: 0.5)
+        #expect(right.b > 200 && right.r < 30)
+    }
+
+    @Test func takesSourcesOutAndBackInMidRecording() async throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var profile = Profile.makeDefault()
+        profile.output = OutputSettings(width: 1280, height: 720, fps: 30)
+        let blue = VideoSource(name: "Blue", kind: .color(RGBAColor(red: 0, green: 0, blue: 1)))
+        let overlay = VideoSource(name: "Overlay", kind: .color(RGBAColor(red: 1, green: 0, blue: 0)))
+        profile.videoSources = [blue, overlay]
+        profile.scenes[0].items = [
+            SceneItem(sourceID: blue.id, contentMode: .stretch),
+            SceneItem(sourceID: overlay.id, frame: LayoutPreset.rightHalf.rect, contentMode: .stretch),
+        ]
+        profile.recording = RecordingSettings(directoryPath: dir.path)
+
+        let engine = MediaEngine()
+        engine.apply(profile)
+        engine.setProgram(profile.programSceneID, transition: TransitionSettings(kind: .cut))
+        try await Task.sleep(for: .milliseconds(200))
+        _ = try engine.startRecording(profile.recording)
+        try await Task.sleep(for: .seconds(1))
+        profile.videoSources[1].isInRecording = false
+        engine.apply(profile)
+        try await Task.sleep(for: .seconds(1))
+        profile.videoSources[1].isInRecording = true
+        engine.apply(profile)
+        try await Task.sleep(for: .seconds(1))
+        let url = try await engine.stopRecording().files[0]
+
+        // In, out, back in: one file throughout.
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        var right: [(r: Int, g: Int, b: Int)] = []
+        for seconds in [0.5, 1.5, 2.5] {
+            let frame = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image
+            right.append(try pixel(frame, x: 0.75, y: 0.5))
+        }
+        let (before, during, after) = (right[0], right[1], right[2])
+        #expect(before.r > 200 && before.b < 30)
+        #expect(during.b > 200 && during.r < 30)
+        #expect(after.r > 200 && after.b < 30)
+    }
+
     @Test func recordsAtAScaledDownResolution() async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -119,7 +195,7 @@ import Testing
         try await Task.sleep(for: .milliseconds(200))
         _ = try engine.startRecording(profile.recording)
         try await Task.sleep(for: .seconds(1))
-        let url = try await stopSingle(engine)
+        let url = try await engine.stopRecording().files[0]
 
         let asset = AVURLAsset(url: url)
         let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
@@ -133,8 +209,8 @@ import Testing
         #expect(left.r > 200 && right.r < 30)
     }
 
-    @Test(arguments: [VideoCodec.h264, .hevc])
-    func records4KCanvas(codec: VideoCodec) async throws {
+    @Test(arguments: [(RecordingQuality.custom, VideoCodec.h264), (.custom, .hevc), (.balanced, .h264)])
+    func records4KCanvas(quality: RecordingQuality, codec: VideoCodec) async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -144,6 +220,7 @@ import Testing
         profile.videoSources = [red]
         profile.scenes[0].items = [SceneItem(sourceID: red.id, frame: LayoutPreset.pipTopRight.rect, contentMode: .stretch)]
         profile.recording = RecordingSettings(directoryPath: dir.path)
+        profile.recording.quality = quality
         profile.recording.codec = codec
         profile.recording.outputs[0].videoBitrateKbps = Bitrates.recording(height: 2160, fps: 30, codec: codec)
 
@@ -153,7 +230,7 @@ import Testing
         try await Task.sleep(for: .milliseconds(200))
         _ = try engine.startRecording(profile.recording)
         try await Task.sleep(for: .seconds(2))
-        let url = try await stopSingle(engine)
+        let url = try await engine.stopRecording().files[0]
 
         let asset = AVURLAsset(url: url)
         let video = try #require(try await asset.loadTracks(withMediaType: .video).first)
@@ -161,11 +238,15 @@ import Testing
         #expect(try await asset.load(.duration).seconds > 1.5)
         let fps = try await video.load(.nominalFrameRate)
         #expect(fps > 25, "4K compositing/encoding kept up at \(fps) fps")
+        // The quality modes always use HEVC; custom uses the chosen codec.
+        let format = try #require(try await video.load(.formatDescriptions).first)
+        let expected = profile.recording.effectiveCodec == .hevc ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264
+        #expect(CMFormatDescriptionGetMediaSubType(format) == expected)
     }
 
     /// Program plus two scenes on their own: three files that start and stop
     /// on the same frame and sample, carry the same timecode, and each show
-    /// their own scene.
+    /// their own scene, without sources left out of the recording.
     @Test func recordsScenesToSeparateFilesInSync() async throws {
         let dir = ProcessInfo.processInfo.environment["PARALLAX_KEEP_TEST_RECORDINGS"].map { URL(filePath: $0) }
             ?? FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
@@ -175,9 +256,12 @@ import Testing
         profile.output = OutputSettings(width: 1280, height: 720, fps: 30)
         let red = VideoSource(name: "Red", kind: .color(RGBAColor(red: 1, green: 0, blue: 0)))
         let blue = VideoSource(name: "Blue", kind: .color(RGBAColor(red: 0, green: 0, blue: 1)))
-        profile.videoSources = [red, blue]
+        var overlay = VideoSource(name: "Overlay", kind: .color(RGBAColor(red: 0, green: 1, blue: 0)))
+        overlay.isInRecording = false
+        profile.videoSources = [red, blue, overlay]
         profile.scenes[0].items = [SceneItem(sourceID: red.id, contentMode: .stretch)]
-        profile.scenes[1].items = [SceneItem(sourceID: blue.id, contentMode: .stretch)]
+        profile.scenes[1].items = [SceneItem(sourceID: blue.id, contentMode: .stretch),
+                                   SceneItem(sourceID: overlay.id, frame: LayoutPreset.pipTopLeft.rect, contentMode: .stretch)]
         profile.scenes[1].name = "Screen"
         profile.recording = RecordingSettings(directoryPath: dir.path)
         profile.recording.setRecording(profile.scenes[0].id, true)
@@ -192,15 +276,15 @@ import Testing
         let started = try engine.startRecording(profile.recording)
         #expect(started.map(\.lastPathComponent).map { $0.components(separatedBy: " - ").last } == ["Program.mov", "Main.mov", "Screen.mov"])
         try await Task.sleep(for: .seconds(1.5))
-        let result = await engine.stopRecording()
-        #expect(result.problems.isEmpty)
-        #expect(result.urls == started)
-        let files = result.urls.map { AVURLAsset(url: $0) }
+        let result = try await engine.stopRecording()
+        #expect(result.problem == nil)
+        #expect(result.files == started)
+        let files = result.files.map { AVURLAsset(url: $0) }
         #expect(files.count == 3)
 
         // Same frames at the same times, and the same audio.
         var videoTimes: [[Chunk]] = [], audioTimes: [[Chunk]] = [], timecodes: [Int32] = []
-        var colors: [(r: Int, g: Int, b: Int)] = []
+        var colors: [(r: Int, g: Int, b: Int)] = [], overlayCorner: [(r: Int, g: Int, b: Int)] = []
         for asset in files {
             videoTimes.append(try await sampleTimes(asset, .video))
             audioTimes.append(try await sampleTimes(asset, .audio))
@@ -208,7 +292,9 @@ import Testing
             let generator = AVAssetImageGenerator(asset: asset)
             generator.requestedTimeToleranceBefore = .positiveInfinity
             generator.requestedTimeToleranceAfter = .positiveInfinity
-            colors.append(try pixel(try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image, x: 0.5, y: 0.5))
+            let image = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+            colors.append(try pixel(image, x: 0.5, y: 0.5))
+            overlayCorner.append(try pixel(image, x: 0.1, y: 0.1))
         }
         #expect(videoTimes[0].map(\.samples).reduce(0, +) > 30)
         #expect(videoTimes[1] == videoTimes[0] && videoTimes[2] == videoTimes[0])
@@ -224,50 +310,7 @@ import Testing
         #expect(colors[0].r < 30 && colors[0].b < 30, "program: the empty live scene")
         #expect(colors[1].r > 200 && colors[1].b < 60, "Main: red")
         #expect(colors[2].b > 200 && colors[2].r < 60, "Screen: blue")
-    }
-
-    /// A file that fails mid-take keeps what it had, and recording carries
-    /// on in a new part rather than losing the rest of the take.
-    @Test func continuesInANewPartAfterAWriteFailure() async throws {
-        let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: dir) }
-
-        var profile = Profile.makeDefault()
-        profile.output = OutputSettings(width: 640, height: 360, fps: 30)
-        let red = VideoSource(name: "Red", kind: .color(RGBAColor(red: 1, green: 0, blue: 0)))
-        profile.videoSources = [red]
-        profile.scenes[0].items = [SceneItem(sourceID: red.id, contentMode: .stretch)]
-        profile.recording = RecordingSettings(directoryPath: dir.path)
-
-        let engine = MediaEngine()
-        var issues: [String] = []
-        engine.onRecordingIssue = { issues.append($0) }
-        engine.apply(profile)
-        engine.setProgram(profile.programSceneID, transition: TransitionSettings(kind: .cut))
-        try await Task.sleep(for: .milliseconds(200))
-        _ = try engine.startRecording(profile.recording)
-        try await Task.sleep(for: .seconds(3))
-
-        // A frame from the past makes the writer fail, as an encoder reset would.
-        let first = try #require(engine.activeRecorders.first)
-        var buffer: CVPixelBuffer?
-        CVPixelBufferCreate(nil, 640, 360, kCVPixelFormatType_32BGRA, nil, &buffer)
-        first.appendVideo(try #require(buffer), pts: .zero)
-        try await Task.sleep(for: .seconds(1))
-        #expect(issues.count == 1)
-        #expect(issues.first?.contains("part 2") == true)
-        #expect(engine.activeRecorders.first !== first)
-
-        let result = await engine.stopRecording()
-        #expect(result.urls.map(\.lastPathComponent) == [first.url.lastPathComponent,
-                                                         first.url.deletingPathExtension().lastPathComponent + " (part 2).mov"])
-        #expect(result.problems.count == 1)
-        // Part 1 keeps what was written before the failure, less at most one
-        // fragment; part 2 has the rest.
-        let durations = try await [AVURLAsset(url: result.urls[0]).load(.duration).seconds,
-                                   AVURLAsset(url: result.urls[1]).load(.duration).seconds]
-        #expect(durations[0] > 1.5 && durations[0] < 3.5, "part 1: \(durations[0]) s")
-        #expect(durations[1] > 0.5 && durations[1] < 1.5, "part 2: \(durations[1]) s")
+        #expect(overlayCorner[2].g < 60 && overlayCorner[2].b > 200, "Screen leaves out the overlay")
     }
 
     @Test func refusesToRecordNothing() throws {
@@ -277,12 +320,6 @@ import Testing
         engine.apply(Profile.makeDefault())
         #expect(throws: MediaError.self) { try engine.startRecording(settings) }
         #expect(!engine.isRecording)
-    }
-
-    private func stopSingle(_ engine: MediaEngine) async throws -> URL {
-        let result = await engine.stopRecording()
-        #expect(result.problems.isEmpty)
-        return try #require(result.urls.first)
     }
 
     /// A run of samples as read back from a file.

@@ -24,7 +24,12 @@ final class PCMNormalizer {
         input.frameLength = frames
         guard CMSampleBufferCopyPCMDataIntoAudioBufferList(
             sampleBuffer, at: 0, frameCount: Int32(frames), into: input.mutableAudioBufferList) == noErr else { return nil }
+        return convert(input)
+    }
 
+    func convert(_ input: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let format = input.format
+        let frames = input.frameLength
         if format.commonFormat == .pcmFormatFloat32, !format.isInterleaved, format.sampleRate == 48_000 {
             return input
         }
@@ -191,4 +196,22 @@ final class SystemAudioNode: NSObject, AudioInputNode, SCStreamOutput, SCStreamD
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         onError(.failed("System audio stopped: \(error.localizedDescription)"))
     }
+}
+
+// MARK: - Music
+
+/// Connects the music player to its channel in the mixer.
+final class MusicNode: AudioInputNode {
+    private let player: SongPlayer
+    private let mixer: AudioMixer
+    private let id: UUID
+
+    init(player: SongPlayer, mixer: AudioMixer, id: UUID) {
+        self.player = player
+        self.mixer = mixer
+        self.id = id
+    }
+
+    func start() { mixer.attach(player, to: id) }
+    func stop() { mixer.detach(id) }
 }

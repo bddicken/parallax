@@ -18,6 +18,9 @@ public protocol BroadcastService: Sendable {
     func ingest() async throws -> IngestInfo
     func startBroadcast(_ request: StartBroadcastRequest) async throws
     func stopBroadcast() async throws
+    /// Sets the current broadcast's thumbnail where the platform supports one
+    /// (YouTube). `image` is a JPEG or PNG of at most 2 MB.
+    func setThumbnail(_ image: Data) async throws
     func sendChat(_ request: SendChatRequest) async throws
     func accounts() async throws -> [Account]
     /// Starts signing in to `platform`; the user finishes in a browser.
@@ -48,6 +51,7 @@ public struct OfflineBroadcastService: BroadcastService {
     public func ingest() async throws -> IngestInfo { throw notConnected }
     public func startBroadcast(_ request: StartBroadcastRequest) async throws { throw notConnected }
     public func stopBroadcast() async throws {}
+    public func setThumbnail(_ image: Data) async throws { throw notConnected }
     public func sendChat(_ request: SendChatRequest) async throws { throw notConnected }
     public func accounts() async throws -> [Account] { [] }
     public func connectAccount(_ platform: Platform) async throws -> DeviceCode { throw notConnected }
@@ -84,6 +88,13 @@ public final class HTTPBroadcastService: BroadcastService {
 
     public func stopBroadcast() async throws {
         try await post("v1/broadcast/stop", body: [String: String]())
+    }
+
+    public func setThumbnail(_ image: Data) async throws {
+        var r = request("v1/broadcast/thumbnail", method: "POST")
+        r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        r.httpBody = image
+        _ = try await perform(r)
     }
 
     public func sendChat(_ request: SendChatRequest) async throws {
