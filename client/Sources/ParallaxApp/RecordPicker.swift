@@ -10,12 +10,7 @@ struct RecordPicker: View {
     var body: some View {
         let outputs = model.profile.recording.outputs
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Record").font(.headline)
-                Text("Each one is saved to its own file. They start and stop together, so they line up when you edit.")
-                    .font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            Text("Record").font(.headline)
             Toggle(isOn: chosen(nil)) {
                 Text("Main feed")
                 Text("What's live, with overlays and transitions").font(.caption).foregroundStyle(.secondary)
