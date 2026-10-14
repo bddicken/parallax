@@ -91,6 +91,10 @@ moq: no
 playback: no
 metrics: no
 pprof: no
+# Packets buffered per reader (a power of two). Relays read over RTMP, and
+# the default (512, ~6 s) drops a relay at the first dip in upload; this
+# rides out about a minute.
+writeQueueSize: 4096
 rtmp: yes
 rtmpAddress: {rtmp_bind}:{rtmp}
 srt: yes
