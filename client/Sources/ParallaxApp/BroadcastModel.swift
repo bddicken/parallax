@@ -251,6 +251,8 @@ final class BroadcastModel {
                 Task { await refreshDestinations() }
             }
             status = s
+            // Read X chat whenever we're live there, not only once its window is opened.
+            if isLive(on: .x), let xChatPage { xChat.start(xChatPage) }
         case .accounts(let list):
             // A newly connected account adds a destination.
             if list.map(\.state) != accounts.map(\.state) {
