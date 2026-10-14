@@ -131,7 +131,7 @@ private struct RecordingSettingsView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(summary(rec)).foregroundStyle(.secondary)
                     if rec.outputs.count > 1, rec.outputs.contains(where: { $0.resolution.size(for: model.profile.output).height >= 2160 }) {
-                        Text("Several files with 4K among them is a lot for one video encoder. Base M-series chips may drop frames; Pro, Max, and Ultra chips have more encoders.")
+                        Text("Several 4K files share the Mac's hardware video encoder. If a recording skips frames, record one of them at 1440p or 1080p.")
                             .foregroundStyle(.orange)
                     }
                 }
