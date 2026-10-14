@@ -423,17 +423,29 @@ impl YouTube {
         }
     }
 
-    /// Reads chat until it ends. Streams when YouTube allows it (lower latency,
-    /// less quota); falls back to polling.
+    /// Reads chat until the broadcast is over. Streams when YouTube allows it
+    /// (lower latency, less quota); falls back to polling.
     async fn run_chat(&self, chat_id: String) {
         let mut reader = ChatReader { page_token: None, seen: Seen::default() };
         let mut streaming = true;
         let mut backoff = Duration::from_secs(1);
+        let mut waiting = false;
         tracing::info!("reading YouTube chat");
         loop {
             let started = Instant::now();
             let result = if streaming { self.stream_chat(&chat_id, &mut reader).await } else { self.poll_chat(&chat_id, &mut reader).await };
             match result {
+                // YouTube says "not found" until the broadcast goes live, which
+                // takes a while after we start sending video; only stop once
+                // the broadcast itself is done.
+                Ok(ChatEnd::Ended) if !self.broadcast_over(&chat_id).await => {
+                    if !waiting {
+                        tracing::info!("YouTube chat isn't open yet; waiting for the broadcast to go live");
+                        waiting = true;
+                    }
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    continue;
+                }
                 Ok(ChatEnd::Ended) => {
                     tracing::info!("YouTube chat ended");
                     return;
@@ -477,8 +489,9 @@ impl YouTube {
             if error.is_chat_over() {
                 return Ok(ChatEnd::Ended);
             }
-            // Anything but auth or quota trouble means this form isn't available to us.
-            if !matches!(status.as_u16(), 401 | 403 | 429) || error.reason.as_deref() == Some("methodNotAllowed") {
+            // Anything but auth, quota, or server trouble means this form isn't available to us.
+            let transient = matches!(status.as_u16(), 401 | 403 | 429) || status.is_server_error();
+            if !transient || error.reason.as_deref() == Some("methodNotAllowed") {
                 return Err(ChatError::StreamingUnavailable(format!("{status}: {}", error.message)));
             }
             return Err(ChatError::Other(anyhow!("{status}: {}", error.message)));
@@ -515,6 +528,24 @@ impl YouTube {
             }
             tokio::time::sleep(wait).await;
         }
+    }
+
+    /// Whether the broadcast `chat_id` belongs to is finished (or no longer
+    /// ours). If YouTube can't be asked, it isn't, so chat keeps trying.
+    async fn broadcast_over(&self, chat_id: &str) -> bool {
+        let Some(broadcast) = self.store.get().youtube_broadcast else { return true };
+        if broadcast.live_chat_id.as_deref() != Some(chat_id) {
+            return true;
+        }
+        let list: List<Resource> =
+            match self.call(reqwest::Method::GET, "liveBroadcasts", &[("part", "status"), ("id", &broadcast.id)], None).await {
+                Ok(list) => list,
+                Err(e) => {
+                    tracing::warn!("couldn't check YouTube broadcast {}: {e:#}", broadcast.id);
+                    return false;
+                }
+            };
+        is_over(list.items.first().and_then(|b| b.status.as_ref()).map(|s| s.life_cycle_status.as_str()))
     }
 
     // MARK: API
@@ -570,6 +601,12 @@ impl YouTube {
 }
 
 // MARK: Chat parsing
+
+/// A broadcast that's gone (`None`), finished, or taken down won't have chat
+/// again; one that's still being set up or is live will.
+fn is_over(life_cycle_status: Option<&str>) -> bool {
+    matches!(life_cycle_status, None | Some("complete" | "revoked"))
+}
 
 enum ChatEnd {
     Ended,
@@ -798,6 +835,11 @@ impl ApiErrorBody {
 
     fn parse(body: &str) -> ApiErrorBody {
         let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+        // The chat stream wraps its error in an array: `[{"error": ...}]`.
+        let value = match value {
+            Value::Array(mut items) if !items.is_empty() => items.swap_remove(0),
+            value => value,
+        };
         let error = &value["error"];
         let reason = error["errors"][0]["reason"].as_str().map(str::to_owned);
         let message = error["message"].as_str().map(str::to_owned).unwrap_or_else(|| body.chars().take(200).collect());
@@ -933,5 +975,26 @@ mod tests {
         assert_eq!(html.message, "YouTube returned 411 Length Required");
         let ended = ApiErrorBody::parse(r#"{"error": {"code": 403, "message": "ended", "errors": [{"reason": "liveChatEnded"}]}}"#);
         assert!(ended.is_chat_over());
+    }
+
+    #[test]
+    fn reads_the_chat_streams_wrapped_error() {
+        // What liveChat/messages/stream answers before the broadcast goes live.
+        let body = r#"[{"error": {"code": 404, "message": "The live chat that you are trying to retrieve cannot be found.",
+            "errors": [{"reason": "liveChatNotFound", "domain": "youtube.liveChat"}]}}]"#;
+        let e = ApiErrorBody::parse_with_status(reqwest::StatusCode::NOT_FOUND, body);
+        assert_eq!(e.reason.as_deref(), Some("liveChatNotFound"));
+        assert!(e.message.starts_with("The live chat"));
+        assert!(e.is_chat_over());
+    }
+
+    #[test]
+    fn waits_out_a_broadcast_that_hasnt_gone_live() {
+        for status in ["created", "ready", "testStarting", "testing", "liveStarting", "live"] {
+            assert!(!is_over(Some(status)), "{status}");
+        }
+        assert!(is_over(Some("complete")));
+        assert!(is_over(Some("revoked")));
+        assert!(is_over(None));
     }
 }

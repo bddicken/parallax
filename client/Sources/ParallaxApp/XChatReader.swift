@@ -27,8 +27,14 @@ final class XChatReader: NSObject {
 
     /// Shows the chat window, loading `url` unless it's already open.
     func show(_ url: URL) {
+        start(url)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Reads chat from `url` without showing the window, unless it's already open.
+    func start(_ url: URL) {
         let webView = webView ?? makeWebView()
-        let window = window ?? makeWindow(webView)
+        if window == nil { _ = makeWindow(webView) }
         if self.url != url {
             self.url = url
             load()
@@ -41,7 +47,6 @@ final class XChatReader: NSObject {
                 }
             }
         }
-        window.makeKeyAndOrderFront(nil)
     }
 
     /// Sends `text` to X's chat as you.
