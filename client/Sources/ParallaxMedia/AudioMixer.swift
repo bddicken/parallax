@@ -153,6 +153,11 @@ final class AudioMixer: @unchecked Sendable {
         }
     }
 
+    /// Returns once any audio being mixed has been handed to the sinks.
+    func flush() async {
+        await withCheckedContinuation { cont in queue.async { cont.resume() } }
+    }
+
     private func tick() {
         let now = hostNow()
         let due = Int64((now - startTime) * AudioFormat.sampleRate)
@@ -176,7 +181,8 @@ final class AudioMixer: @unchecked Sendable {
         for i in mix.indices { mix[i] = 0 }
         for i in monitorMix.indices { monitorMix[i] = 0 }
         for i in recordingMix.indices { recordingMix[i] = 0 }
-        let (programSinks, recordingSinks) = sinks.byFeed
+        let feeds = sinks.byFeed
+        let programSinks = feeds.program, recordingSinks = feeds.recordingAudio
         let recording = !recordingSinks.isEmpty
         let (monitor, monitorIsProgram) = lock.withLock { () -> (MediaSink?, Bool) in
             // Microphones first, so everything else can duck under them in

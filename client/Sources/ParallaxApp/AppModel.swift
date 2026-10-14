@@ -31,6 +31,8 @@ final class AppModel {
     var levels: [UUID: AudioLevel] = [:]
     var masterLevel = AudioLevel.silent
     var recordingStartedAt: Date?
+    /// Asking what to record, by the Record button.
+    var showingRecordPicker = false
     /// Sending video to the server; nil when not streaming.
     var uplinkState: UplinkState?
     /// The last recording's files (more than one if a file failed partway).
@@ -299,6 +301,7 @@ final class AppModel {
                 selectScene(profile.scenes[index == 0 ? 1 : index - 1].id)
             }
             profile.scenes.remove(at: index)
+            profile.recording.setRecording(id, false)
             pruneUnusedVideoSources()
         }
     }
@@ -595,16 +598,25 @@ final class AppModel {
             + profile.activeAudioSources.filter { !$0.isInRecording }.map(\.name)
     }
 
+    /// The Record button and ⇧⌘R: stops a recording, or asks what to record.
     func toggleRecording() {
         if isRecording {
             Task { await stopRecording() }
         } else {
-            do {
-                _ = try engine.startRecording(profile.recording)
-                recordingStartedAt = Date()
-            } catch {
-                banner = error.localizedDescription
-            }
+            showingRecordPicker = true
+        }
+    }
+
+    /// Starts recording what's chosen in the record picker.
+    func startRecording() {
+        guard !isRecording else { return }
+        showingRecordPicker = false
+        do {
+            _ = try engine.startRecording(profile.recording)
+            recordingStartedAt = Date()
+            lastRecordingURLs = []
+        } catch {
+            banner = error.localizedDescription
         }
     }
 
@@ -618,6 +630,20 @@ final class AppModel {
         } catch {
             banner = "Recording failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Whether `sceneID` (nil for the program) is recorded to its own file.
+    func isRecordingOutput(_ sceneID: UUID?) -> Bool {
+        profile.recording.output(for: sceneID) != nil
+    }
+
+    func setRecordingOutput(_ sceneID: UUID?, _ on: Bool) {
+        profile.recording.setRecording(sceneID, on)
+    }
+
+    /// "Main feed", or the name of the scene an output records.
+    func recordingLabel(_ output: RecordingOutput) -> String {
+        output.sceneID.map { profile.scene($0)?.name ?? "Deleted scene" } ?? "Main feed"
     }
 
     // MARK: Broadcasting

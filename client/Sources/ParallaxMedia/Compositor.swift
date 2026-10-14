@@ -9,7 +9,8 @@ import ParallaxCore
 /// Renders the program scene at the output frame rate and hands each frame to
 /// the sinks (preview, recorder, uplink). The recorder gets a second render
 /// without the sources left out of the recording, but only while one of them
-/// is on screen; otherwise it shares the program frame.
+/// is on screen; otherwise it shares the program frame. Scenes recorded to
+/// their own files are rendered in the same tick, with the same timestamp.
 final class Compositor: @unchecked Sendable {
     private struct Transition {
         var from: UUID?
@@ -110,11 +111,13 @@ final class Compositor: @unchecked Sendable {
         }
         let canvas = CGRect(x: 0, y: 0, width: output.width, height: output.height)
         let pts = CMTime(hostSeconds: now)
-        let (programSinks, recordingSinks) = sinks.byFeed
+        let feeds = sinks.byFeed
+        let programSinks = feeds.program, recordingSinks = feeds.recording
         let showing = [program, transition?.from].compactMap { $0.flatMap { scenes[$0] } }
-        let recordingDiffers = !recordingSinks.isEmpty && showing.contains { scene in
+        let leftOutShowing = showing.contains { scene in
             scene.items.contains { $0.isVisible && notRecorded.contains($0.sourceID) }
         }
+        let recordingDiffers = !recordingSinks.isEmpty && leftOutShowing
 
         let image = composite(scenes, program: program, transition: transition, time: now, canvas: canvas, leavingOut: [])
         guard let buffer = makeBuffer(width: output.width, height: output.height) else { return }
@@ -130,6 +133,25 @@ final class Compositor: @unchecked Sendable {
             recordingBuffer = buffer
         }
         for sink in recordingSinks { sink.appendVideo(recordingBuffer, pts: pts) }
+
+        // Scenes recorded on their own, with the same timestamp, so files
+        // recorded together line up frame for frame. The live scene without
+        // a fade is the recording frame already.
+        for (id, outputs) in feeds.scenes {
+            var frame = recordingBuffer
+            if id != program || transition != nil || (leftOutShowing && !recordingDiffers) {
+                let image = render(scenes[id], time: now, canvas: canvas, leavingOut: notRecorded)
+                guard let buffer = makeBuffer(width: output.width, height: output.height) else { continue }
+                context.render(image, to: buffer, bounds: canvas, colorSpace: colorSpace)
+                frame = buffer
+            }
+            for sink in outputs { sink.appendVideo(frame, pts: pts) }
+        }
+    }
+
+    /// Returns once any frame being rendered has been handed to the sinks.
+    func flush() async {
+        await withCheckedContinuation { cont in queue.async { cont.resume() } }
     }
 
     /// The program scene, mid-fade if a transition is running, without the

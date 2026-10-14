@@ -79,6 +79,12 @@ struct ScenesPanel: View {
             if index < 9 {
                 Text("⌘\(index + 1)").font(.caption).foregroundStyle(.tertiary)
             }
+            if model.isRecording, model.isRecordingOutput(scene.id) {
+                Image(systemName: "record.circle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .help("Recording to its own file")
+            }
             if isProgram {
                 Circle().fill(.red).frame(width: 8, height: 8).help("Live")
             }

@@ -187,7 +187,7 @@ import Testing
         profile.videoSources = [red]
         profile.scenes[0].items = [SceneItem(sourceID: red.id, frame: LayoutPreset.leftHalf.rect, contentMode: .stretch)]
         profile.recording = RecordingSettings(directoryPath: dir.path)
-        profile.recording.resolution = .p720
+        profile.recording.outputs[0].resolution = .p720
 
         let engine = MediaEngine()
         engine.apply(profile)
@@ -222,7 +222,7 @@ import Testing
         profile.recording = RecordingSettings(directoryPath: dir.path)
         profile.recording.quality = quality
         profile.recording.codec = codec
-        profile.recording.videoBitrateKbps = Bitrates.recording(height: 2160, fps: 30, codec: codec)
+        profile.recording.outputs[0].videoBitrateKbps = Bitrates.recording(height: 2160, fps: 30, codec: codec)
 
         let engine = MediaEngine()
         engine.apply(profile)
@@ -244,6 +244,120 @@ import Testing
         #expect(CMFormatDescriptionGetMediaSubType(format) == expected)
     }
 
+    /// Program plus two scenes on their own: three files that start and stop
+    /// on the same frame and sample, carry the same timecode, and each show
+    /// their own scene, without sources left out of the recording.
+    @Test func recordsScenesToSeparateFilesInSync() async throws {
+        let dir = ProcessInfo.processInfo.environment["PARALLAX_KEEP_TEST_RECORDINGS"].map { URL(filePath: $0) }
+            ?? FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
+        defer { if ProcessInfo.processInfo.environment["PARALLAX_KEEP_TEST_RECORDINGS"] == nil { try? FileManager.default.removeItem(at: dir) } }
+
+        var profile = Profile.makeDefault()
+        profile.output = OutputSettings(width: 1280, height: 720, fps: 30)
+        let red = VideoSource(name: "Red", kind: .color(RGBAColor(red: 1, green: 0, blue: 0)))
+        let blue = VideoSource(name: "Blue", kind: .color(RGBAColor(red: 0, green: 0, blue: 1)))
+        var overlay = VideoSource(name: "Overlay", kind: .color(RGBAColor(red: 0, green: 1, blue: 0)))
+        overlay.isInRecording = false
+        profile.videoSources = [red, blue, overlay]
+        profile.scenes[0].items = [SceneItem(sourceID: red.id, contentMode: .stretch)]
+        profile.scenes[1].items = [SceneItem(sourceID: blue.id, contentMode: .stretch),
+                                   SceneItem(sourceID: overlay.id, frame: LayoutPreset.pipTopLeft.rect, contentMode: .stretch)]
+        profile.scenes[1].name = "Screen"
+        profile.recording = RecordingSettings(directoryPath: dir.path)
+        profile.recording.setRecording(profile.scenes[0].id, true)
+        profile.recording.setRecording(profile.scenes[1].id, true)
+        profile.recording.outputs[2].resolution = .p720
+
+        let engine = MediaEngine()
+        engine.apply(profile)
+        // "Be Right Back" (empty, so black) is live; the scene files ignore it.
+        engine.setProgram(profile.scenes[2].id, transition: TransitionSettings(kind: .cut))
+        try await Task.sleep(for: .milliseconds(200))
+        let started = try engine.startRecording(profile.recording)
+        #expect(started.map(\.lastPathComponent).map { $0.components(separatedBy: " - ").last } == ["Main feed.mov", "Main.mov", "Screen.mov"])
+        try await Task.sleep(for: .seconds(1.5))
+        let result = try await engine.stopRecording()
+        #expect(result.problem == nil)
+        #expect(result.files == started)
+        let files = result.files.map { AVURLAsset(url: $0) }
+        #expect(files.count == 3)
+
+        // Same frames at the same times, and the same audio.
+        var videoTimes: [[Chunk]] = [], audioTimes: [[Chunk]] = [], timecodes: [Int32] = []
+        var colors: [(r: Int, g: Int, b: Int)] = [], overlayCorner: [(r: Int, g: Int, b: Int)] = []
+        for asset in files {
+            videoTimes.append(try await sampleTimes(asset, .video))
+            audioTimes.append(try await sampleTimes(asset, .audio))
+            timecodes.append(try await startTimecode(asset))
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.requestedTimeToleranceBefore = .positiveInfinity
+            generator.requestedTimeToleranceAfter = .positiveInfinity
+            let image = try await generator.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+            colors.append(try pixel(image, x: 0.5, y: 0.5))
+            overlayCorner.append(try pixel(image, x: 0.1, y: 0.1))
+        }
+        #expect(videoTimes[0].map(\.samples).reduce(0, +) > 30)
+        #expect(videoTimes[1] == videoTimes[0] && videoTimes[2] == videoTimes[0])
+        #expect(audioTimes[0].map(\.samples).reduce(0, +) > 50, "AAC packets")
+        #expect(audioTimes[1] == audioTimes[0] && audioTimes[2] == audioTimes[0])
+
+        // Matching time-of-day timecode, close to the wall clock.
+        #expect(timecodes[1] == timecodes[0] && timecodes[2] == timecodes[0])
+        let now = Date().timeIntervalSince(Calendar.current.startOfDay(for: Date()))
+        #expect(abs(Double(timecodes[0]) / 30 - now) < 10)
+
+        // Each file shows its own scene.
+        #expect(colors[0].r < 30 && colors[0].b < 30, "program: the empty live scene")
+        #expect(colors[1].r > 200 && colors[1].b < 60, "Main: red")
+        #expect(colors[2].b > 200 && colors[2].r < 60, "Screen: blue")
+        #expect(overlayCorner[2].g < 60 && overlayCorner[2].b > 200, "Screen leaves out the overlay")
+    }
+
+    @Test func refusesToRecordNothing() throws {
+        var settings = RecordingSettings(directoryPath: FileManager.default.temporaryDirectory.path)
+        settings.outputs = []
+        let engine = MediaEngine()
+        engine.apply(Profile.makeDefault())
+        #expect(throws: MediaError.self) { try engine.startRecording(settings) }
+        #expect(!engine.isRecording)
+    }
+
+    /// A run of samples as read back from a file.
+    private struct Chunk: Equatable {
+        var time: CMTime
+        var samples: Int
+    }
+
+    /// Where every sample in the file's track sits, as stored.
+    private func sampleTimes(_ asset: AVAsset, _ type: AVMediaType) async throws -> [Chunk] {
+        let track = try #require(try await asset.loadTracks(withMediaType: type).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        reader.add(output)
+        #expect(reader.startReading())
+        var times: [Chunk] = []
+        while let sample = output.copyNextSampleBuffer() {
+            let count = CMSampleBufferGetNumSamples(sample)
+            if count > 0 { times.append(Chunk(time: CMSampleBufferGetPresentationTimeStamp(sample), samples: count)) }
+        }
+        return times
+    }
+
+    /// The frame number in the file's timecode track.
+    private func startTimecode(_ asset: AVAsset) async throws -> Int32 {
+        let track = try #require(try await asset.loadTracks(withMediaType: .timecode).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        reader.add(output)
+        #expect(reader.startReading())
+        var block: CMBlockBuffer?
+        while block == nil, let sample = output.copyNextSampleBuffer() { block = CMSampleBufferGetDataBuffer(sample) }
+        let data = try #require(block)
+        var frame: Int32 = 0
+        #expect(CMBlockBufferCopyDataBytes(data, atOffset: 0, dataLength: 4, destination: &frame) == noErr)
+        return Int32(bigEndian: frame)
+    }
+
     private func pixel(_ image: CGImage, x: Double, y: Double) throws -> (r: Int, g: Int, b: Int) {
         var data = [UInt8](repeating: 0, count: 4)
         let ctx = try #require(CGContext(data: &data, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
@@ -255,3 +369,4 @@ import Testing
         return (Int(data[0]), Int(data[1]), Int(data[2]))
     }
 }
+

@@ -47,16 +47,17 @@ struct ControlBar: View {
 
             Spacer()
 
-            if let url = model.lastRecordingURLs.first, !model.isRecording {
+            if let first = model.lastRecordingURLs.first, !model.isRecording {
+                let urls = model.lastRecordingURLs
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting(model.lastRecordingURLs)
                 } label: {
-                    Label(url.lastPathComponent, systemImage: "film")
+                    Label(urls.count == 1 ? first.lastPathComponent : "\(urls.count) files", systemImage: "film")
                         .lineLimit(1)
                         .frame(maxWidth: 180)
                 }
                 .buttonStyle(.borderless)
-                .help("Show in Finder")
+                .help(urls.count == 1 ? "Show in Finder" : "Show in Finder: " + urls.map(\.lastPathComponent).joined(separator: ", "))
             }
 
             Button(action: model.toggleRecording) {
@@ -77,6 +78,10 @@ struct ControlBar: View {
             }
             .controlSize(.large)
             .help(recordingSummary)
+            .popover(isPresented: Binding(get: { model.showingRecordPicker }, set: { model.showingRecordPicker = $0 }),
+                     arrowEdge: .top) {
+                RecordPicker()
+            }
             RecordingContentsButton()
 
             Button { showingGoLive = true } label: {
@@ -97,14 +102,20 @@ struct ControlBar: View {
     }
 
     private var recordingSummary: String {
-        let r = model.profile.recording, size = r.resolution.size(for: model.profile.output)
+        let r = model.profile.recording
+        let files = r.outputs.map { output in
+            let size = output.resolution.size(for: model.profile.output)
+            let bitrate = r.quality == .custom ? " \(output.videoBitrateKbps / 1000) Mbps" : ""
+            return "\(model.recordingLabel(output)) \(size.width)×\(size.height)\(bitrate)"
+        }
+        guard !files.isEmpty else { return "Choose what to record (⇧⌘R)" }
         let quality = switch r.quality {
         case .small: "HEVC, smaller files"
         case .balanced: "HEVC, balanced quality"
         case .high: "HEVC, high quality"
-        case .custom: "\(r.codec == .hevc ? "HEVC" : "H.264") \(r.videoBitrateKbps / 1000) Mbps"
+        case .custom: r.codec == .hevc ? "HEVC" : "H.264"
         }
-        let summary = "Records \(size.width)×\(size.height) \(model.profile.output.fps) fps, \(quality) (⇧⌘R)"
+        let summary = "Records \(files.joined(separator: ", ")) at \(model.profile.output.fps) fps, \(quality) (⇧⌘R)"
         let left = model.recordingLeavesOut
         return left.isEmpty ? summary : summary + "\nLeaves out: " + left.joined(separator: ", ")
     }

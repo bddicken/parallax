@@ -15,8 +15,9 @@ public struct RecordingResult: Sendable {
     public let problem: String?
 }
 
-/// Writes the program output to a local file. Recording is independent of
-/// streaming so a flaky uplink never affects the local copy.
+/// Writes one recording output (the program or a single scene) to a local
+/// file. Recording is independent of streaming so a flaky uplink never
+/// affects the local copy.
 ///
 /// The recorder runs the hardware video encoder itself and AVAssetWriter
 /// only writes the file. If the encoder fails, a new one takes over and the
@@ -32,6 +33,7 @@ public final class Recorder: MediaSink, @unchecked Sendable {
     public let encodedSize: CGSize
     private let recording: RecordingSettings
     private let output: OutputSettings
+    private let timecode: TimecodeClock
     private let audioFormat: CMAudioFormatDescription
     /// What the encoder produces; each file needs it up front.
     private let videoFormat: CMFormatDescription
@@ -63,23 +65,29 @@ public final class Recorder: MediaSink, @unchecked Sendable {
     private var waitingForKeyFrame = true
     /// Encoded frames waiting for the file to take them.
     private var pending: [CMSampleBuffer] = []
+    /// Audio that arrived before the file's first frame. Every recorder in a
+    /// recording gets the same frames and audio, but the encoders return
+    /// their first frame at different times, so hold early audio rather than
+    /// drop it; then all files start on the same sample.
+    private var earlyAudio: [CMSampleBuffer] = []
     private var encoderRestarts: [Double] = []
     private var encoderGaveUp = false
     private var droppedFrames = 0
 
+    /// `target` is what this recorder records and at what size.
     /// `onProblem` is called on the recorder's queue when a file fails
     /// partway through; `stopped` is true if recording couldn't carry on.
-    init(directory: URL, recording: RecordingSettings, output: OutputSettings,
+    /// `timecode` should be shared by every recorder started together, so
+    /// their files carry matching timecode.
+    init(url: URL, recording: RecordingSettings, target: RecordingOutput, output: OutputSettings,
+         timecode: TimecodeClock = TimecodeClock(),
          onProblem: @escaping @Sendable (Recorder, _ message: String, _ stopped: Bool) -> Void = { _, _, _ in }) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let stamp = Date().formatted(.verbatim(
-            "\(year: .defaultDigits)-\(month: .twoDigits)-\(day: .twoDigits) \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)).\(minute: .twoDigits).\(second: .twoDigits)",
-            timeZone: .current, calendar: .current))
-        url = directory.appending(path: "Parallax \(stamp).\(recording.container.rawValue)")
-        let size = recording.resolution.size(for: output)
+        self.url = url
+        let size = target.resolution.size(for: output)
         encodedSize = CGSize(width: size.width, height: size.height)
         self.recording = recording
         self.output = output
+        self.timecode = timecode
         self.onProblem = onProblem
 
         var asbd = AudioStreamBasicDescription(
@@ -93,9 +101,9 @@ public final class Recorder: MediaSink, @unchecked Sendable {
         guard let desc else { throw MediaError("Could not create audio format.") }
         audioFormat = desc
 
-        let config = RecordingEncoder.Config(recording: recording, output: output)
+        let config = RecordingEncoder.Config(recording: recording, target: target, output: output)
         videoFormat = try RecordingEncoder.formatDescription(for: config, sourceWidth: output.width, sourceHeight: output.height)
-        let first = try File(url: url, recording: recording, videoFormat: videoFormat, audioFormat: desc)
+        let first = try File(url: url, recording: recording, fps: output.fps, videoFormat: videoFormat, audioFormat: desc)
         file = first
         files = [first]
         encoder = try RecordingEncoder(config: config) { [weak self] generation, status, sample in
@@ -128,7 +136,16 @@ public final class Recorder: MediaSink, @unchecked Sendable {
     public func appendAudio(_ samples: UnsafeBufferPointer<Float>, frameCount: Int, pts: CMTime) {
         let data = Data(buffer: samples)
         queue.async { [self] in
-            guard accepting, let file, let start = file.sessionStart, pts >= start else { return }
+            guard accepting, let file else { return }
+            guard let start = file.sessionStart else {
+                if let sample = makeAudioSample(data, frames: frameCount, pts: pts) {
+                    earlyAudio.append(sample)
+                    // Encoders return their first frame well within this.
+                    if earlyAudio.count > 300 { earlyAudio.removeFirst() }
+                }
+                return
+            }
+            guard pts >= start else { return }
             guard file.writer.status == .writing else { return failed(file, at: pts) }
             if file.audioInput.isReadyForMoreMediaData, let sample = makeAudioSample(data, frames: frameCount, pts: pts),
                !file.audioInput.append(sample) {
@@ -148,6 +165,17 @@ public final class Recorder: MediaSink, @unchecked Sendable {
                 encoder.flush()
                 queue.async { [self] in finishFile(cont) }
             }
+        }
+    }
+
+    /// Stops and deletes the file; for a recording that couldn't start.
+    func discard() {
+        queue.sync {
+            accepting = false
+            finished = true
+            encoder.invalidate()
+            file?.writer.cancelWriting()
+            file = nil
         }
     }
 
@@ -193,9 +221,12 @@ public final class Recorder: MediaSink, @unchecked Sendable {
             waitingForKeyFrame = false
         }
         if file.sessionStart == nil {
-            file.writer.startSession(atSourceTime: pts)
-            file.sessionStart = pts
+            file.start(at: pts, timecodeFrame: timecode.frameNumber(at: pts, fps: output.fps))
             if recordingStart == nil { recordingStart = pts }
+            for sample in earlyAudio where CMSampleBufferGetPresentationTimeStamp(sample) >= pts {
+                if file.audioInput.isReadyForMoreMediaData { file.audioInput.append(sample) }
+            }
+            earlyAudio.removeAll()
         }
         pending.append(sample)
         drain()
@@ -283,8 +314,8 @@ public final class Recorder: MediaSink, @unchecked Sendable {
         if fileSeconds >= Self.minFileSecondsToRetry, files.count < Self.maxFiles {
             let next = url.deletingPathExtension().lastPathComponent + " (\(files.count + 1))." + url.pathExtension
             do {
-                let new = try File(url: url.deletingLastPathComponent().appending(path: next),
-                                   recording: recording, videoFormat: videoFormat, audioFormat: audioFormat)
+                let new = try File(url: url.deletingLastPathComponent().appending(path: next), recording: recording,
+                                   fps: output.fps, videoFormat: videoFormat, audioFormat: audioFormat)
                 file = new
                 files.append(new)
                 message += " Recording continues in \"\(next)\"."
@@ -376,10 +407,17 @@ private final class File {
     let writer: AVAssetWriter
     let videoInput: AVAssetWriterInput
     let audioInput: AVAssetWriterInput
+    /// A time-of-day timecode track (QuickTime only), so editors can line up
+    /// files recorded together.
+    private let timecodeInput: AVAssetWriterInput?
+    private let timecodeFormat: CMTimeCodeFormatDescription?
+    private let fps: Int
     var sessionStart: CMTime?
 
-    init(url: URL, recording: RecordingSettings, videoFormat: CMFormatDescription, audioFormat: CMAudioFormatDescription) throws {
+    init(url: URL, recording: RecordingSettings, fps: Int, videoFormat: CMFormatDescription,
+         audioFormat: CMAudioFormatDescription) throws {
         self.url = url
+        self.fps = fps
         writer = try AVAssetWriter(outputURL: url, fileType: recording.container == .mov ? .mov : .mp4)
         // Fragmented output keeps everything up to the last fragment if we
         // crash or the writer fails.
@@ -401,8 +439,80 @@ private final class File {
         guard writer.canAdd(videoInput), writer.canAdd(audioInput) else { throw MediaError("Unsupported recording settings.") }
         writer.add(videoInput)
         writer.add(audioInput)
+
+        var tcFormat: CMTimeCodeFormatDescription?
+        if recording.container == .mov {
+            CMTimeCodeFormatDescriptionCreate(
+                allocator: nil, timeCodeFormatType: kCMTimeCodeFormatType_TimeCode32,
+                frameDuration: CMTime(value: 1, timescale: CMTimeScale(fps)), frameQuanta: UInt32(fps),
+                flags: kCMTimeCodeFlag_24HourMax, extensions: nil, formatDescriptionOut: &tcFormat)
+        }
+        var tcInput: AVAssetWriterInput?
+        if let tcFormat {
+            let input = AVAssetWriterInput(mediaType: .timecode, outputSettings: nil, sourceFormatHint: tcFormat)
+            input.expectsMediaDataInRealTime = true
+            let association = AVAssetTrack.AssociationType.timecode.rawValue
+            if writer.canAdd(input) {
+                writer.add(input)
+                if videoInput.canAddTrackAssociation(withTrackOf: input, type: association) {
+                    videoInput.addTrackAssociation(withTrackOf: input, type: association)
+                }
+                tcInput = input
+            }
+        }
+        timecodeInput = tcInput
+        timecodeFormat = tcFormat
+
         guard writer.startWriting() else {
             throw MediaError("Could not start recording: \(writer.error?.localizedDescription ?? "unknown error")")
         }
+    }
+
+    /// Starts the file at its first frame, `timecodeFrame` frames since midnight.
+    func start(at pts: CMTime, timecodeFrame: Int32) {
+        writer.startSession(atSourceTime: pts)
+        sessionStart = pts
+        appendTimecode(timecodeFrame, at: pts)
+    }
+
+    /// The whole timecode track is one sample: the first frame's timecode.
+    /// Players and editors count on from there. Finished right away so the
+    /// writer never holds the other tracks back waiting for more.
+    private func appendTimecode(_ frameNumber: Int32, at pts: CMTime) {
+        guard let timecodeInput, let timecodeFormat else { return }
+        defer { timecodeInput.markAsFinished() }
+        var frame = frameNumber.bigEndian
+        var block: CMBlockBuffer?
+        guard CMBlockBufferCreateWithMemoryBlock(
+            allocator: nil, memoryBlock: nil, blockLength: 4, blockAllocator: nil, customBlockSource: nil,
+            offsetToData: 0, dataLength: 4, flags: kCMBlockBufferAssureMemoryNowFlag, blockBufferOut: &block) == noErr,
+            let block,
+            CMBlockBufferReplaceDataBytes(with: &frame, blockBuffer: block, offsetIntoDestination: 0, dataLength: 4) == noErr
+        else { return }
+        var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: CMTimeScale(fps)),
+                                        presentationTimeStamp: pts, decodeTimeStamp: .invalid)
+        var size = 4
+        var sample: CMSampleBuffer?
+        CMSampleBufferCreateReady(allocator: nil, dataBuffer: block, formatDescription: timecodeFormat, sampleCount: 1,
+                                  sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 1,
+                                  sampleSizeArray: &size, sampleBufferOut: &sample)
+        if let sample, timecodeInput.isReadyForMoreMediaData { timecodeInput.append(sample) }
+    }
+}
+
+/// Time-of-day timecode for host-clock times. One is shared by every file
+/// recorded together, so files that start on the same frame carry the same
+/// timecode.
+struct TimecodeClock: Sendable {
+    /// Seconds since local midnight at host time zero.
+    private let offset: Double
+
+    init(now: Date = Date()) {
+        offset = now.timeIntervalSince(Calendar.current.startOfDay(for: now)) - hostNow()
+    }
+
+    func frameNumber(at pts: CMTime, fps: Int) -> Int32 {
+        let seconds = (pts.seconds + offset).truncatingRemainder(dividingBy: 86_400)
+        return Int32((max(0, seconds) * Double(fps)).rounded(.down))
     }
 }

@@ -11,7 +11,7 @@ import Testing
         let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let problems = Problems()
-        let recorder = try Recorder(directory: dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
+        let recorder = try Recorder.inDirectory(dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
                                     onProblem: problems.add)
         let feed = Feed(recorder)
 
@@ -35,7 +35,7 @@ import Testing
         let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let problems = Problems()
-        let recorder = try Recorder(directory: dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
+        let recorder = try Recorder.inDirectory(dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
                                     onProblem: problems.add)
         let feed = Feed(recorder)
 
@@ -56,7 +56,7 @@ import Testing
         let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let problems = Problems()
-        let recorder = try Recorder(directory: dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
+        let recorder = try Recorder.inDirectory(dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
                                     onProblem: problems.add)
         let feed = Feed(recorder)
 
@@ -78,7 +78,7 @@ import Testing
         let dir = FileManager.default.temporaryDirectory.appending(path: "parallax-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         let problems = Problems()
-        let recorder = try Recorder(directory: dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
+        let recorder = try Recorder.inDirectory(dir, recording: RecordingSettings(directoryPath: dir.path), output: Self.output,
                                     onProblem: problems.add)
         let feed = Feed(recorder)
 
@@ -107,7 +107,7 @@ import Testing
         defer { try? hdiutil("detach", mount.path, "-force", "-quiet") }
 
         let problems = Problems()
-        let recorder = try Recorder(directory: mount, recording: RecordingSettings(directoryPath: mount.path), output: Self.output,
+        let recorder = try Recorder.inDirectory(mount, recording: RecordingSettings(directoryPath: mount.path), output: Self.output,
                                     onProblem: problems.add)
         let feed = Feed(recorder)
         try await feed.run(seconds: 7)
@@ -214,5 +214,16 @@ private final class Feed {
             // Give the encoder a moment so few frames are dropped.
             try await Task.sleep(for: .milliseconds(4))
         }
+    }
+}
+
+extension Recorder {
+    /// A program recording in `directory`, as the engine would start one.
+    static func inDirectory(_ directory: URL, recording: RecordingSettings, output: OutputSettings,
+                            onProblem: @escaping @Sendable (Recorder, String, Bool) -> Void) throws -> Recorder {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appending(path: "Parallax test.\(recording.container.rawValue)")
+        return try Recorder(url: url, recording: recording, target: recording.outputs.first ?? RecordingOutput(),
+                            output: output, onProblem: onProblem)
     }
 }

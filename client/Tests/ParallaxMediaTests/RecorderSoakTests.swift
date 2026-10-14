@@ -28,9 +28,9 @@ import VideoToolbox
         settings.container = .mp4
         settings.quality = RecordingQuality(rawValue: env["PARALLAX_SOAK_QUALITY"] ?? "") ?? .balanced
         settings.codec = VideoCodec(rawValue: env["PARALLAX_SOAK_CODEC"] ?? "") ?? .h264
-        settings.videoBitrateKbps = env["PARALLAX_SOAK_KBPS"].flatMap(Int.init) ?? 120_000
+        settings.outputs[0].videoBitrateKbps = env["PARALLAX_SOAK_KBPS"].flatMap(Int.init) ?? 120_000
         let problems = SoakProblems()
-        let recorder = try Recorder(directory: dir, recording: settings, output: output, onProblem: problems.add)
+        let recorder = try Recorder.inDirectory(dir, recording: settings, output: output, onProblem: problems.add)
 
         let frames = (0..<8).map { _ in frame(width: output.width, height: output.height) }
         // Like going live at the same time: a second encoder, 1080p CBR.

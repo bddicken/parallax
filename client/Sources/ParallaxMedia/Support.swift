@@ -27,27 +27,56 @@ public protocol MediaSink: AnyObject, Sendable {
 }
 
 /// Which version of the output a sink gets.
-enum OutputFeed: Sendable {
+enum OutputFeed: Hashable, Sendable {
     /// Everything: the preview and the stream.
     case program
     /// The program minus sources left out of the recording (music, chat
     /// overlays, …).
     case recording
+    /// One scene on its own, whatever is live, minus sources left out of
+    /// the recording. Gets the recording's audio.
+    case scene(UUID)
 }
 
 /// Thread-safe list of sinks that the compositor and mixer fan out to.
 final class SinkHub: @unchecked Sendable {
+    struct Feeds {
+        var program: [MediaSink] = []
+        var recording: [MediaSink] = []
+        var scenes: [UUID: [MediaSink]] = [:]
+
+        /// Everything that gets the recording's audio mix.
+        var recordingAudio: [MediaSink] { recording + scenes.values.joined() }
+    }
+
     private let lock = NSLock()
     private var sinks: [ObjectIdentifier: (sink: MediaSink, feed: OutputFeed)] = [:]
 
-    func add(_ sink: MediaSink, feed: OutputFeed = .program) { lock.withLock { sinks[ObjectIdentifier(sink)] = (sink, feed) } }
-    func remove(_ sink: MediaSink) { lock.withLock { _ = sinks.removeValue(forKey: ObjectIdentifier(sink)) } }
+    func add(_ sink: MediaSink, feed: OutputFeed = .program) { add([(sink, feed)]) }
+    func remove(_ sink: MediaSink) { remove([sink]) }
+
+    /// Adds several at once, so they all get the same first frame.
+    func add(_ entries: [(sink: MediaSink, feed: OutputFeed)]) {
+        lock.withLock { for e in entries { sinks[ObjectIdentifier(e.sink)] = e } }
+    }
+
+    /// Removes several at once, so they all get the same last frame.
+    func remove(_ entries: [MediaSink]) {
+        lock.withLock { for s in entries { _ = sinks.removeValue(forKey: ObjectIdentifier(s)) } }
+    }
 
     /// The sinks on each feed.
-    var byFeed: (program: [MediaSink], recording: [MediaSink]) {
+    var byFeed: Feeds {
         lock.withLock {
-            let values = sinks.values
-            return (values.filter { $0.feed == .program }.map(\.sink), values.filter { $0.feed == .recording }.map(\.sink))
+            var feeds = Feeds()
+            for (sink, feed) in sinks.values {
+                switch feed {
+                case .program: feeds.program.append(sink)
+                case .recording: feeds.recording.append(sink)
+                case .scene(let id): feeds.scenes[id, default: []].append(sink)
+                }
+            }
+            return feeds
         }
     }
 }

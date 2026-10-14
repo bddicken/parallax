@@ -16,14 +16,14 @@ final class RecordingEncoder: @unchecked Sendable {
         var quality: Double?
         var averageKbps: Int
 
-        init(recording: RecordingSettings, output: OutputSettings) {
-            let size = recording.resolution.size(for: output)
+        init(recording: RecordingSettings, target: RecordingOutput, output: OutputSettings) {
+            let size = target.resolution.size(for: output)
             width = size.width
             height = size.height
             fps = output.fps
             codec = recording.effectiveCodec
             quality = recording.quality.encoderQuality
-            averageKbps = recording.videoBitrateKbps
+            averageKbps = target.videoBitrateKbps
         }
     }
 
