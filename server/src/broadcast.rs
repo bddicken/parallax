@@ -128,14 +128,17 @@ impl Broadcaster {
             }
             self.set(generation, connecting(&id, None)).await;
             let started = Instant::now();
-            let error = self.run_ffmpeg(generation, &id, &url).await;
+            let Stopped { error, sent } = self.run_ffmpeg(generation, &id, &url).await;
             tracing::warn!("relay to {id} stopped: {error}");
-            if started.elapsed() > Duration::from_secs(60) {
+            // Backing off is for a platform that won't take us. One that was
+            // taking video gets it back right away, since every second we
+            // wait is a second viewers see nothing.
+            if sent || started.elapsed() > Duration::from_secs(60) {
                 backoff = Duration::from_secs(2);
             }
             // The client stopping is expected; anything else is worth showing.
             if *ready.borrow() {
-                let status = DestinationStatus { state: DestinationState::Error, ..connecting(&id, Some(error)) };
+                let status = DestinationStatus { state: DestinationState::Error, ..connecting(&id, Some(explain(&error))) };
                 self.set(generation, status).await;
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(30));
@@ -143,8 +146,8 @@ impl Broadcaster {
         }
     }
 
-    /// Runs one ffmpeg until it exits, reporting bitrate. Returns why it stopped.
-    async fn run_ffmpeg(&self, generation: u64, id: &str, url: &str) -> String {
+    /// Runs one ffmpeg until it exits, reporting bitrate.
+    async fn run_ffmpeg(&self, generation: u64, id: &str, url: &str) -> Stopped {
         let mut child = match Command::new(&self.ffmpeg)
             .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-progress", "pipe:1", "-stats_period", "2"])
             .args(["-rw_timeout", "10000000", "-i", &self.ingest.local_read_url()])
@@ -156,7 +159,7 @@ impl Broadcaster {
             .spawn()
         {
             Ok(child) => child,
-            Err(e) => return format!("Couldn't start {}: {e}", self.ffmpeg),
+            Err(e) => return Stopped { error: format!("Couldn't start {}: {e}", self.ffmpeg), sent: false },
         };
         tracing::info!("relaying to {id} ({})", redact(url));
 
@@ -177,10 +180,12 @@ impl Broadcaster {
         // `-progress` prints key=value blocks, each ending in `progress=...`.
         let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
         let mut kbps = 0;
+        let mut sent = false;
         while let Ok(Some(line)) = lines.next_line().await {
             if let Some(rate) = line.strip_prefix("bitrate=") {
                 kbps = rate.trim_end_matches("kbits/s").trim().parse::<f64>().map_or(0, |r| r.round() as i64);
             } else if line.starts_with("progress=") {
+                sent = true;
                 let status = DestinationStatus {
                     destination_id: id.into(),
                     state: DestinationState::Live,
@@ -192,11 +197,31 @@ impl Broadcaster {
         }
         let exit = child.wait().await;
         let stderr = errors.await.unwrap_or_default().replace(url, &redact(url));
-        match (exit, stderr.is_empty()) {
+        let error = match (exit, stderr.is_empty()) {
             (_, false) => stderr,
             (Ok(status), true) => format!("ffmpeg exited ({status})"),
             (Err(e), true) => e.to_string(),
-        }
+        };
+        Stopped { error, sent }
+    }
+}
+
+/// Why a relay's ffmpeg exited, and whether it got any video out first.
+struct Stopped {
+    error: String,
+    sent: bool,
+}
+
+/// Puts ffmpeg's reason in the user's terms where we know what it means.
+/// MediaMTX drops a relay that falls too far behind, which ffmpeg sees as
+/// its input (`in#0`) breaking while the client is still sending; that means
+/// the upload to the platform can't keep up.
+fn explain(error: &str) -> String {
+    let input_broke = error.contains("[in#0") && (error.contains("Broken pipe") || error.contains("Input/output error"));
+    if input_broke {
+        "Fell behind, so it reconnected. Your upload may not keep up with every destination; try a lower bitrate or fewer destinations.".into()
+    } else {
+        error.into()
     }
 }
 
@@ -217,5 +242,24 @@ fn redact(url: &str) -> String {
     match url.rsplit_once('/') {
         Some((base, _)) => format!("{base}/…"),
         None => "…".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explains_falling_behind() {
+        // From a relay MediaMTX dropped for being too slow.
+        let dropped = "[in#0/flv @ 0x75cc34140] Error during demuxing: Broken pipe";
+        assert!(explain(dropped).starts_with("Fell behind"));
+        let refused = "[out#0/flv @ 0x807418180] Error opening output rtmps://ingest.example/app/…: Input/output error";
+        assert_eq!(explain(refused), refused);
+    }
+
+    #[test]
+    fn hides_the_stream_key() {
+        assert_eq!(redact("rtmps://a.rtmps.youtube.com/live2/secret"), "rtmps://a.rtmps.youtube.com/live2/…");
     }
 }
