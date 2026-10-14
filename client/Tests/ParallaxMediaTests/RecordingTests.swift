@@ -274,7 +274,7 @@ import Testing
         engine.setProgram(profile.scenes[2].id, transition: TransitionSettings(kind: .cut))
         try await Task.sleep(for: .milliseconds(200))
         let started = try engine.startRecording(profile.recording)
-        #expect(started.map(\.lastPathComponent).map { $0.components(separatedBy: " - ").last } == ["Program.mov", "Main.mov", "Screen.mov"])
+        #expect(started.map(\.lastPathComponent).map { $0.components(separatedBy: " - ").last } == ["Main feed.mov", "Main.mov", "Screen.mov"])
         try await Task.sleep(for: .seconds(1.5))
         let result = try await engine.stopRecording()
         #expect(result.problem == nil)

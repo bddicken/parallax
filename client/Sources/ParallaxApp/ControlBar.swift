@@ -78,6 +78,10 @@ struct ControlBar: View {
             }
             .controlSize(.large)
             .help(recordingSummary)
+            .popover(isPresented: Binding(get: { model.showingRecordPicker }, set: { model.showingRecordPicker = $0 }),
+                     arrowEdge: .top) {
+                RecordPicker()
+            }
             RecordingContentsButton()
 
             Button { showingGoLive = true } label: {
@@ -104,7 +108,7 @@ struct ControlBar: View {
             let bitrate = r.quality == .custom ? " \(output.videoBitrateKbps / 1000) Mbps" : ""
             return "\(model.recordingLabel(output)) \(size.width)×\(size.height)\(bitrate)"
         }
-        guard !files.isEmpty else { return "Nothing to record: choose what to record in Settings › Recording" }
+        guard !files.isEmpty else { return "Choose what to record (⇧⌘R)" }
         let quality = switch r.quality {
         case .small: "HEVC, smaller files"
         case .balanced: "HEVC, balanced quality"

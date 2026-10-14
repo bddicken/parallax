@@ -246,7 +246,7 @@ public final class MediaEngine {
         let sceneNames = Dictionary(scenes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         let outputs = settings.outputs.filter { $0.sceneID.map { sceneNames[$0] != nil } ?? true }
         guard !outputs.isEmpty else {
-            throw MediaError("Nothing to record. Turn on the program or a scene in Settings › Recording.")
+            throw MediaError("Nothing to record. Choose the main feed or a scene.")
         }
         let directory = URL(filePath: settings.directoryPath, directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

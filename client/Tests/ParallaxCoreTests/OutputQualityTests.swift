@@ -48,7 +48,7 @@ import Testing
     @Test func recordingFileNames() {
         #expect(RecordingSettings.fileNames(stamp: "S", scenes: [nil]) == ["Parallax S"])
         #expect(RecordingSettings.fileNames(stamp: "S", scenes: [nil, "Camera", "Screen: Left/Right", "Camera", " "])
-            == ["Parallax S - Program", "Parallax S - Camera", "Parallax S - Screen- Left-Right", "Parallax S - Camera 2", "Parallax S - Scene"])
+            == ["Parallax S - Main feed", "Parallax S - Camera", "Parallax S - Screen- Left-Right", "Parallax S - Camera 2", "Parallax S - Scene"])
         #expect(RecordingSettings.fileNames(stamp: "S", scenes: ["Camera"]) == ["Parallax S - Camera"])
     }
 

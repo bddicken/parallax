@@ -567,7 +567,7 @@ public struct RecordingSettings: Codable, Hashable, Sendable {
         if scenes == [nil] { return [base] }
         var used: Set<String> = []
         return scenes.map { scene in
-            var label = (scene ?? "Program")
+            var label = (scene ?? "Main feed")
                 .replacingOccurrences(of: "/", with: "-")
                 .replacingOccurrences(of: ":", with: "-")
                 .trimmingCharacters(in: .whitespaces)

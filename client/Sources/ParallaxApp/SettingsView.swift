@@ -90,8 +90,8 @@ private struct RecordingSettingsView: View {
         Form {
             Section {
                 Toggle(isOn: outputOn(nil)) {
-                    Text("Program")
-                    Text("What's live, including transitions")
+                    Text("Main feed")
+                    Text("What's live, with overlays and transitions")
                 }
                 ForEach(model.profile.scenes) { scene in
                     Toggle(isOn: outputOn(scene.id)) {
@@ -102,7 +102,7 @@ private struct RecordingSettingsView: View {
             } header: {
                 Text("Record")
             } footer: {
-                Text("Each one is saved to its own file. They all start and stop on the same frame, so they line up in your editor. For example, record a full-frame camera scene and a screen scene to cut between later.")
+                Text("Each one is saved to its own file. They all start and stop on the same frame, so they line up in your editor. For example, record a full-frame camera scene and a screen scene to cut between later. Record also asks each time.")
                     .foregroundStyle(.secondary)
             }
             ForEach(rec.outputs, id: \.sceneID) { output in
@@ -191,7 +191,7 @@ private struct RecordingSettingsView: View {
     }
 
     private func summary(_ rec: RecordingSettings) -> String {
-        guard !rec.outputs.isEmpty else { return "Nothing is recorded. Turn on the program or a scene above." }
+        guard !rec.outputs.isEmpty else { return "Nothing is recorded. Turn on the main feed or a scene above." }
         let fps = model.profile.output.fps, canvas = model.profile.output
         let sizes = rec.outputs.map { $0.resolution.size(for: canvas) }
         let head = sizes.count == 1
