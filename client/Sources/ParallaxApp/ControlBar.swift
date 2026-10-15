@@ -150,8 +150,8 @@ struct GoLiveSheet: View {
         model.profile.broadcast.destinationIDs = ids.sorted()
     }
 
-    private var youTubeSelected: Bool {
-        broadcast.destinations.contains { $0.platform == .youtube && selected.contains($0.id) }
+    private func isSelected(_ platform: Platform) -> Bool {
+        broadcast.destinations.contains { $0.platform == platform && selected.contains($0.id) }
     }
 
     var body: some View {
@@ -184,20 +184,32 @@ struct GoLiveSheet: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(broadcast.destinations) { dest in
-                    HStack {
-                        Toggle(isOn: Binding(
-                            get: { selected.contains(dest.id) },
-                            set: { setSelected(dest.id, $0) }
-                        )) {
-                            HStack(spacing: 6) {
-                                PlatformBadge(platform: dest.platform)
-                                Text(dest.name)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Toggle(isOn: Binding(
+                                get: { selected.contains(dest.id) },
+                                set: { setSelected(dest.id, $0) }
+                            )) {
+                                HStack(spacing: 6) {
+                                    PlatformBadge(platform: dest.platform)
+                                    Text(dest.name)
+                                }
+                            }
+                            .disabled(broadcast.status.live)
+                            Spacer()
+                            if let status = broadcast.status.destinations.first(where: { $0.destinationID == dest.id }) {
+                                if dest.platform == .x {
+                                    Button("Go Live on X…") { broadcast.showXLiveStudio() }
+                                        .buttonStyle(.link).font(.callout)
+                                }
+                                StatusPill(state: status.state, error: status.error)
                             }
                         }
-                        .disabled(broadcast.status.live)
-                        Spacer()
-                        if let status = broadcast.status.destinations.first(where: { $0.destinationID == dest.id }) {
-                            StatusPill(state: status.state, error: status.error)
+                        if dest.platform == .x, let problem = broadcast.xGoLiveProblem {
+                            Label("X didn't go live: \(problem)", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }
@@ -214,8 +226,8 @@ struct GoLiveSheet: View {
             .padding(12)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
 
-            if youTubeSelected {
-                YouTubeOptions()
+            if isSelected(.youtube) || isSelected(.x) {
+                BroadcastOptions(youTube: isSelected(.youtube))
             }
 
             if let error = broadcast.connectionError {
@@ -241,10 +253,11 @@ struct GoLiveSheet: View {
     }
 }
 
-/// YouTube makes a new video for each broadcast, so it needs a title and
-/// visibility, and can take a thumbnail. Remembered for next time.
-private struct YouTubeOptions: View {
+/// YouTube and X make a new video for each broadcast, so they take a title
+/// and thumbnail, and YouTube a visibility. Remembered for next time.
+private struct BroadcastOptions: View {
     @Environment(AppModel.self) private var model
+    let youTube: Bool
 
     var body: some View {
         @Bindable var model = model
@@ -257,15 +270,17 @@ private struct YouTubeOptions: View {
                     .labelsHidden()
                     .disabled(live)
             }
-            GridRow {
-                Text("YouTube")
-                Picker("Visibility", selection: $model.profile.broadcast.privacy) {
-                    ForEach(BroadcastPrivacy.allCases, id: \.self) { Text($0.displayName).tag($0) }
+            if youTube {
+                GridRow {
+                    Text("YouTube")
+                    Picker("Visibility", selection: $model.profile.broadcast.privacy) {
+                        ForEach(BroadcastPrivacy.allCases, id: \.self) { Text($0.displayName).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .disabled(live)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .disabled(live)
             }
             GridRow {
                 Text("Thumbnail")
@@ -284,8 +299,8 @@ private struct YouTubeOptions: View {
     }
 }
 
-/// Picks the image file for the YouTube thumbnail. It's uploaded when you go
-/// live, or right away if you change it while live.
+/// Picks the image file for the thumbnail. It's uploaded when you go live,
+/// or for YouTube, right away if you change it while live.
 private struct ThumbnailPicker: View {
     @Environment(AppModel.self) private var model
     @State private var preview: NSImage?

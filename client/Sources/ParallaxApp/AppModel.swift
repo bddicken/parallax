@@ -159,6 +159,16 @@ final class AppModel {
         if let raw = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_PERMISSION"] {
             permissionPrompt = Permission(rawValue: raw)
         }
+        // Clicks through X's Live Studio as Go Live would, short of Go Live.
+        // "fail" then reports a made-up failure, to see the warning.
+        if let mode = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_X_LIVE_STUDIO_DRY_RUN"] {
+            let settings = profile.broadcast
+            Task {
+                await broadcast.goLiveOnX(title: settings.title.isEmpty ? "Parallax dry run" : settings.title,
+                                          thumbnailPath: settings.thumbnailPath, dryRun: true)
+                if mode == "fail" { broadcast.reportXGoLiveProblem("Test failure from the dry run.") }
+            }
+        }
         #endif
     }
 
@@ -701,12 +711,18 @@ final class AppModel {
             stopUplink()
             return
         }
+        // X's API can't start a broadcast, so Live Studio's page does it.
+        if broadcast.service.mode == .server, broadcast.includes(.x, in: destinationIDs) {
+            let title = request.title ?? ""
+            Task { await broadcast.goLiveOnX(title: title, thumbnailPath: settings.thumbnailPath) }
+        }
         if let path = settings.thumbnailPath, broadcast.includes(.youtube, in: destinationIDs) {
             await broadcast.setThumbnail(contentsOf: URL(filePath: path))
         }
     }
 
     func endBroadcast() async {
+        broadcast.xGoLiveProblem = nil
         await broadcast.stop()
         stopUplink()
     }
