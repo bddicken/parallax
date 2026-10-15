@@ -160,10 +160,14 @@ final class AppModel {
             permissionPrompt = Permission(rawValue: raw)
         }
         // Clicks through X's Live Studio as Go Live would, short of Go Live.
-        if ProcessInfo.processInfo.environment["PARALLAX_DEBUG_X_LIVE_STUDIO_DRY_RUN"] != nil {
+        // "fail" then reports a made-up failure, to see the warning.
+        if let mode = ProcessInfo.processInfo.environment["PARALLAX_DEBUG_X_LIVE_STUDIO_DRY_RUN"] {
             let settings = profile.broadcast
-            Task { await broadcast.goLiveOnX(title: settings.title.isEmpty ? "Parallax dry run" : settings.title,
-                                             thumbnailPath: settings.thumbnailPath, dryRun: true) }
+            Task {
+                await broadcast.goLiveOnX(title: settings.title.isEmpty ? "Parallax dry run" : settings.title,
+                                          thumbnailPath: settings.thumbnailPath, dryRun: true)
+                if mode == "fail" { broadcast.reportXGoLiveProblem("Test failure from the dry run.") }
+            }
         }
         #endif
     }
@@ -718,6 +722,7 @@ final class AppModel {
     }
 
     func endBroadcast() async {
+        broadcast.xGoLiveProblem = nil
         await broadcast.stop()
         stopUplink()
     }

@@ -184,24 +184,32 @@ struct GoLiveSheet: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(broadcast.destinations) { dest in
-                    HStack {
-                        Toggle(isOn: Binding(
-                            get: { selected.contains(dest.id) },
-                            set: { setSelected(dest.id, $0) }
-                        )) {
-                            HStack(spacing: 6) {
-                                PlatformBadge(platform: dest.platform)
-                                Text(dest.name)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Toggle(isOn: Binding(
+                                get: { selected.contains(dest.id) },
+                                set: { setSelected(dest.id, $0) }
+                            )) {
+                                HStack(spacing: 6) {
+                                    PlatformBadge(platform: dest.platform)
+                                    Text(dest.name)
+                                }
+                            }
+                            .disabled(broadcast.status.live)
+                            Spacer()
+                            if let status = broadcast.status.destinations.first(where: { $0.destinationID == dest.id }) {
+                                if dest.platform == .x {
+                                    Button("Go Live on X…") { broadcast.showXLiveStudio() }
+                                        .buttonStyle(.link).font(.callout)
+                                }
+                                StatusPill(state: status.state, error: status.error)
                             }
                         }
-                        .disabled(broadcast.status.live)
-                        Spacer()
-                        if let status = broadcast.status.destinations.first(where: { $0.destinationID == dest.id }) {
-                            if dest.platform == .x {
-                                Button("Go Live on X…") { broadcast.showXLiveStudio() }
-                                    .buttonStyle(.link).font(.callout)
-                            }
-                            StatusPill(state: status.state, error: status.error)
+                        if dest.platform == .x, let problem = broadcast.xGoLiveProblem {
+                            Label("X didn't go live: \(problem)", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .font(.callout)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                 }

@@ -20,6 +20,8 @@ final class BroadcastModel {
     /// Why the last thumbnail didn't upload. Kept apart from
     /// `connectionError`, which the next event clears.
     var thumbnailProblem: String?
+    /// Why Parallax couldn't start the X broadcast in Live Studio.
+    var xGoLiveProblem: String?
 
     @ObservationIgnored var onChatChanged: (() -> Void)?
     @ObservationIgnored private var eventsTask: Task<Void, Never>?
@@ -57,6 +59,7 @@ final class BroadcastModel {
     /// Starts the X broadcast in Live Studio, since X's API can't. Needs
     /// video going to the server, so call it after `start`.
     func goLiveOnX(title: String, thumbnailPath: String?, dryRun: Bool = false) async {
+        xGoLiveProblem = nil
         var thumbnail: Data?, problem: String?
         if let thumbnailPath {
             do {
@@ -65,7 +68,18 @@ final class BroadcastModel {
                 problem = "The thumbnail wasn't added: \(error.localizedDescription)"
             }
         }
-        await xLiveStudio.goLive(title: title, thumbnail: thumbnail, thumbnailProblem: problem, dryRun: dryRun)
+        if let failure = await xLiveStudio.goLive(title: title, thumbnail: thumbnail, thumbnailProblem: problem, dryRun: dryRun) {
+            reportXGoLiveProblem(failure)
+        }
+    }
+
+    /// Flags it on the X row and in a notification, since you may be
+    /// looking at anything but the Live Studio window.
+    func reportXGoLiveProblem(_ problem: String) {
+        xGoLiveProblem = problem
+        Notifications.shared.post("X didn't go live", "\(problem) Click to finish in Live Studio.") { [weak self] in
+            self?.showXLiveStudio()
+        }
     }
 
     /// Opens the X chat window, whose comments show up in `messages`.
