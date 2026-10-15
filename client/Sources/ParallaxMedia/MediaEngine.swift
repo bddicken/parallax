@@ -42,7 +42,7 @@ public final class MediaEngine {
     private var feedSize = ChatOverlayRenderer.feedSize
     private var feedScale: CGFloat = 1
     private var chatTextSize = ChatTextSize.small
-    private var feedImage = ChatOverlayRenderer.feed([])
+    private var feedLayers = ChatOverlayRenderer.feedLayers([], arriving: 0)
     private var featuredImage: CIImage?
     private var scenes: [StudioScene] = []
     private var programID: UUID?
@@ -182,10 +182,20 @@ public final class MediaEngine {
     // MARK: Chat overlays
 
     public func updateChat(feed: [ChatOverlayLine], featured: ChatOverlayLine?) {
-        feedLines = feed
-        feedImage = renderFeed()
+        // Messages after the newest one already showing slide in.
+        let arriving: Int
+        if let newest = feedLines.last, let i = feed.lastIndex(where: { $0.id == newest.id }) {
+            arriving = feed.count - 1 - i
+        } else {
+            arriving = feedLines.isEmpty ? feed.count : 0
+        }
         featuredImage = featured.map(ChatOverlayRenderer.banner)
-        pushChatImages()
+        // Leave the feed alone (it may be mid-slide) if only the featured
+        // message changed.
+        guard feed != feedLines else { return pushChatImages(feed: false) }
+        feedLines = feed
+        feedLayers = renderFeed(arriving: arriving)
+        pushChatImages(animated: arriving > 0)
     }
 
     /// Draws the feed at its box's pixel size in the live scene, so resizing
@@ -197,7 +207,7 @@ public final class MediaEngine {
         guard size != feedSize || scale != feedScale else { return }
         feedSize = size
         feedScale = scale
-        feedImage = renderFeed()
+        feedLayers = renderFeed(arriving: 0)
         pushChatImages()
     }
 
@@ -210,16 +220,15 @@ public final class MediaEngine {
         return CGSize(width: rect.width.rounded(), height: rect.height.rounded())
     }
 
-    private func renderFeed() -> CIImage {
-        ChatOverlayRenderer.feed(feedLines, size: feedSize, scale: feedScale)
+    private func renderFeed(arriving: Int) -> ChatFeedLayers {
+        ChatOverlayRenderer.feedLayers(feedLines, arriving: arriving, size: feedSize, scale: feedScale)
     }
 
-    private func pushChatImages() {
+    private func pushChatImages(feed: Bool = true, animated: Bool = false) {
         for (id, source) in videoSources {
-            guard let node = registry[id] as? StaticImageNode else { continue }
             switch source.kind {
-            case .chatFeed: node.setImage(feedImage)
-            case .featuredChat: node.setImage(featuredImage)
+            case .chatFeed where feed: (registry[id] as? ChatFeedNode)?.show(feedLayers, animated: animated)
+            case .featuredChat: (registry[id] as? StaticImageNode)?.setImage(featuredImage)
             default: break
             }
         }
@@ -401,7 +410,7 @@ public final class MediaEngine {
             let color = CIColor(red: c.red, green: c.green, blue: c.blue, alpha: c.alpha)
             return StaticImageNode(image: CIImage(color: color).cropped(to: CGRect(x: 0, y: 0, width: 1920, height: 1080)))
         case .chatFeed:
-            return StaticImageNode(image: feedImage)
+            return ChatFeedNode(feedLayers)
         case .featuredChat:
             return StaticImageNode(image: featuredImage)
         }

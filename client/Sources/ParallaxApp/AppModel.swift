@@ -741,7 +741,8 @@ final class AppModel {
     // MARK: Chat
 
     func refreshChatOverlay() {
-        let feed = broadcast.messages.suffix(8).map(overlayLine)
+        // More than fit in most boxes; the feed draws what fits.
+        let feed = broadcast.messages.suffix(30).map(overlayLine)
         let featured = broadcast.featuredMessage.map(overlayLine)
         engine.updateChat(feed: Array(feed), featured: featured)
     }
@@ -779,7 +780,7 @@ final class AppModel {
     }
 
     private func overlayLine(_ message: ChatMessage) -> ChatOverlayLine {
-        ChatOverlayLine(author: message.author.displayName, text: message.text, accent: message.platform.accent)
+        ChatOverlayLine(id: message.id, author: message.author.displayName, text: message.text, accent: message.platform.accent)
     }
 }
 

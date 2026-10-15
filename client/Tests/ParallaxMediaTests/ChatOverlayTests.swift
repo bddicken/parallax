@@ -15,27 +15,45 @@ import UniformTypeIdentifiers
         ChatOverlayLine(author: "carol", text: "hi from YouTube", accent: RGBAColor(red: 1, green: 0.2, blue: 0.2)),
     ]
 
-    /// All messages share one box: down its right edge (clear of text) the
-    /// background is unbroken from the bottom to the box's top, and clear above.
-    @Test func messagesShareOneBox() throws {
+    /// All messages share one box that fills the feed's frame: down its
+    /// right edge (clear of text) the background is unbroken from bottom to
+    /// top, and the messages sit at the bottom.
+    @Test func messagesShareOneBoxTheSizeOfTheFeed() throws {
         let size = CGSize(width: 500, height: 990)
         let image = try render(ChatOverlayRenderer.feed(lines, size: size), size: size)
         if let path = ProcessInfo.processInfo.environment["PARALLAX_CHAT_PREVIEW"] { try save(image, to: path) }
 
         let x = Int(size.width) - 4
-        // Rows from the bottom of the image up (CGImage rows run top-down).
-        let column = (0..<Int(size.height)).map { alpha(image, x: x, y: Int(size.height) - 1 - $0) }
-        // Skip the rounded corner at the bottom.
-        let top = try #require(column.lastIndex { $0 > 0 })
-        #expect(top > 100 && top < 600, "the box fits the messages, not the whole feed")
-        #expect(column[16...(top - 16)].allSatisfy { $0 > 100 && $0 < 200 }, "one semi-transparent box, no gaps")
-        #expect(column[(top + 1)...].allSatisfy { $0 == 0 })
+        // Skip the rounded corners at the top and bottom.
+        #expect((16..<(Int(size.height) - 16)).allSatisfy { (140...170).contains(alpha(image, x: x, y: $0)) },
+                "one semi-transparent box, no gaps")
+        // Text (opaque) near the bottom, none near the top.
+        let opaque = { (y: Int) in (0..<Int(size.width)).contains { alpha(image, x: $0, y: y) == 255 } }
+        #expect((Int(size.height) - 200..<Int(size.height)).contains { opaque($0) })
+        #expect(!(0..<200).contains { opaque($0) })
     }
 
-    @Test func noChatNoBox() throws {
+    @Test func showsTheBoxBeforeAnyChat() throws {
         let size = CGSize(width: 500, height: 990)
         let image = try render(ChatOverlayRenderer.feed([], size: size), size: size)
-        #expect(stride(from: 0, to: Int(size.height), by: 10).allSatisfy { alpha(image, x: 250, y: $0) == 0 })
+        #expect(stride(from: 20, to: Int(size.height) - 20, by: 10).allSatisfy { (140...170).contains(alpha(image, x: 250, y: $0)) })
+    }
+
+    /// A new message slides in: the first frame is the feed as it was
+    /// before it arrived, the last is the feed with it, and halfway the
+    /// others are partway up.
+    @Test func newMessageSlidesIn() throws {
+        let size = CGSize(width: 500, height: 300)
+        let many = (0..<6).map { ChatOverlayLine(author: "user\($0)", text: "message \($0)", accent: RGBAColor(red: 1, green: 1, blue: 1)) }
+        let layers = ChatOverlayRenderer.feedLayers(many, arriving: 1, size: size)
+        #expect(layers.shift > 30)
+
+        let before = try render(ChatOverlayRenderer.feed(Array(many.dropLast()), size: size), size: size)
+        let after = try render(ChatOverlayRenderer.feed(many, size: size), size: size)
+        #expect(differing(try render(layers.frame(progress: 0), size: size), before) < 0.002)
+        #expect(differing(try render(layers.frame(progress: 1), size: size), after) < 0.002)
+        let middle = try render(layers.frame(progress: 0.5), size: size)
+        #expect(differing(middle, before) > 0.01 && differing(middle, after) > 0.01)
     }
 
     private func render(_ image: CIImage, size: CGSize) throws -> CGImage {
@@ -49,6 +67,25 @@ import UniformTypeIdentifiers
                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         ctx.draw(image, in: CGRect(x: -x, y: -(image.height - 1 - y), width: image.width, height: image.height))
         return Int(data[3])
+    }
+
+    /// The share of pixels that differ noticeably between two images.
+    private func differing(_ a: CGImage, _ b: CGImage) -> Double {
+        let (pa, pb) = (pixels(a), pixels(b))
+        var count = 0
+        for i in stride(from: 0, to: pa.count, by: 4) where (0..<4).contains(where: { abs(Int(pa[i + $0]) - Int(pb[i + $0])) > 24 }) {
+            count += 1
+        }
+        return Double(count) / Double(pa.count / 4)
+    }
+
+    private func pixels(_ image: CGImage) -> [UInt8] {
+        var data = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let ctx = CGContext(data: &data, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4,
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return data
     }
 
     /// The feed over a mid-gray background, to look at.
