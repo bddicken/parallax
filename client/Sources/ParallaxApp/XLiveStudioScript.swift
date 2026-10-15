@@ -93,6 +93,7 @@ enum XLiveStudioScript {
         const bytes = Uint8Array.from(atob(thumbnail), (c) => c.charCodeAt(0));
         const files = new DataTransfer();
         files.items.add(new File([bytes], 'thumbnail.jpg', { type: 'image/jpeg' }));
+        const attachedAt = performance.now();
         input.files = files.files;
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
@@ -100,6 +101,15 @@ enum XLiveStudioScript {
         await sleep(2000);
         const images = [...(dialog() ?? document).querySelectorAll('img')].filter(shown).map((i) => i.src.slice(0, 30));
         steps.push(`images in the popup: ${images.join(', ') || 'none'}`);
+        // What X sent after the image was attached, to see whether and when it uploads.
+        const requests = () => performance.getEntriesByType('resource')
+          .filter((r) => r.startTime >= attachedAt && ['fetch', 'xmlhttprequest'].includes(r.initiatorType))
+          .map((r) => `${r.name.replace(/\\?.*/, '').slice(0, 80)} ${Math.round(r.duration)}ms`);
+        steps.push(`requests 2 s after attaching: ${requests().join('; ') || 'none'}`);
+        if (dryRun) {
+          await sleep(10000);
+          steps.push(`requests 12 s after attaching: ${requests().join('; ') || 'none'}`);
+        }
         await click('the Details tab', () => dialog() ?? document, 'details');
       }
 
@@ -111,11 +121,20 @@ enum XLiveStudioScript {
         return { problem: null, steps, controls: controls() };
       }
       // Go Live stays off until X gets video from your source.
+      window.parallaxGoLiveAt = performance.now();
       await click('an enabled Go Live button', () => dialog() ?? document, 'go live', 60);
       return { problem: null, steps, controls: [] };
     } catch (problem) {
       return { problem: typeof problem === 'string' ? problem : `Live Studio script failed: ${problem}`,
                steps, controls: controls() };
     }
+    """
+
+    /// What the page sent since `goLive` started waiting to click Go Live,
+    /// for the log: X uploads the thumbnail then, not when it's attached.
+    static let requestsSinceGoLive = """
+    return performance.getEntriesByType('resource')
+      .filter((r) => r.startTime >= (window.parallaxGoLiveAt ?? Infinity) && ['fetch', 'xmlhttprequest'].includes(r.initiatorType))
+      .map((r) => `${r.name.replace(/\\?.*/, '').slice(0, 80)} ${Math.round(r.duration)}ms`);
     """
 }

@@ -52,6 +52,11 @@ final class XLiveStudio: NSObject {
             window.subtitle = "Dry run: everything but Go Live is done."
         } else {
             window.subtitle = ["Clicked Go Live.", thumbnailProblem].compactMap(\.self).joined(separator: " ")
+            Task { [weak webView] in
+                try? await Task.sleep(for: .seconds(15))
+                let requests = try? await webView?.callAsyncJavaScript(XLiveStudioScript.requestsSinceGoLive, contentWorld: .page)
+                for request in requests as? [String] ?? [] { log.info("after Go Live: \(request, privacy: .public)") }
+            }
         }
         return nil
     }
