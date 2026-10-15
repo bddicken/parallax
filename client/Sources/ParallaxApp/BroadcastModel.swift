@@ -50,6 +50,10 @@ final class BroadcastModel {
         return destinations.first { $0.platform == .x }?.chatURL.flatMap(URL.init(string:))
     }
 
+    /// Where you click Go Live for X. X's Livestream API is approval-only, so
+    /// Parallax only sends video to your source; the broadcast starts here.
+    static let xLiveStudio = URL(string: "https://x.com/i/live-studio")!
+
     /// Opens the X chat window, whose comments show up in `messages`.
     func showXChat() {
         if let xChatPage { xChat.show(xChatPage) }

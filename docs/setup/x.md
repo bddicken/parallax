@@ -2,7 +2,7 @@
 
 One-time setup, about 5 minutes. You need a running [`parallax-server`](../../server/README.md) and an X account that can go live (X Premium).
 
-X's API is approval-only, so Parallax sends video to a Media Studio source, and you start and end each broadcast in Media Studio. Parallax reads X chat from X's own chat page (see [Chat](#chat)).
+X's API is approval-only, so Parallax sends video to a Media Studio source and opens Live Studio for you, but you click **Go Live** and end each broadcast there. Parallax reads X chat from X's own chat page (see [Chat](#chat)).
 
 ## 1. Create a source
 
@@ -26,10 +26,10 @@ Use your source's URL; the region prefix varies. A plain `rtmp://` URL is switch
 
 ## 3. Go live
 
-1. In Parallax, click **Go Live**, check **X**, and click **Start Broadcast**.
-2. In Media Studio › **Producer** › **Broadcasts**, click **Create Broadcast**, pick your source, wait for the preview, and click **Go Live**.
+1. In Parallax, click **Go Live**, check **X**, and click **Start Broadcast**. Parallax opens X's [Live Studio](https://x.com/i/live-studio) in your browser.
+2. There, start a livestream from your source, wait for the preview, and click **Go Live**.
 
-To finish, click **End Broadcast** in Media Studio, then **Stop** in Parallax.
+Closed the tab? Click **Go Live on X…** on the X row in Parallax's Go Live window. To finish, end the broadcast in Live Studio, then click **End Broadcast** in Parallax.
 
 The default stream settings (1080p, 6 Mbps, 2 s keyframes) meet X's limits.
 

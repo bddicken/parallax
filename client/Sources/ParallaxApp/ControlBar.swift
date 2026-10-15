@@ -197,6 +197,9 @@ struct GoLiveSheet: View {
                         .disabled(broadcast.status.live)
                         Spacer()
                         if let status = broadcast.status.destinations.first(where: { $0.destinationID == dest.id }) {
+                            if dest.platform == .x {
+                                Link("Go Live on X…", destination: BroadcastModel.xLiveStudio).font(.callout)
+                            }
                             StatusPill(state: status.state, error: status.error)
                         }
                     }
