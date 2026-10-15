@@ -2,7 +2,7 @@
 
 One-time setup, about 5 minutes. You need a running [`parallax-server`](../../server/README.md) and an X account that can go live (X Premium).
 
-X's API is approval-only, so Parallax sends video to a Media Studio source and opens X's Live Studio in a Parallax window, but you click **Go Live** and end each broadcast there. Parallax reads X chat from X's own chat page (see [Chat](#chat)).
+X's API is approval-only, so Parallax sends video to a Media Studio source, then starts the broadcast by clicking through X's Live Studio for you in a Parallax window. You end each broadcast there. Parallax reads X chat from X's own chat page (see [Chat](#chat)).
 
 ## 1. Create a source
 
@@ -26,8 +26,10 @@ Use your source's URL; the region prefix varies. A plain `rtmp://` URL is switch
 
 ## 3. Go live
 
-1. In Parallax, click **Go Live**, check **X**, and click **Start Broadcast**. Parallax opens X's [Live Studio](https://x.com/i/live-studio) in an **X Live Studio** window. Sign in to X there the first time; it shares the sign-in with the X Chat window.
-2. There, start a livestream from your source, wait for the preview, and click **Go Live**.
+1. In Parallax, click **Go Live**, check **X**, fill in **Title** (and **Thumbnail** if you like), and click **Start Broadcast**.
+2. Parallax opens X's [Live Studio](https://x.com/i/live-studio) in an **X Live Studio** window and does the clicking: **New Livestream**, your title, your thumbnail on the **Thumbnail** tab, then **Go Live** once X is getting your video (up to a minute). The line under the window title says how it went.
+
+The first time, sign in to X in that window (it shares the sign-in with the X Chat window), then start the broadcast there by hand. If a step fails, the window says which one; finish it there by hand. This depends on how Live Studio's page is built, so it can break when X changes it.
 
 Closed the window? Click **Go Live on X…** on the X row in Parallax's Go Live window. To finish, end the broadcast in Live Studio, then click **End Broadcast** in Parallax.
 

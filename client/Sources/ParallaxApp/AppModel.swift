@@ -701,9 +701,10 @@ final class AppModel {
             stopUplink()
             return
         }
-        // X can't be started from here; open the page with its Go Live button.
+        // X's API can't start a broadcast, so Live Studio's page does it.
         if broadcast.service.mode == .server, broadcast.includes(.x, in: destinationIDs) {
-            broadcast.showXLiveStudio()
+            let title = request.title ?? ""
+            Task { await broadcast.goLiveOnX(title: title, thumbnailPath: settings.thumbnailPath) }
         }
         if let path = settings.thumbnailPath, broadcast.includes(.youtube, in: destinationIDs) {
             await broadcast.setThumbnail(contentsOf: URL(filePath: path))

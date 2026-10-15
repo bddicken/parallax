@@ -1,12 +1,14 @@
 import AppKit
 import WebKit
 
-/// X's Live Studio in a Parallax window, where you click Go Live for X. X's
-/// Livestream API is approval-only, so Parallax only sends video to your
-/// source and can't start the broadcast itself. Shares cookies with the X
-/// Chat window, so signing in to X in either one signs in both.
+/// X's Live Studio in a Parallax window. X's Livestream API is
+/// approval-only, so to start an X broadcast Parallax clicks through Live
+/// Studio for you (see `XLiveStudioScript`); if that fails, you finish here
+/// by hand. Shares cookies with the X Chat window, so signing in to X in
+/// either one signs in both.
 final class XLiveStudio: NSObject {
     static let home = URL(string: "https://x.com/i/live-studio")!
+    private static let subtitle = "Where your X broadcast starts"
 
     private var window: NSWindow?
     private var webView: WKWebView?
@@ -18,6 +20,37 @@ final class XLiveStudio: NSObject {
         let window = window ?? makeWindow(webView)
         if webView.url == nil { webView.load(URLRequest(url: Self.home)) }
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Starts an X broadcast from your source with `title` and the JPEG
+    /// `thumbnail`, showing how it went under the window title.
+    func goLive(title: String, thumbnail: Data?, thumbnailProblem: String?) async {
+        let webView = webView ?? makeWebView()
+        let window = window ?? makeWindow(webView)
+        window.makeKeyAndOrderFront(nil)
+        window.subtitle = "Starting your X broadcast…"
+        webView.load(URLRequest(url: Self.home))
+        try? await Task.sleep(for: .seconds(1))
+        for _ in 0..<120 where webView.isLoading {
+            try? await Task.sleep(for: .milliseconds(250))
+        }
+        var problem: String?
+        do {
+            let result = try await webView.callAsyncJavaScript(
+                XLiveStudioScript.goLive,
+                arguments: ["title": title, "thumbnail": thumbnail?.base64EncodedString() ?? ""],
+                contentWorld: .page)
+            problem = result as? String
+        } catch {
+            problem = "Live Studio script failed: \(error.localizedDescription)"
+        }
+        if webView.url?.path().hasPrefix(Self.home.path()) != true {
+            window.subtitle = "Sign in to X here, then start your broadcast from Live Studio."
+        } else if let problem {
+            window.subtitle = "\(problem) Finish here by hand."
+        } else {
+            window.subtitle = ["Clicked Go Live.", thumbnailProblem].compactMap(\.self).joined(separator: " ")
+        }
     }
 
     private func makeWebView() -> WKWebView {
@@ -39,7 +72,7 @@ final class XLiveStudio: NSObject {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820),
                               styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "X Live Studio"
-        window.subtitle = "Click Go Live here to start your X broadcast"
+        window.subtitle = Self.subtitle
         window.contentView = webView
         // Closing only hides it, so it reopens where you left it.
         window.isReleasedWhenClosed = false
@@ -76,7 +109,10 @@ final class XLiveStudio: NSObject {
     @objc private func goBack() { webView?.goBack() }
     @objc private func goForward() { webView?.goForward() }
     @objc private func reload() { webView?.reload() }
-    @objc private func goHome() { webView?.load(URLRequest(url: Self.home)) }
+    @objc private func goHome() {
+        window?.subtitle = Self.subtitle
+        webView?.load(URLRequest(url: Self.home))
+    }
 }
 
 extension XLiveStudio: WKUIDelegate {
