@@ -1,0 +1,102 @@
+import AppKit
+import WebKit
+
+/// X's Live Studio in a Parallax window, where you click Go Live for X. X's
+/// Livestream API is approval-only, so Parallax only sends video to your
+/// source and can't start the broadcast itself. Shares cookies with the X
+/// Chat window, so signing in to X in either one signs in both.
+final class XLiveStudio: NSObject {
+    static let home = URL(string: "https://x.com/i/live-studio")!
+
+    private var window: NSWindow?
+    private var webView: WKWebView?
+    private var popups: [WKWebView: NSWindow] = [:]
+
+    /// Shows the window, loading Live Studio unless it's already open.
+    func show() {
+        let webView = webView ?? makeWebView()
+        let window = window ?? makeWindow(webView)
+        if webView.url == nil { webView.load(URLRequest(url: Self.home)) }
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func makeWebView() -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .default()
+        // Identify as Safari, which X supports; a bare WKWebView names no browser.
+        config.applicationNameForUserAgent = "Version/26.0 Safari/605.1.15"
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.uiDelegate = self
+        webView.allowsBackForwardNavigationGestures = true
+        #if DEBUG
+        webView.isInspectable = true
+        #endif
+        self.webView = webView
+        return webView
+    }
+
+    private func makeWindow(_ webView: WKWebView) -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820),
+                              styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = "X Live Studio"
+        window.subtitle = "Click Go Live here to start your X broadcast"
+        window.contentView = webView
+        // Closing only hides it, so it reopens where you left it.
+        window.isReleasedWhenClosed = false
+        window.setFrameAutosaveName("XLiveStudio")
+        if window.frame.origin == .zero { window.center() }
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.layoutAttribute = .trailing
+        accessory.view = navigationButtons()
+        window.addTitlebarAccessoryViewController(accessory)
+        self.window = window
+        return window
+    }
+
+    private func navigationButtons() -> NSView {
+        let buttons: [(String, String, Selector)] = [
+            ("chevron.backward", "Back", #selector(goBack)),
+            ("chevron.forward", "Forward", #selector(goForward)),
+            ("arrow.clockwise", "Reload", #selector(reload)),
+            ("house", "Live Studio", #selector(goHome)),
+        ]
+        let stack = NSStackView(views: buttons.map { symbol, help, action in
+            let button = NSButton(image: NSImage(systemSymbolName: symbol, accessibilityDescription: help)!,
+                                  target: self, action: action)
+            button.bezelStyle = .accessoryBarAction
+            button.isBordered = false
+            button.toolTip = help
+            return button
+        })
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 10)
+        return stack
+    }
+
+    @objc private func goBack() { webView?.goBack() }
+    @objc private func goForward() { webView?.goForward() }
+    @objc private func reload() { webView?.reload() }
+    @objc private func goHome() { webView?.load(URLRequest(url: Self.home)) }
+}
+
+extension XLiveStudio: WKUIDelegate {
+    /// Links that open a new window (e.g. a sign-in popup) get a small window of their own.
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        let popup = WKWebView(frame: .zero, configuration: configuration)
+        popup.uiDelegate = self
+        let size = NSSize(width: windowFeatures.width?.doubleValue ?? 520, height: windowFeatures.height?.doubleValue ?? 680)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
+                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        window.contentView = popup
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        popups[popup] = window
+        return popup
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        popups.removeValue(forKey: webView)?.close()
+    }
+}

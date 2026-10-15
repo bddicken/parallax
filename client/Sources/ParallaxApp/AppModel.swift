@@ -703,7 +703,7 @@ final class AppModel {
         }
         // X can't be started from here; open the page with its Go Live button.
         if broadcast.service.mode == .server, broadcast.includes(.x, in: destinationIDs) {
-            NSWorkspace.shared.open(BroadcastModel.xLiveStudio)
+            broadcast.showXLiveStudio()
         }
         if let path = settings.thumbnailPath, broadcast.includes(.youtube, in: destinationIDs) {
             await broadcast.setThumbnail(contentsOf: URL(filePath: path))

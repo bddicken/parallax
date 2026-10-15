@@ -29,6 +29,7 @@ final class BroadcastModel {
         reader.onMessage = { [weak self] in self?.receive($0) }
         return reader
     }()
+    @ObservationIgnored private lazy var xLiveStudio = XLiveStudio()
 
     var featuredMessage: ChatMessage? { messages.first { $0.id == featuredMessageID } }
 
@@ -50,9 +51,8 @@ final class BroadcastModel {
         return destinations.first { $0.platform == .x }?.chatURL.flatMap(URL.init(string:))
     }
 
-    /// Where you click Go Live for X. X's Livestream API is approval-only, so
-    /// Parallax only sends video to your source; the broadcast starts here.
-    static let xLiveStudio = URL(string: "https://x.com/i/live-studio")!
+    /// Opens X's Live Studio, where you click Go Live for X.
+    func showXLiveStudio() { xLiveStudio.show() }
 
     /// Opens the X chat window, whose comments show up in `messages`.
     func showXChat() {
