@@ -332,3 +332,32 @@ final class StaticImageNode: VideoSourceNode, @unchecked Sendable {
     func image(at time: Double) -> CIImage? { lock.withLock { current } }
     func setImage(_ image: CIImage?) { lock.withLock { current = image } }
 }
+
+/// The chat feed: new messages slide in from the bottom as the others move
+/// up to make room.
+final class ChatFeedNode: VideoSourceNode, @unchecked Sendable {
+    static let slideSeconds = 0.35
+    private let lock = NSLock()
+    private var layers: ChatFeedLayers
+    /// Host time the latest messages started sliding in.
+    private var arrivedAt = -Double.infinity
+
+    init(_ layers: ChatFeedLayers) {
+        self.layers = layers
+    }
+
+    func start() {}
+    func stop() {}
+
+    func show(_ layers: ChatFeedLayers, animated: Bool) {
+        lock.withLock {
+            self.layers = layers
+            arrivedAt = animated ? hostNow() : -.infinity
+        }
+    }
+
+    func image(at time: Double) -> CIImage? {
+        let (layers, arrivedAt) = lock.withLock { (self.layers, self.arrivedAt) }
+        return layers.frame(progress: (time - arrivedAt) / Self.slideSeconds)
+    }
+}
