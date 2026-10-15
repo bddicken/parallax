@@ -20,27 +20,35 @@ enum ChatOverlayRenderer {
     static let feedSize = CGSize(width: 500, height: 990)
     static let bannerSize = CGSize(width: 1600, height: 240)
 
-    /// Newest message at the bottom, older ones stacked above until full.
-    /// Drawn at the pixel size of its box on the canvas so text keeps its
-    /// size and reflows as the box is resized; `scale` is canvas height / 1080
-    /// times the text size.
+    /// Newest message at the bottom, older ones stacked above until full,
+    /// all in one shared semi-transparent box that grows to fit them (none
+    /// when there's no chat). Drawn at the pixel size of its box on the
+    /// canvas so text keeps its size and reflows as the box is resized;
+    /// `scale` is canvas height / 1080 times the text size.
     static func feed(_ lines: [ChatOverlayLine], size: CGSize = feedSize, scale: CGFloat = 1) -> CIImage {
         draw(size: size) { size in
             // Left, top, and bottom are a bit tighter than the right edge.
-            let pad = 10.5 * scale, padRight = 14 * scale, gap = 4 * scale, radius = 12 * scale
-            var y: CGFloat = 0
+            let pad = 12 * scale, padRight = 16 * scale, gap = 9 * scale, radius = 12 * scale
+            let width = size.width - pad - padRight
+            var fitted: [(text: NSAttributedString, height: CGFloat)] = []
+            var height = pad * 2
             for line in lines.reversed() {
                 let text = attributed(line, authorSize: 18 * scale, textSize: 21 * scale)
-                let bounds = text.boundingRect(with: CGSize(width: size.width - pad - padRight, height: .greatestFiniteMagnitude),
+                let bounds = text.boundingRect(with: CGSize(width: width, height: .greatestFiniteMagnitude),
                                                options: [.usesLineFragmentOrigin, .usesFontLeading])
-                let card = CGRect(x: 0, y: y, width: size.width, height: ceil(bounds.height) + pad * 2)
-                guard card.maxY <= size.height else { break }
-                NSColor(white: 0, alpha: 0.65).setFill()
-                NSBezierPath(roundedRect: card, xRadius: radius, yRadius: radius).fill()
-                let textRect = CGRect(x: card.minX + pad, y: card.minY + pad,
-                                      width: card.width - pad - padRight, height: card.height - pad * 2)
-                text.draw(with: textRect, options: [.usesLineFragmentOrigin, .usesFontLeading])
-                y = card.maxY + gap
+                let next = height + ceil(bounds.height) + (fitted.isEmpty ? 0 : gap)
+                guard next <= size.height else { break }
+                fitted.append((text, ceil(bounds.height)))
+                height = next
+            }
+            guard !fitted.isEmpty else { return }
+            NSColor(white: 0, alpha: 0.6).setFill()
+            NSBezierPath(roundedRect: CGRect(x: 0, y: 0, width: size.width, height: height), xRadius: radius, yRadius: radius).fill()
+            var y = pad
+            for (text, textHeight) in fitted {
+                text.draw(with: CGRect(x: pad, y: y, width: width, height: textHeight),
+                          options: [.usesLineFragmentOrigin, .usesFontLeading])
+                y += textHeight + gap
             }
         }
     }
