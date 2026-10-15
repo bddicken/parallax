@@ -56,7 +56,7 @@ final class BroadcastModel {
 
     /// Starts the X broadcast in Live Studio, since X's API can't. Needs
     /// video going to the server, so call it after `start`.
-    func goLiveOnX(title: String, thumbnailPath: String?) async {
+    func goLiveOnX(title: String, thumbnailPath: String?, dryRun: Bool = false) async {
         var thumbnail: Data?, problem: String?
         if let thumbnailPath {
             do {
@@ -65,7 +65,7 @@ final class BroadcastModel {
                 problem = "The thumbnail wasn't added: \(error.localizedDescription)"
             }
         }
-        await xLiveStudio.goLive(title: title, thumbnail: thumbnail, thumbnailProblem: problem)
+        await xLiveStudio.goLive(title: title, thumbnail: thumbnail, thumbnailProblem: problem, dryRun: dryRun)
     }
 
     /// Opens the X chat window, whose comments show up in `messages`.

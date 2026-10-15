@@ -1,5 +1,8 @@
 import AppKit
+import OSLog
 import WebKit
+
+private let log = Logger(subsystem: "com.bddicken.parallax", category: "x-live-studio")
 
 /// X's Live Studio in a Parallax window. X's Livestream API is
 /// approval-only, so to start an X broadcast Parallax clicks through Live
@@ -7,7 +10,8 @@ import WebKit
 /// by hand. Shares cookies with the X Chat window, so signing in to X in
 /// either one signs in both.
 final class XLiveStudio: NSObject {
-    static let home = URL(string: "https://x.com/i/live-studio")!
+    // x.com/i/live-studio only frames this page, which scripts can't reach into.
+    static let home = URL(string: "https://studio.x.com/live")!
     private static let subtitle = "Where your X broadcast starts"
 
     private var window: NSWindow?
@@ -23,8 +27,9 @@ final class XLiveStudio: NSObject {
     }
 
     /// Starts an X broadcast from your source with `title` and the JPEG
-    /// `thumbnail`, showing how it went under the window title.
-    func goLive(title: String, thumbnail: Data?, thumbnailProblem: String?) async {
+    /// `thumbnail`, showing how it went under the window title. A `dryRun`
+    /// does everything but click Go Live.
+    func goLive(title: String, thumbnail: Data?, thumbnailProblem: String?, dryRun: Bool = false) async {
         let webView = webView ?? makeWebView()
         let window = window ?? makeWindow(webView)
         window.makeKeyAndOrderFront(nil)
@@ -38,16 +43,21 @@ final class XLiveStudio: NSObject {
         do {
             let result = try await webView.callAsyncJavaScript(
                 XLiveStudioScript.goLive,
-                arguments: ["title": title, "thumbnail": thumbnail?.base64EncodedString() ?? ""],
-                contentWorld: .page)
-            problem = result as? String
+                arguments: ["title": title, "thumbnail": thumbnail?.base64EncodedString() ?? "", "dryRun": dryRun],
+                contentWorld: .page) as? [String: Any]
+            problem = result?["problem"] as? String
+            for step in result?["steps"] as? [String] ?? [] { log.info("step: \(step, privacy: .public)") }
+            for control in result?["controls"] as? [String] ?? [] { log.info("control: \(control, privacy: .public)") }
         } catch {
             problem = "Live Studio script failed: \(error.localizedDescription)"
         }
+        log.info("\(dryRun ? "dry run" : "go live", privacy: .public) at \(webView.url?.absoluteString ?? "-", privacy: .public): \(problem ?? "ok", privacy: .public)")
         if webView.url?.path().hasPrefix(Self.home.path()) != true {
             window.subtitle = "Sign in to X here, then start your broadcast from Live Studio."
         } else if let problem {
             window.subtitle = "\(problem) Finish here by hand."
+        } else if dryRun {
+            window.subtitle = "Dry run: everything but Go Live is done."
         } else {
             window.subtitle = ["Clicked Go Live.", thumbnailProblem].compactMap(\.self).joined(separator: " ")
         }

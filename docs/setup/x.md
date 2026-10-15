@@ -27,9 +27,9 @@ Use your source's URL; the region prefix varies. A plain `rtmp://` URL is switch
 ## 3. Go live
 
 1. In Parallax, click **Go Live**, check **X**, fill in **Title** (and **Thumbnail** if you like), and click **Start Broadcast**.
-2. Parallax opens X's [Live Studio](https://x.com/i/live-studio) in an **X Live Studio** window and does the clicking: **New Livestream**, your title, your thumbnail on the **Thumbnail** tab, then **Go Live** once X is getting your video (up to a minute). The line under the window title says how it went.
+2. Parallax opens X's [Live Studio](https://studio.x.com/live) in an **X Live Studio** window and does the clicking: **New Livestream**, your title, your thumbnail on the **Thumbnail** tab, then **Go Live** once X is getting your video (up to a minute). The line under the window title says how it went.
 
-The first time, sign in to X in that window (it shares the sign-in with the X Chat window), then start the broadcast there by hand. If a step fails, the window says which one; finish it there by hand. This depends on how Live Studio's page is built, so it can break when X changes it.
+The first time, sign in to X in that window (it shares the sign-in with the X Chat window), then start the broadcast there by hand. If a step fails, the window says which one; finish it there by hand. This depends on how Live Studio's page is built, so it can break when X changes it. Each step is logged (Console app, subsystem `com.bddicken.parallax`, category `x-live-studio`), including what was on the page when a step failed.
 
 Closed the window? Click **Go Live on X…** on the X row in Parallax's Go Live window. To finish, end the broadcast in Live Studio, then click **End Broadcast** in Parallax.
 
