@@ -265,7 +265,9 @@ impl YouTube {
             "status": { "privacyStatus": privacy, "selfDeclaredMadeForKids": false },
             "contentDetails": {
                 "enableAutoStart": true,
-                "enableAutoStop": true,
+                // Off: a restarting server stops sending for a few seconds, and
+                // YouTube would end the broadcast. We end it ourselves.
+                "enableAutoStop": false,
                 "latencyPreference": "low",
                 "monitorStream": { "enableMonitorStream": false },
             },

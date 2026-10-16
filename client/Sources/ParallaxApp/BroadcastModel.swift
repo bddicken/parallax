@@ -1,8 +1,11 @@
 import Foundation
 import Observation
+import OSLog
 import ParallaxCore
 import ParallaxMedia
 import ParallaxRemote
+
+private let log = Logger(subsystem: "com.bddicken.parallax", category: "broadcast")
 
 /// Connection to parallax-server (or the mock): destinations, live status,
 /// platform accounts, chat.
@@ -24,6 +27,10 @@ final class BroadcastModel {
     var xGoLiveProblem: String?
 
     @ObservationIgnored var onChatChanged: (() -> Void)?
+    @ObservationIgnored var onStatusChanged: (() -> Void)?
+    /// The stream size and frame rate the server's slate was made for, on
+    /// the current connection.
+    @ObservationIgnored private var slateFormat: String?
     @ObservationIgnored private var eventsTask: Task<Void, Never>?
     @ObservationIgnored private static let maxMessages = 500
     @ObservationIgnored private lazy var xChat: XChatReader = {
@@ -103,6 +110,7 @@ final class BroadcastModel {
     func connect(_ connection: Connection, force: Bool = false) {
         guard force || connection != self.connection else { return }
         self.connection = connection
+        slateFormat = nil
         eventsTask?.cancel()
         eventsTask = nil
         connectionError = nil
@@ -199,6 +207,22 @@ final class BroadcastModel {
         await perform { try await $0.stopBroadcast() }
     }
 
+    /// Gives the server the "We'll be right back" screen it plays while this
+    /// Mac isn't sending, at the stream's size. Call before going live: it
+    /// can't change mid-broadcast. A failure only means the server's blank
+    /// slate plays instead.
+    func uploadSlate(width: Int, height: Int, fps: Int) async {
+        let format = "\(width)x\(height)@\(fps)"
+        guard service.mode == .server, slateFormat != format else { return }
+        do {
+            let image = try await Task.detached { try Slate.pngData(width: width, height: height) }.value
+            try await service.setSlate(image, fps: fps)
+            slateFormat = format
+        } catch {
+            log.warning("slate didn't upload: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
     func ingest() async -> IngestInfo? {
         do {
             return try await service.ingest()
@@ -283,6 +307,7 @@ final class BroadcastModel {
                 Task { await refreshDestinations() }
             }
             status = s
+            onStatusChanged?()
             // Read X chat whenever we're live there, not only once its window is opened.
             if isLive(on: .x), let xChatPage { xChat.start(xChatPage) }
         case .accounts(let list):
