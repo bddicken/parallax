@@ -37,6 +37,7 @@ import Testing
         guard case .status(let status) = try decode(ServerEvent.self, "event-status") else { Issue.record("not status"); return }
         #expect(status.destinations.map(\.state) == [.live, .error])
         #expect(status.startedAt != nil)
+        #expect(!status.rehearsal)
 
         guard case .accounts(let accounts) = try decode(ServerEvent.self, "event-accounts") else { Issue.record("not accounts"); return }
         #expect(accounts.map(\.platform) == [.twitch, .youtube])
@@ -44,7 +45,8 @@ import Testing
     }
 
     @Test func encodesStartRequestLikeTheFixture() throws {
-        let request = StartBroadcastRequest(destinationIDs: ["twitch", "youtube"], title: "Building Parallax", privacy: "public")
+        let request = StartBroadcastRequest(destinationIDs: ["twitch", "youtube"], title: "Building Parallax", privacy: "public",
+                                            rehearsal: true)
         let encoded = try JSONSerialization.jsonObject(with: WireCoding.encoder().encode(request)) as? NSDictionary
         let expected = try JSONSerialization.jsonObject(with: fixture("start-broadcast")) as? NSDictionary
         #expect(encoded == expected)

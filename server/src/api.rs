@@ -17,7 +17,7 @@ use axum::{
 use tokio::sync::broadcast::error::RecvError;
 
 use crate::{
-    broadcast::{Broadcaster, Target},
+    broadcast::{self, Broadcaster, Target},
     config::Config,
     events::Events,
     ingest::Ingest,
@@ -178,6 +178,10 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
         let Some(dest) = all.iter().find(|d| d.id == id) else {
             return Err(ApiError::bad_request(format!("Unknown destination {id}.")));
         };
+        if req.rehearsal {
+            targets.push(Target { id, url: Ok(broadcast::DISCARD.into()) });
+            continue;
+        }
         let url = match dest.platform {
             Platform::Twitch => match &state.twitch {
                 Some(twitch) => twitch.ingest_url().await.map_err(|e| format!("{e:#}")),
@@ -207,13 +211,18 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
         }
         targets.push(Target { id, url });
     }
-    state.broadcaster.start(targets).await;
+    if req.rehearsal {
+        tracing::info!("rehearsing; nothing goes to the platforms");
+    }
+    state.broadcaster.start(targets, req.rehearsal).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn stop(State(state): State<Arc<AppState>>) -> StatusCode {
+    // A rehearsal never made a YouTube broadcast, so there's none to end.
+    let rehearsal = state.broadcaster.is_rehearsal().await;
     state.broadcaster.stop().await;
-    if let Some(youtube) = &state.youtube {
+    if let Some(youtube) = state.youtube.as_ref().filter(|_| !rehearsal) {
         youtube.end_broadcast().await;
     }
     StatusCode::NO_CONTENT

@@ -1,5 +1,6 @@
 //! Going live: one ffmpeg per destination copies the ingest stream (no
-//! re-encoding) to the platform, restarting on its own if it drops.
+//! re-encoding) to the platform, restarting on its own if it drops. A
+//! rehearsal runs the same relays but throws their output away.
 
 use std::{collections::VecDeque, process::Stdio, sync::Arc, time::Duration};
 
@@ -24,6 +25,9 @@ pub struct Target {
     pub url: Result<String, String>,
 }
 
+/// A target URL for a rehearsal: ffmpeg reads and discards the stream.
+pub const DISCARD: &str = "discard:";
+
 pub struct Broadcaster {
     ffmpeg: String,
     ingest: Arc<Ingest>,
@@ -34,6 +38,7 @@ pub struct Broadcaster {
 #[derive(Default)]
 struct Inner {
     started_at: Option<DateTime<Utc>>,
+    rehearsal: bool,
     /// Bumped on every start and stop, so late updates from a stopped relay are dropped.
     generation: u64,
     relays: Vec<(DestinationStatus, Option<JoinHandle<()>>)>,
@@ -60,6 +65,7 @@ impl Broadcaster {
             ingest_active: *self.ingest.ready().borrow(),
             started_at: inner.started_at,
             destinations: inner.relays.iter().map(|(s, _)| s.clone()).collect(),
+            rehearsal: inner.rehearsal,
         }
     }
 
@@ -67,11 +73,17 @@ impl Broadcaster {
         self.events.status(self.status().await);
     }
 
-    pub async fn start(self: &Arc<Self>, targets: Vec<Target>) {
+    /// Whether the broadcast under way is a rehearsal.
+    pub async fn is_rehearsal(&self) -> bool {
+        self.inner.lock().await.rehearsal
+    }
+
+    pub async fn start(self: &Arc<Self>, targets: Vec<Target>, rehearsal: bool) {
         let mut inner = self.inner.lock().await;
         stop_relays(&mut inner);
         inner.generation += 1;
         inner.started_at = Some(Utc::now());
+        inner.rehearsal = rehearsal;
         let generation = inner.generation;
         for target in targets {
             let (status, task) = match target.url {
@@ -94,6 +106,7 @@ impl Broadcaster {
         stop_relays(&mut inner);
         inner.generation += 1;
         inner.started_at = None;
+        inner.rehearsal = false;
         drop(inner);
         self.publish().await;
     }
@@ -148,10 +161,12 @@ impl Broadcaster {
 
     /// Runs one ffmpeg until it exits, reporting bitrate.
     async fn run_ffmpeg(&self, generation: u64, id: &str, url: &str) -> Stopped {
+        let output = if url == DISCARD { vec!["-f", "null", "-"] } else { vec!["-f", "flv", "-flvflags", "no_duration_filesize", url] };
         let mut child = match Command::new(&self.ffmpeg)
             .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-progress", "pipe:1", "-stats_period", "2"])
             .args(["-rw_timeout", "10000000", "-i", &self.ingest.local_read_url()])
-            .args(["-c", "copy", "-f", "flv", "-flvflags", "no_duration_filesize", url])
+            .args(["-c", "copy"])
+            .args(output)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

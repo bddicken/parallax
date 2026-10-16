@@ -25,7 +25,8 @@ public actor MockBroadcastService: BroadcastService {
 
     public func startBroadcast(_ request: StartBroadcastRequest) async throws {
         current = BroadcastStatus(live: true, ingestActive: false, startedAt: Date(),
-                                  destinations: request.destinationIDs.map { DestinationStatus(destinationID: $0, state: .connecting) })
+                                  destinations: request.destinationIDs.map { DestinationStatus(destinationID: $0, state: .connecting) },
+                                  rehearsal: request.rehearsal)
         broadcast(.status(current))
         try? await Task.sleep(for: .seconds(1.5))
         guard current.live else { return }

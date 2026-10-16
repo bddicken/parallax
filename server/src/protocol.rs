@@ -60,6 +60,9 @@ pub struct BroadcastStatus {
     #[serde(rename = "startedAt", default, skip_serializing_if = "Option::is_none", with = "rfc3339_opt")]
     pub started_at: Option<DateTime<Utc>>,
     pub destinations: Vec<DestinationStatus>,
+    /// The broadcast is a rehearsal (see `StartBroadcastRequest`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub rehearsal: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -102,6 +105,10 @@ pub struct StartBroadcastRequest {
     pub title: Option<String>,
     #[serde(default)]
     pub privacy: Option<Privacy>,
+    /// Runs everything but the platforms: relays read the ingest as usual
+    /// but send nowhere, and no platform is asked to start a broadcast.
+    #[serde(default)]
+    pub rehearsal: bool,
 }
 
 /// Who can watch, for platforms that ask (YouTube).
@@ -236,7 +243,9 @@ mod tests {
         assert_eq!(req.destination_ids, ["twitch", "youtube"]);
         assert_eq!(req.title.as_deref(), Some("Building Parallax"));
         assert_eq!(req.privacy, Some(Privacy::Public));
+        assert!(req.rehearsal);
         let bare: StartBroadcastRequest = serde_json::from_str(r#"{"destinationIDs": ["twitch"]}"#).unwrap();
         assert_eq!(bare.privacy, None);
+        assert!(!bare.rehearsal);
     }
 }

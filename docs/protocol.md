@@ -11,7 +11,7 @@ Every `/v1` endpoint requires `Authorization: Bearer <token>`. Bodies are JSON, 
 | GET | `/v1/ingest` | → `IngestInfo` (`srtURL`, `rtmpURL`) |
 | GET | `/v1/destinations` | → `[Destination]` (stream keys omitted). `chatURL?` is the platform's pop-out chat page: Twitch always, YouTube once a broadcast exists, X when `X_USERNAME` is set (the client also reads and sends X chat through it). |
 | PUT | `/v1/destinations` | `[Destination]` → 204. Replaces the `custom` destinations; a missing `streamKey` keeps the saved one. Platform destinations come from connected accounts, or for X, the server's `.env`. |
-| POST | `/v1/broadcast/start` | `{destinationIDs: [..], title?, privacy?: public\|unlisted\|private}` → 204. `title` and `privacy` apply where a platform creates a video per broadcast (YouTube). |
+| POST | `/v1/broadcast/start` | `{destinationIDs: [..], title?, privacy?: public\|unlisted\|private, rehearsal?}` → 204. `title` and `privacy` apply where a platform creates a video per broadcast (YouTube). With `rehearsal: true`, each destination's relay reads the ingest but discards it, and no platform is contacted (no YouTube broadcast, no stream key lookup). |
 | POST | `/v1/broadcast/stop` | → 204 |
 | POST | `/v1/broadcast/thumbnail` | JPEG or PNG bytes (≤ 2 MB) → 204. Sets the thumbnail of the broadcast under way, on platforms that take one (YouTube). The client sends it right after `start`, and again if you change it while live. |
 | POST | `/v1/chat/send` | `{text, platforms?}` → 204 (no `platforms` means every platform with chat open; YouTube chat exists only while live there) |
@@ -23,7 +23,7 @@ Every `/v1` endpoint requires `Authorization: Bearer <token>`. Bodies are JSON, 
 Events:
 
 - `chat.message` → `ChatMessage` `{id, platform, author{id, displayName, avatarURL?, isOwner, isModerator}, text, timestamp}`
-- `broadcast.status` → `BroadcastStatus` `{live, ingestActive, startedAt?, destinations[{destinationID, state, bitrateKbps, error?}]}`
+- `broadcast.status` → `BroadcastStatus` `{live, ingestActive, startedAt?, destinations[{destinationID, state, bitrateKbps, error?}], rehearsal?}` (`rehearsal` is left out when false)
 - `accounts` → `[Account]` `{platform, state: disconnected|pending|connected, login?, displayName?, pending?: DeviceCode, error?}`
 
 Unknown event types must be ignored so either side can add events.
