@@ -62,6 +62,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/destinations", get(destinations).put(put_destinations))
         .route("/broadcast/start", post(start))
         .route("/broadcast/stop", post(stop))
+        .route("/broadcast/preview", post(show_preview))
         .route("/broadcast/thumbnail", post(set_thumbnail).layer(DefaultBodyLimit::max(THUMBNAIL_LIMIT)))
         .route("/broadcast/slate", post(set_slate).layer(DefaultBodyLimit::max(SLATE_LIMIT)))
         .route("/chat/send", post(send_chat))
@@ -190,7 +191,9 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
             return Err(ApiError::bad_request(format!("Unknown destination {id}.")));
         };
         if req.rehearsal {
-            targets.push(Target { id, url: Ok(broadcast::DISCARD.into()) });
+            // The first relay feeds the preview window; the rest send nowhere.
+            let output = if targets.is_empty() { broadcast::PREVIEW } else { broadcast::DISCARD };
+            targets.push(Target { id, url: Ok(output.into()) });
             continue;
         }
         let url = match dest.platform {
@@ -278,6 +281,12 @@ fn image_type(image: &[u8]) -> Option<&'static str> {
 #[derive(serde::Deserialize)]
 struct SlateQuery {
     fps: Option<u32>,
+}
+
+/// Opens a rehearsal's preview window again, on a server that shows one.
+async fn show_preview(State(state): State<Arc<AppState>>) -> AppResult<StatusCode> {
+    state.broadcaster.show_preview().await.map_err(ApiError::bad_request)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Sets what viewers see while the client isn't sending, from a JPEG or PNG

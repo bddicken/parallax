@@ -41,6 +41,7 @@ public actor MockBroadcastService: BroadcastService {
 
     public func setThumbnail(_ image: Data) async throws {}
     public func setSlate(_ image: Data, fps: Int) async throws {}
+    public func showPreview() async throws {}
 
     public func sendChat(_ request: SendChatRequest) async throws {
         let platforms = request.platforms ?? Platform.allCases.filter(\.supportsChat)

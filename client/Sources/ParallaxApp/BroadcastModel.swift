@@ -204,6 +204,11 @@ final class BroadcastModel {
         }
     }
 
+    /// Reopens the rehearsal's preview window on the built-in server.
+    func showPreview() async {
+        await perform { try await $0.showPreview() }
+    }
+
     func stop() async {
         await perform { try await $0.stopBroadcast() }
     }

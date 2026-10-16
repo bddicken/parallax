@@ -22,6 +22,9 @@ pub struct Config {
     pub mediamtx_api_port: u16,
     pub mediamtx_bin: String,
     pub ffmpeg_bin: String,
+    /// Shows a rehearsal in a window with this ffplay. Only for a server on
+    /// the Mac you're at (the app's built-in one sets it).
+    pub preview_bin: Option<String>,
     /// The Parallax app that runs this server. Once it exits, the server
     /// keeps a live broadcast going (on the slate) and exits when there's
     /// nothing left to do: not live, and no app connected.
@@ -92,6 +95,14 @@ impl Config {
             (None, None) => None,
             _ => anyhow::bail!("Set both X_RTMP_URL and X_STREAM_KEY, or neither"),
         };
+        let ffmpeg_bin = var("PARALLAX_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
+        // ffplay comes with ffmpeg, so look next to it.
+        let preview_bin = var("PARALLAX_PREVIEW_WINDOW").filter(|v| v == "1").map(|_| {
+            var("PARALLAX_FFPLAY").unwrap_or_else(|| match ffmpeg_bin.rsplit_once('/') {
+                Some((dir, _)) => format!("{dir}/ffplay"),
+                None => "ffplay".into(),
+            })
+        });
         Ok(Config {
             addr: var("PARALLAX_ADDR")
                 .unwrap_or_else(|| "127.0.0.1:8080".into())
@@ -105,7 +116,8 @@ impl Config {
             rtmp_port: port("PARALLAX_RTMP_PORT", 1935)?,
             mediamtx_api_port: port("PARALLAX_MEDIAMTX_API_PORT", 9997)?,
             mediamtx_bin: var("PARALLAX_MEDIAMTX").unwrap_or_else(|| "mediamtx".into()),
-            ffmpeg_bin: var("PARALLAX_FFMPEG").unwrap_or_else(|| "ffmpeg".into()),
+            ffmpeg_bin,
+            preview_bin,
             parent_pid: var("PARALLAX_PARENT_PID")
                 .map(|v| v.parse().context("PARALLAX_PARENT_PID must be a process ID"))
                 .transpose()?,

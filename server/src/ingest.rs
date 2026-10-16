@@ -19,6 +19,8 @@ use tokio::{process::Command, sync::watch};
 use crate::config::Config;
 
 pub const PATH: &str = "live";
+/// Where a rehearsal's preview relay publishes, for the preview window.
+pub const PREVIEW_PATH: &str = "rehearsal";
 const USER: &str = "parallax";
 
 /// How long one loop of the slate runs. MediaMTX repeats it.
@@ -55,6 +57,11 @@ impl Ingest {
     /// Where relays read the stream (localhost needs no credentials).
     pub fn local_read_url(&self) -> String {
         format!("rtmp://127.0.0.1:{}/{PATH}", self.config.rtmp_port)
+    }
+
+    /// What a rehearsal's preview relay publishes to and the window reads.
+    pub fn local_preview_url(&self) -> String {
+        format!("rtmp://127.0.0.1:{}/{PREVIEW_PATH}", self.config.rtmp_port)
     }
 
     /// Runs MediaMTX and tracks whether video is arriving. Never returns.
@@ -129,10 +136,16 @@ authInternalUsers:
     permissions:
       - action: read
       - action: api
+      - action: publish
+        path: {PREVIEW_PATH}
 paths:
   {PATH}:
     alwaysAvailable: yes
-{slate}"#,
+{slate}  # A rehearsal's preview. Always available, so the window stays open
+  # (frozen, as a platform would buffer) while its relay reconnects.
+  {PREVIEW_PATH}:
+    alwaysAvailable: yes
+{blank}"#,
             api = c.mediamtx_api_port,
             rtmp = c.rtmp_port,
             rtmp_bind = c.ingest_bind.as_deref().unwrap_or(""),
@@ -140,6 +153,7 @@ paths:
             srt = c.srt_port,
             key = self.key,
             slate = slate_config(self.slate.lock().unwrap().as_deref()),
+            blank = slate_config(None),
         );
         let path = c.data_dir.join("mediamtx.yml");
         std::fs::write(&path, yaml).with_context(|| format!("writing {}", path.display()))?;

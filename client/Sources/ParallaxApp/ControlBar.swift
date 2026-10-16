@@ -245,6 +245,17 @@ struct GoLiveSheet: View {
                     Text("Sends video to the server and runs every relay, but nothing reaches YouTube, Twitch, X, or other destinations. Record alongside to try both at once.")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    if model.profile.broadcast.serverMode == .local {
+                        HStack(spacing: 4) {
+                            Text("A window shows what the first destination would get, even while Parallax is closed.")
+                                .font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if broadcast.status.live, broadcast.status.rehearsal {
+                                Button("Show Preview") { Task { await broadcast.showPreview() } }
+                                    .buttonStyle(.link).font(.callout)
+                            }
+                        }
+                    }
                 }
             }
 
