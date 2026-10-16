@@ -84,6 +84,8 @@ Environment variables (a `.env` file works too):
 | `PARALLAX_SRT_PORT` / `PARALLAX_RTMP_PORT` | `8890` / `1935` | Ingest ports (SRT is UDP) |
 | `PARALLAX_MEDIAMTX_API_PORT` | `9997` | MediaMTX API, localhost only |
 | `PARALLAX_MEDIAMTX` / `PARALLAX_FFMPEG` | from `PATH` | Binaries |
+| `PARALLAX_PREVIEW_WINDOW` | | `1` opens a window during a rehearsal showing what the first destination would get. Only for a server on the Mac you're at; the app's built-in server sets it |
+| `PARALLAX_FFPLAY` | next to ffmpeg | The player for that window |
 | `PARALLAX_PARENT_PID` | | The app running this server. Once it exits, the server exits too, except while a broadcast is live or another app is connected |
 | `PARALLAX_OFFLINE_TIMEOUT` | `900` | Seconds without video from the app before a live broadcast ends (`0`: never) |
 | `TWITCH_CLIENT_ID` | | Enables Twitch |

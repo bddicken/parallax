@@ -63,12 +63,26 @@ public struct BroadcastStatus: Codable, Hashable, Sendable {
     public var ingestActive: Bool
     public var startedAt: Date?
     public var destinations: [DestinationStatus]
+    /// The broadcast is a rehearsal (see `StartBroadcastRequest.rehearsal`).
+    public var rehearsal: Bool
 
-    public init(live: Bool = false, ingestActive: Bool = false, startedAt: Date? = nil, destinations: [DestinationStatus] = []) {
+    public init(live: Bool = false, ingestActive: Bool = false, startedAt: Date? = nil, destinations: [DestinationStatus] = [],
+                rehearsal: Bool = false) {
         self.live = live
         self.ingestActive = ingestActive
         self.startedAt = startedAt
         self.destinations = destinations
+        self.rehearsal = rehearsal
+    }
+
+    // The server leaves `rehearsal` out when it's false.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        live = try c.decode(Bool.self, forKey: .live)
+        ingestActive = try c.decode(Bool.self, forKey: .ingestActive)
+        startedAt = try c.decodeIfPresent(Date.self, forKey: .startedAt)
+        destinations = try c.decode([DestinationStatus].self, forKey: .destinations)
+        rehearsal = try c.decodeIfPresent(Bool.self, forKey: .rehearsal) ?? false
     }
 }
 
@@ -121,11 +135,15 @@ public struct StartBroadcastRequest: Codable, Sendable {
     public var title: String?
     /// "public", "unlisted", or "private".
     public var privacy: String?
+    /// Sends video to the server and runs its relays, but they send nowhere
+    /// and no platform is asked to start a broadcast.
+    public var rehearsal: Bool
 
-    public init(destinationIDs: [String], title: String? = nil, privacy: String? = nil) {
+    public init(destinationIDs: [String], title: String? = nil, privacy: String? = nil, rehearsal: Bool = false) {
         self.destinationIDs = destinationIDs
         self.title = title
         self.privacy = privacy
+        self.rehearsal = rehearsal
     }
 }
 

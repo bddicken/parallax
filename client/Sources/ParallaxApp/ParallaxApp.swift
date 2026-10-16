@@ -116,10 +116,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func askToKeepBroadcast() -> NSApplication.ModalResponse {
         let alert = NSAlert()
-        alert.messageText = "Keep the broadcast going?"
-        alert.informativeText = "Viewers see “\(Slate.defaultText)” until you open Parallax again, which picks the stream back up. If Parallax isn't back in 15 minutes, the broadcast ends."
-        alert.addButton(withTitle: "Keep Live and Quit")
-        alert.addButton(withTitle: "End Broadcast and Quit")
+        if model?.broadcast.status.rehearsal == true {
+            alert.messageText = "Keep the rehearsal going?"
+            alert.informativeText = "The server plays “\(Slate.defaultText)” until you open Parallax again, which picks the rehearsal back up. If Parallax isn't back in 15 minutes, the rehearsal ends."
+            alert.addButton(withTitle: "Keep Rehearsing and Quit")
+            alert.addButton(withTitle: "End Rehearsal and Quit")
+        } else {
+            alert.messageText = "Keep the broadcast going?"
+            alert.informativeText = "Viewers see “\(Slate.defaultText)” until you open Parallax again, which picks the stream back up. If Parallax isn't back in 15 minutes, the broadcast ends."
+            alert.addButton(withTitle: "Keep Live and Quit")
+            alert.addButton(withTitle: "End Broadcast and Quit")
+        }
         alert.addButton(withTitle: "Cancel")
         return alert.runModal()
     }

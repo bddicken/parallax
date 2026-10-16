@@ -309,6 +309,8 @@ public final class LocalServer {
         env["PARALLAX_PARENT_PID"] = String(getpid())
         env["PARALLAX_MEDIAMTX"] = tools[0].1!.path
         env["PARALLAX_FFMPEG"] = tools[1].1!.path
+        // It's on this Mac, so it can show a rehearsal in a window.
+        env["PARALLAX_PREVIEW_WINDOW"] = "1"
 
         let process = Process()
         process.executableURL = server

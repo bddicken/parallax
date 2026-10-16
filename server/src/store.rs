@@ -38,6 +38,9 @@ pub struct State {
 pub struct SavedBroadcast {
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub targets: Vec<Target>,
+    /// Saved so a restarted server resumes a rehearsal as one.
+    #[serde(default)]
+    pub rehearsal: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

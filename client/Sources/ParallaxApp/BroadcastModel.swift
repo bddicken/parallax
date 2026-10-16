@@ -184,9 +184,10 @@ final class BroadcastModel {
         return destinations.contains { $0.platform == platform && ids.contains($0.id) }
     }
 
-    /// Whether the broadcast under way includes `platform`.
+    /// Whether the broadcast under way includes `platform`. Never during a
+    /// rehearsal, which doesn't reach the platforms.
     func isLive(on platform: Platform) -> Bool {
-        status.live && includes(platform, in: status.destinations.map(\.destinationID))
+        status.live && !status.rehearsal && includes(platform, in: status.destinations.map(\.destinationID))
     }
 
     /// Uploads the image at `url` as the current broadcast's thumbnail. A
@@ -201,6 +202,11 @@ final class BroadcastModel {
         } catch {
             thumbnailProblem = "The thumbnail didn't upload. \(error.localizedDescription)"
         }
+    }
+
+    /// Reopens the rehearsal's preview window on the built-in server.
+    func showPreview() async {
+        await perform { try await $0.showPreview() }
     }
 
     func stop() async {

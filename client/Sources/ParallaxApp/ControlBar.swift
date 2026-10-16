@@ -85,16 +85,18 @@ struct ControlBar: View {
             }
             RecordingContentsButton()
 
+            let status = model.broadcast.status
             Button { showingGoLive = true } label: {
                 HStack(spacing: 6) {
-                    Circle().fill(model.broadcast.status.live ? .red : .secondary).frame(width: 8, height: 8)
-                    Text(model.broadcast.status.live ? "Live" : "Go Live")
+                    Circle().fill(status.live ? (status.rehearsal ? .orange : .red) : .secondary).frame(width: 8, height: 8)
+                    Text(status.live ? (status.rehearsal ? "Rehearsing" : "Live") : "Go Live")
                 }
                 .frame(minWidth: 80)
             }
             .controlSize(.large)
             .buttonStyle(.borderedProminent)
-            .tint(model.broadcast.status.live ? .red : .accentColor)
+            .tint(status.live ? (status.rehearsal ? .orange : .red) : .accentColor)
+            .help(status.live && status.rehearsal ? "Rehearsing: video goes to the server, but not to any platform." : "")
 
             SettingsLink { Image(systemName: "gearshape") }
                 .buttonStyle(.borderless)
@@ -157,7 +159,7 @@ struct GoLiveSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text(broadcast.status.live ? "You're live" : "Go Live").font(.title2.bold())
+            Text(broadcast.status.live ? (broadcast.status.rehearsal ? "Rehearsing" : "You're live") : "Go Live").font(.title2.bold())
             let stream = model.profile.broadcast.stream, size = stream.resolution.size(for: model.profile.output)
             HStack {
                 Text("Stream: \(String(size.width))×\(String(size.height)) · \(model.profile.output.fps) fps · \(String(format: "%.1f", Double(stream.videoBitrateKbps) / 1000)) Mbps")
@@ -199,7 +201,7 @@ struct GoLiveSheet: View {
                             .disabled(broadcast.status.live)
                             Spacer()
                             if let status = broadcast.status.destinations.first(where: { $0.destinationID == dest.id }) {
-                                if dest.platform == .x {
+                                if dest.platform == .x, !broadcast.status.rehearsal {
                                     Button("Go Live on X…") { broadcast.showXLiveStudio() }
                                         .buttonStyle(.link).font(.callout)
                                 }
@@ -235,15 +237,41 @@ struct GoLiveSheet: View {
                 Text(error).font(.callout).foregroundStyle(.red)
             }
 
+            if broadcast.service.mode == .server {
+                @Bindable var model = model
+                VStack(alignment: .leading, spacing: 2) {
+                    Toggle("Rehearsal", isOn: broadcast.status.live ? .constant(broadcast.status.rehearsal) : $model.rehearse)
+                        .disabled(broadcast.status.live)
+                    Text("Sends video to the server and runs every relay, but nothing reaches YouTube, Twitch, X, or other destinations. Record alongside to try both at once.")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if model.profile.broadcast.serverMode == .local {
+                        HStack(spacing: 4) {
+                            Text("A window shows what the first destination would get, even while Parallax is closed.")
+                                .font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if broadcast.status.live, broadcast.status.rehearsal {
+                                Button("Show Preview") { Task { await broadcast.showPreview() } }
+                                    .buttonStyle(.link).font(.callout)
+                            }
+                        }
+                    }
+                }
+            }
+
             HStack {
                 Spacer()
                 Button("Close") { dismiss() }
                 if broadcast.status.live {
-                    Button("End Broadcast", role: .destructive) { Task { await model.endBroadcast() } }
-                        .buttonStyle(.borderedProminent).tint(.red)
+                    Button(broadcast.status.rehearsal ? "End Rehearsal" : "End Broadcast", role: .destructive) {
+                        Task { await model.endBroadcast() }
+                    }
+                    .buttonStyle(.borderedProminent).tint(broadcast.status.rehearsal ? .orange : .red)
                 } else {
-                    Button("Start Broadcast") { Task { await model.goLive(Array(selected)) } }
+                    let rehearsing = broadcast.service.mode == .server && model.rehearse
+                    Button(rehearsing ? "Start Rehearsal" : "Start Broadcast") { Task { await model.goLive(Array(selected)) } }
                         .buttonStyle(.borderedProminent)
+                        .tint(rehearsing ? .orange : .accentColor)
                         .disabled(selected.isEmpty || broadcast.isBusy)
                 }
             }

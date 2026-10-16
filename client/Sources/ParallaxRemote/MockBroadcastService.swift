@@ -25,7 +25,8 @@ public actor MockBroadcastService: BroadcastService {
 
     public func startBroadcast(_ request: StartBroadcastRequest) async throws {
         current = BroadcastStatus(live: true, ingestActive: false, startedAt: Date(),
-                                  destinations: request.destinationIDs.map { DestinationStatus(destinationID: $0, state: .connecting) })
+                                  destinations: request.destinationIDs.map { DestinationStatus(destinationID: $0, state: .connecting) },
+                                  rehearsal: request.rehearsal)
         broadcast(.status(current))
         try? await Task.sleep(for: .seconds(1.5))
         guard current.live else { return }
@@ -40,6 +41,7 @@ public actor MockBroadcastService: BroadcastService {
 
     public func setThumbnail(_ image: Data) async throws {}
     public func setSlate(_ image: Data, fps: Int) async throws {}
+    public func showPreview() async throws {}
 
     public func sendChat(_ request: SendChatRequest) async throws {
         let platforms = request.platforms ?? Platform.allCases.filter(\.supportsChat)

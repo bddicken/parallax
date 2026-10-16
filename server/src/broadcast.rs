@@ -1,14 +1,15 @@
 //! Going live: one ffmpeg per destination copies the ingest stream (no
 //! re-encoding) to the platform, restarting on its own if it drops. Relays
 //! keep going while the client is away (the ingest plays a slate), and the
-//! broadcast is saved so a restarted server picks it back up.
+//! broadcast is saved so a restarted server picks it back up. A rehearsal
+//! runs the same relays but throws their output away.
 
 use std::{collections::VecDeque, process::Stdio, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    process::Command,
+    process::{Child, Command},
     sync::Mutex,
     task::JoinHandle,
     time::Instant,
@@ -28,8 +29,15 @@ pub struct Target {
     pub url: Result<String, String>,
 }
 
+/// A target URL for a rehearsal: ffmpeg reads and discards the stream.
+pub const DISCARD: &str = "discard:";
+/// A target URL for a rehearsal's first relay: it publishes back to the
+/// ingest's preview path, which the preview window shows.
+pub const PREVIEW: &str = "preview:";
+
 pub struct Broadcaster {
     ffmpeg: String,
+    ffplay: Option<String>,
     ingest: Arc<Ingest>,
     events: Events,
     store: Arc<Store>,
@@ -39,14 +47,17 @@ pub struct Broadcaster {
 #[derive(Default)]
 struct Inner {
     started_at: Option<DateTime<Utc>>,
+    rehearsal: bool,
     /// Bumped on every start and stop, so late updates from a stopped relay are dropped.
     generation: u64,
     relays: Vec<(DestinationStatus, Option<JoinHandle<()>>)>,
+    /// The rehearsal's preview window. Dropping it closes the window.
+    preview: Option<Child>,
 }
 
 impl Broadcaster {
-    pub fn new(ffmpeg: String, ingest: Arc<Ingest>, events: Events, store: Arc<Store>) -> Arc<Broadcaster> {
-        let b = Arc::new(Broadcaster { ffmpeg, ingest, events, store, inner: Mutex::default() });
+    pub fn new(ffmpeg: String, ffplay: Option<String>, ingest: Arc<Ingest>, events: Events, store: Arc<Store>) -> Arc<Broadcaster> {
+        let b = Arc::new(Broadcaster { ffmpeg, ffplay, ingest, events, store, inner: Mutex::default() });
         // Re-announce status whenever the client starts or stops sending.
         let this = b.clone();
         tokio::spawn(async move {
@@ -65,6 +76,7 @@ impl Broadcaster {
             ingest_active: *self.ingest.ready().borrow(),
             started_at: inner.started_at,
             destinations: inner.relays.iter().map(|(s, _)| s.clone()).collect(),
+            rehearsal: inner.rehearsal,
         }
     }
 
@@ -76,8 +88,13 @@ impl Broadcaster {
         self.inner.lock().await.started_at.is_some()
     }
 
-    pub async fn start(self: &Arc<Self>, targets: Vec<Target>) {
-        let saved = SavedBroadcast { started_at: Utc::now(), targets };
+    /// Whether the broadcast under way is a rehearsal.
+    pub async fn is_rehearsal(&self) -> bool {
+        self.inner.lock().await.rehearsal
+    }
+
+    pub async fn start(self: &Arc<Self>, targets: Vec<Target>, rehearsal: bool) {
+        let saved = SavedBroadcast { started_at: Utc::now(), targets, rehearsal };
         if let Err(e) = self.store.update(|s| s.broadcast = Some(saved.clone())) {
             tracing::warn!("couldn't save the broadcast: {e:#}");
         }
@@ -89,7 +106,7 @@ impl Broadcaster {
     /// client sends video again.
     pub async fn resume(self: &Arc<Self>) {
         if let Some(saved) = self.store.get().broadcast {
-            tracing::info!("resuming the broadcast from {}", saved.started_at);
+            tracing::info!("resuming the {} from {}", if saved.rehearsal { "rehearsal" } else { "broadcast" }, saved.started_at);
             self.run(saved, false).await;
         }
     }
@@ -99,6 +116,7 @@ impl Broadcaster {
         stop_relays(&mut inner);
         inner.generation += 1;
         inner.started_at = Some(saved.started_at);
+        inner.rehearsal = saved.rehearsal;
         let generation = inner.generation;
         for target in saved.targets {
             let (status, task) = match target.url {
@@ -112,8 +130,49 @@ impl Broadcaster {
             };
             inner.relays.push((status, task));
         }
+        inner.preview = None;
+        if saved.rehearsal && self.ffplay.is_some() {
+            inner.preview = self.open_preview().map_err(|e| tracing::warn!("{e}")).ok();
+        }
         drop(inner);
         self.publish().await;
+    }
+
+    /// Opens the preview window again (e.g. after you closed it), during a
+    /// rehearsal on a server that shows one.
+    pub async fn show_preview(&self) -> Result<(), String> {
+        if self.ffplay.is_none() {
+            return Err("Only the server built into Parallax can show a preview.".into());
+        }
+        let mut inner = self.inner.lock().await;
+        if !inner.rehearsal {
+            return Err("There's a preview only during a rehearsal.".into());
+        }
+        if let Some(preview) = inner.preview.as_mut()
+            && matches!(preview.try_wait(), Ok(None))
+        {
+            return Ok(());
+        }
+        inner.preview = Some(self.open_preview()?);
+        Ok(())
+    }
+
+    /// Shows what the preview relay sends, the way a destination gets it.
+    /// Muted to start, so the mic doesn't hear it (0 and 9 change volume).
+    /// Closes itself if MediaMTX goes away, as when the server restarts.
+    fn open_preview(&self) -> Result<Child, String> {
+        let ffplay = self.ffplay.as_deref().unwrap_or("ffplay");
+        let child = Command::new(ffplay)
+            .args(["-hide_banner", "-loglevel", "error", "-autoexit", "-volume", "0", "-x", "960", "-y", "540"])
+            .args(["-window_title", "Parallax rehearsal: what destinations get"])
+            .args(["-fflags", "nobuffer", "-flags", "low_delay", "-framedrop", &self.ingest.local_preview_url()])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("Couldn't open the preview with {ffplay}: {e}"))?;
+        tracing::info!("showing the rehearsal preview");
+        Ok(child)
     }
 
     pub async fn stop(&self) {
@@ -124,6 +183,8 @@ impl Broadcaster {
         stop_relays(&mut inner);
         inner.generation += 1;
         inner.started_at = None;
+        inner.rehearsal = false;
+        inner.preview = None;
         drop(inner);
         self.publish().await;
     }
@@ -177,10 +238,17 @@ impl Broadcaster {
 
     /// Runs one ffmpeg until it exits, reporting bitrate.
     async fn run_ffmpeg(&self, generation: u64, id: &str, url: &str) -> Stopped {
+        let preview = self.ingest.local_preview_url();
+        let output = match url {
+            DISCARD => vec!["-f", "null", "-"],
+            PREVIEW => vec!["-f", "flv", "-flvflags", "no_duration_filesize", &preview],
+            url => vec!["-f", "flv", "-flvflags", "no_duration_filesize", url],
+        };
         let mut child = match Command::new(&self.ffmpeg)
             .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-progress", "pipe:1", "-stats_period", "2"])
             .args(["-rw_timeout", "10000000", "-i", &self.ingest.local_read_url()])
-            .args(["-c", "copy", "-f", "flv", "-flvflags", "no_duration_filesize", url])
+            .args(["-c", "copy"])
+            .args(output)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

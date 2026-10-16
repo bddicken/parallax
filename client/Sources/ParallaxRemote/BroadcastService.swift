@@ -25,6 +25,9 @@ public protocol BroadcastService: Sendable {
     /// PNG or JPEG at the stream's size) as a video at `fps`. Only between
     /// broadcasts.
     func setSlate(_ image: Data, fps: Int) async throws
+    /// Reopens a rehearsal's preview window, which shows what the first
+    /// destination would get. Only the built-in server has one.
+    func showPreview() async throws
     func sendChat(_ request: SendChatRequest) async throws
     func accounts() async throws -> [Account]
     /// Starts signing in to `platform`; the user finishes in a browser.
@@ -57,6 +60,7 @@ public struct OfflineBroadcastService: BroadcastService {
     public func stopBroadcast() async throws {}
     public func setThumbnail(_ image: Data) async throws { throw notConnected }
     public func setSlate(_ image: Data, fps: Int) async throws { throw notConnected }
+    public func showPreview() async throws { throw notConnected }
     public func sendChat(_ request: SendChatRequest) async throws { throw notConnected }
     public func accounts() async throws -> [Account] { [] }
     public func connectAccount(_ platform: Platform) async throws -> DeviceCode { throw notConnected }
@@ -100,6 +104,10 @@ public final class HTTPBroadcastService: BroadcastService {
         r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         r.httpBody = image
         _ = try await perform(r)
+    }
+
+    public func showPreview() async throws {
+        try await post("v1/broadcast/preview", body: [String: String]())
     }
 
     public func setSlate(_ image: Data, fps: Int) async throws {

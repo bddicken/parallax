@@ -698,8 +698,14 @@ final class AppModel {
         broadcast.connect(connection, force: force)
     }
 
+    /// Whether Go Live rehearses: video goes to the server and its relays
+    /// run, but nothing reaches the platforms. Off at each launch, so a
+    /// forgotten rehearsal can't stand in for a real broadcast.
+    var rehearse = false
+
     /// Starts sending video to the server, then asks it to go live on
-    /// `destinationIDs`. The mock server only pretends, so nothing is sent.
+    /// `destinationIDs` (or rehearse, per `rehearse`). The mock server only
+    /// pretends, so nothing is sent.
     func goLive(_ destinationIDs: [String]) async {
         if broadcast.service.mode == .server {
             let size = profile.broadcast.stream.resolution.size(for: profile.output)
@@ -709,12 +715,14 @@ final class AppModel {
         let settings = profile.broadcast
         let request = StartBroadcastRequest(destinationIDs: destinationIDs,
                                             title: settings.title.trimmingCharacters(in: .whitespaces),
-                                            privacy: settings.privacy.rawValue)
+                                            privacy: settings.privacy.rawValue,
+                                            rehearsal: rehearse && broadcast.service.mode == .server)
         broadcast.thumbnailProblem = nil
         guard await broadcast.start(request) else {
             stopUplink()
             return
         }
+        guard !request.rehearsal else { return }
         // X's API can't start a broadcast, so Live Studio's page does it.
         if broadcast.service.mode == .server, broadcast.includes(.x, in: destinationIDs) {
             let title = request.title ?? ""

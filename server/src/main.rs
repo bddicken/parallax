@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
         tracing::warn!("X_RTMP_URL/X_STREAM_KEY aren't set, so X is off");
     }
 
-    let broadcaster = Broadcaster::new(config.ffmpeg_bin.clone(), ingest.clone(), events.clone(), store.clone());
+    let broadcaster = Broadcaster::new(config.ffmpeg_bin.clone(), config.preview_bin.clone(), ingest.clone(), events.clone(), store.clone());
     broadcaster.resume().await;
     let state = Arc::new(AppState {
         config: config.clone(),
