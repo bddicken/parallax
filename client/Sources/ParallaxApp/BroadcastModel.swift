@@ -63,6 +63,10 @@ final class BroadcastModel {
     /// Opens X's Live Studio, where X broadcasts start.
     func showXLiveStudio() { xLiveStudio.show() }
 
+    /// Opens Live Studio for `goLiveOnX`, so it loads while the stream
+    /// starts up.
+    func prepareXGoLive() { xLiveStudio.prepare() }
+
     /// Starts the X broadcast in Live Studio, since X's API can't. Needs
     /// video going to the server, so call it after `start`.
     func goLiveOnX(title: String, thumbnailPath: String?, dryRun: Bool = false) async {
@@ -85,6 +89,14 @@ final class BroadcastModel {
     func reportXGoLiveProblem(_ problem: String) {
         xGoLiveProblem = problem
         Notifications.shared.post("X didn't go live", "\(problem) Click to finish in Live Studio.") { [weak self] in
+            self?.showXLiveStudio()
+        }
+    }
+
+    /// Ends the X broadcast in Live Studio, which X's API can't either.
+    func endOnX() async {
+        guard let problem = await xLiveStudio.endBroadcast() else { return }
+        Notifications.shared.post("X broadcast didn't end", "\(problem) Click to end it in Live Studio.") { [weak self] in
             self?.showXLiveStudio()
         }
     }

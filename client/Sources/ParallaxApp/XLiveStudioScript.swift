@@ -1,19 +1,19 @@
 import Foundation
 
-/// The script `XLiveStudio` runs in X's Live Studio (studio.x.com/live) to
-/// start a broadcast the way you would by hand: New Livestream, fill in the
-/// title, upload the thumbnail on the Thumbnail tab, back to Details, Go Live.
+/// The scripts `XLiveStudio` runs in X's Live Studio (studio.x.com/live) to
+/// start and end a broadcast the way you would by hand. Starting: New
+/// Livestream, fill in the title, upload the thumbnail on the Thumbnail tab,
+/// back to Details, Go Live. Ending: End, then confirm.
 ///
 /// Live Studio's markup isn't documented, so buttons and tabs are found by
 /// their visible text (or aria-label), and the title box by its label,
-/// placeholder or name. It returns `{problem, steps, controls}`: `problem`
-/// is null when it clicked Go Live, or what went wrong, so you can finish by
+/// placeholder or name. Each returns `{problem, steps, controls}`: `problem`
+/// is null when it clicked through, or what went wrong, so you can finish by
 /// hand; `steps` is what it did and `controls` what it could see last, for
 /// the log.
 enum XLiveStudioScript {
-    /// Arguments: `title` (may be empty), `thumbnail` (base64 JPEG, or empty
-    /// for none), `dryRun` (stop short of clicking Go Live).
-    static let goLive = """
+    /// What both scripts use to find and click things.
+    private static let helpers = """
     const steps = [];
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const shown = (el) => el && el.getClientRects().length > 0;
@@ -25,7 +25,7 @@ enum XLiveStudioScript {
       .pop();
     const enabled = (el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true';
     const waitFor = async (what, find, seconds) => {
-      for (const end = Date.now() + seconds * 1000; Date.now() < end; await sleep(250)) {
+      for (const end = Date.now() + seconds * 1000; Date.now() < end; await sleep(100)) {
         const found = find();
         if (found) return found;
       }
@@ -39,7 +39,7 @@ enum XLiveStudioScript {
       }, seconds);
       el.click();
       steps.push(`clicked ${what}: ${el.tagName.toLowerCase()} "${named(el).filter(Boolean)[0]}"`);
-      await sleep(500);
+      await sleep(300);
     };
     // The buttons, tabs and fields in view, to see what changed on X's side.
     const controls = () => [...(dialog() ?? document).querySelectorAll('button, [role=button], [role=tab], input, textarea, [contenteditable=true]')]
@@ -51,7 +51,7 @@ enum XLiveStudioScript {
       .concat(
         // Anything else that looks like the controls we want, however it's built.
         [...document.querySelectorAll('body *')]
-          .filter((el) => shown(el) && /live|stream|new|create|thumbnail|title|details/i.test(el.innerText ?? '')
+          .filter((el) => shown(el) && /live|stream|new|create|thumbnail|title|details|end|stop/i.test(el.innerText ?? '')
                   && (el.innerText ?? '').trim().length < 40 && ![...el.children].some((c) => c.innerText === el.innerText))
           .map((el) => `text ${el.tagName.toLowerCase()} role=${el.getAttribute('role')} testid=${el.getAttribute('data-testid')} `
                + `cursor=${getComputedStyle(el).cursor} "${el.innerText.trim()}"`)
@@ -60,6 +60,11 @@ enum XLiveStudioScript {
         [`page ${document.readyState} ${location.href} main=${document.querySelector('main')?.innerText?.length ?? 'none'}`],
         [`page: ${(document.body.innerText ?? '').replace(/\\s+/g, ' ').slice(0, 1500)}`]);
 
+    """
+
+    /// Arguments: `title` (may be empty), `thumbnail` (base64 JPEG, or empty
+    /// for none), `dryRun` (stop short of clicking Go Live).
+    static let goLive = helpers + """
     try {
       await click('the New Livestream button', () => document, 'new livestream', 30);
       // Expected to be a popup; if it isn't, look on the whole page.
@@ -98,14 +103,14 @@ enum XLiveStudioScript {
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));
         steps.push(`attached thumbnail (${bytes.length} bytes)`);
-        await sleep(2000);
+        await sleep(500);
         const images = [...(dialog() ?? document).querySelectorAll('img')].filter(shown).map((i) => i.src.slice(0, 30));
         steps.push(`images in the popup: ${images.join(', ') || 'none'}`);
         // What X sent after the image was attached, to see whether and when it uploads.
         const requests = () => performance.getEntriesByType('resource')
           .filter((r) => r.startTime >= attachedAt && ['fetch', 'xmlhttprequest'].includes(r.initiatorType))
           .map((r) => `${r.name.replace(/\\?.*/, '').slice(0, 80)} ${Math.round(r.duration)}ms`);
-        steps.push(`requests 2 s after attaching: ${requests().join('; ') || 'none'}`);
+        steps.push(`requests 0.5 s after attaching: ${requests().join('; ') || 'none'}`);
         if (dryRun) {
           await sleep(10000);
           steps.push(`requests 12 s after attaching: ${requests().join('; ') || 'none'}`);
@@ -124,6 +129,36 @@ enum XLiveStudioScript {
       window.parallaxGoLiveAt = performance.now();
       await click('an enabled Go Live button', () => dialog() ?? document, 'go live', 60);
       return { problem: null, steps, controls: [] };
+    } catch (problem) {
+      return { problem: typeof problem === 'string' ? problem : `Live Studio script failed: ${problem}`,
+               steps, controls: controls() };
+    }
+    """
+
+    /// Argument: `seconds` to look for the end button, since the page may
+    /// still be loading.
+    ///
+    /// The end button's wording is a guess, so it takes any of several.
+    static let endBroadcast = helpers + """
+    const ends = ['end livestream', 'end live stream', 'end broadcast', 'end stream', 'end live', 'end',
+                  'stop livestream', 'stop broadcast', 'stop streaming'];
+    const confirms = [...ends, 'yes, end', 'end now', 'yes', 'confirm'];
+    const any = (root, names) => names.map((n) => control(root, n)).find((el) => el && enabled(el));
+    const press = (what, el) => {
+      el.click();
+      steps.push(`clicked ${what}: ${el.tagName.toLowerCase()} "${named(el).filter(Boolean)[0]}"`);
+    };
+    try {
+      const end = await waitFor('the End button', () => any(dialog() ?? document, ends), seconds);
+      const before = dialog();
+      press('the End button', end);
+      // X asks whether you're sure; with no question, the click did it.
+      const ask = await waitFor('the confirmation', () => { const d = dialog(); return d && d !== before ? d : null; }, 3)
+        .catch(() => null);
+      if (ask) press('the confirmation', await waitFor('the confirm button', () => any(ask, confirms), 5));
+      else steps.push('no confirmation asked');
+      await sleep(1000);
+      return { problem: null, steps, controls: controls() };
     } catch (problem) {
       return { problem: typeof problem === 'string' ? problem : `Live Studio script failed: ${problem}`,
                steps, controls: controls() };
