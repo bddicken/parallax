@@ -50,10 +50,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var termSignal: DispatchSourceSignal?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Treat SIGTERM (e.g. `kill`, scripts) like ⌘Q so recordings get finished.
+        // Treat SIGTERM (e.g. `kill`, scripts) like ⌘Q so recordings get
+        // finished. A broadcast carries on without asking.
         signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-        source.setEventHandler { NSApp.terminate(nil) }
+        source.setEventHandler { [weak self] in
+            self?.model?.quitKeepsBroadcast = true
+            NSApp.terminate(nil)
+        }
         source.resume()
         termSignal = source
 
@@ -71,7 +75,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        model?.localServer.stopAndWait()
+        guard let model else { return }
+        if model.isLiveOnServer {
+            // The server plays the slate until the next launch picks the
+            // broadcast back up. Closing the uplink properly switches to it
+            // right away.
+            model.engine.stopStreamingAndWait()
+            model.localServer.detach()
+        } else {
+            model.localServer.stopAndWait()
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -84,12 +97,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         guard let model else { return .terminateNow }
         model.saveNow()
-        guard model.isRecording else { return .terminateNow }
+        var endBroadcast = false
+        if model.isLiveOnServer, !model.quitKeepsBroadcast {
+            switch askToKeepBroadcast() {
+            case .alertFirstButtonReturn: break
+            case .alertSecondButtonReturn: endBroadcast = true
+            default: return .terminateCancel
+            }
+        }
+        guard model.isRecording || endBroadcast else { return .terminateNow }
         Task {
+            if endBroadcast { await model.endBroadcast() }
             await model.stopRecording()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
+    }
+
+    private func askToKeepBroadcast() -> NSApplication.ModalResponse {
+        let alert = NSAlert()
+        if model?.broadcast.status.rehearsal == true {
+            alert.messageText = "Keep the rehearsal going?"
+            alert.informativeText = "The server plays “\(Slate.defaultText)” until you open Parallax again, which picks the rehearsal back up. If Parallax isn't back in 15 minutes, the rehearsal ends."
+            alert.addButton(withTitle: "Keep Rehearsing and Quit")
+            alert.addButton(withTitle: "End Rehearsal and Quit")
+        } else {
+            alert.messageText = "Keep the broadcast going?"
+            alert.informativeText = "Viewers see “\(Slate.defaultText)” until you open Parallax again, which picks the stream back up. If Parallax isn't back in 15 minutes, the broadcast ends."
+            alert.addButton(withTitle: "Keep Live and Quit")
+            alert.addButton(withTitle: "End Broadcast and Quit")
+        }
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal()
     }
 }
 

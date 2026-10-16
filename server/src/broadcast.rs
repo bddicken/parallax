@@ -1,6 +1,8 @@
 //! Going live: one ffmpeg per destination copies the ingest stream (no
-//! re-encoding) to the platform, restarting on its own if it drops. A
-//! rehearsal runs the same relays but throws their output away.
+//! re-encoding) to the platform, restarting on its own if it drops. Relays
+//! keep going while the client is away (the ingest plays a slate), and the
+//! broadcast is saved so a restarted server picks it back up. A rehearsal
+//! runs the same relays but throws their output away.
 
 use std::{collections::VecDeque, process::Stdio, sync::Arc, time::Duration};
 
@@ -17,9 +19,11 @@ use crate::{
     events::Events,
     ingest::Ingest,
     protocol::{BroadcastStatus, DestinationState, DestinationStatus},
+    store::{SavedBroadcast, Store},
 };
 
 /// A destination resolved to the URL ffmpeg pushes to.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Target {
     pub id: String,
     pub url: Result<String, String>,
@@ -32,6 +36,7 @@ pub struct Broadcaster {
     ffmpeg: String,
     ingest: Arc<Ingest>,
     events: Events,
+    store: Arc<Store>,
     inner: Mutex<Inner>,
 }
 
@@ -45,8 +50,8 @@ struct Inner {
 }
 
 impl Broadcaster {
-    pub fn new(ffmpeg: String, ingest: Arc<Ingest>, events: Events) -> Arc<Broadcaster> {
-        let b = Arc::new(Broadcaster { ffmpeg, ingest, events, inner: Mutex::default() });
+    pub fn new(ffmpeg: String, ingest: Arc<Ingest>, events: Events, store: Arc<Store>) -> Arc<Broadcaster> {
+        let b = Arc::new(Broadcaster { ffmpeg, ingest, events, store, inner: Mutex::default() });
         // Re-announce status whenever the client starts or stops sending.
         let this = b.clone();
         tokio::spawn(async move {
@@ -73,24 +78,46 @@ impl Broadcaster {
         self.events.status(self.status().await);
     }
 
+    pub async fn is_live(&self) -> bool {
+        self.inner.lock().await.started_at.is_some()
+    }
+
     /// Whether the broadcast under way is a rehearsal.
     pub async fn is_rehearsal(&self) -> bool {
         self.inner.lock().await.rehearsal
     }
 
     pub async fn start(self: &Arc<Self>, targets: Vec<Target>, rehearsal: bool) {
+        let saved = SavedBroadcast { started_at: Utc::now(), targets, rehearsal };
+        if let Err(e) = self.store.update(|s| s.broadcast = Some(saved.clone())) {
+            tracing::warn!("couldn't save the broadcast: {e:#}");
+        }
+        self.run(saved, true).await;
+    }
+
+    /// Carries on with the broadcast that was live when the server last
+    /// stopped, if any. Relays start right away, showing the slate until the
+    /// client sends video again.
+    pub async fn resume(self: &Arc<Self>) {
+        if let Some(saved) = self.store.get().broadcast {
+            tracing::info!("resuming the {} from {}", if saved.rehearsal { "rehearsal" } else { "broadcast" }, saved.started_at);
+            self.run(saved, false).await;
+        }
+    }
+
+    async fn run(self: &Arc<Self>, saved: SavedBroadcast, wait_for_video: bool) {
         let mut inner = self.inner.lock().await;
         stop_relays(&mut inner);
         inner.generation += 1;
-        inner.started_at = Some(Utc::now());
-        inner.rehearsal = rehearsal;
+        inner.started_at = Some(saved.started_at);
+        inner.rehearsal = saved.rehearsal;
         let generation = inner.generation;
-        for target in targets {
+        for target in saved.targets {
             let (status, task) = match target.url {
                 Ok(url) => {
                     let this = self.clone();
                     let id = target.id.clone();
-                    let task = tokio::spawn(async move { this.relay(generation, id, url).await });
+                    let task = tokio::spawn(async move { this.relay(generation, id, url, wait_for_video).await });
                     (connecting(&target.id, None), Some(task))
                 }
                 Err(error) => (DestinationStatus { state: DestinationState::Error, ..connecting(&target.id, Some(error)) }, None),
@@ -102,6 +129,9 @@ impl Broadcaster {
     }
 
     pub async fn stop(&self) {
+        if let Err(e) = self.store.update(|s| s.broadcast = None) {
+            tracing::warn!("couldn't save the broadcast: {e:#}");
+        }
         let mut inner = self.inner.lock().await;
         stop_relays(&mut inner);
         inner.generation += 1;
@@ -128,17 +158,19 @@ impl Broadcaster {
     }
 
     /// Keeps one destination fed until the broadcast stops (the task is aborted,
-    /// which kills ffmpeg).
-    async fn relay(&self, generation: u64, id: String, url: String) {
+    /// which kills ffmpeg). A new broadcast waits for the client's first
+    /// video, so it doesn't open on the slate; after that, the slate covers
+    /// any gap.
+    async fn relay(&self, generation: u64, id: String, url: String, wait_for_video: bool) {
         let mut ready = self.ingest.ready();
+        if wait_for_video && !*ready.borrow() {
+            self.set(generation, connecting(&id, Some("Waiting for video from Parallax".into()))).await;
+            if ready.wait_for(|r| *r).await.is_err() {
+                return;
+            }
+        }
         let mut backoff = Duration::from_secs(2);
         loop {
-            if !*ready.borrow() {
-                self.set(generation, connecting(&id, Some("Waiting for video from Parallax".into()))).await;
-                if ready.wait_for(|r| *r).await.is_err() {
-                    return;
-                }
-            }
             self.set(generation, connecting(&id, None)).await;
             let started = Instant::now();
             let Stopped { error, sent } = self.run_ffmpeg(generation, &id, &url).await;
@@ -149,13 +181,10 @@ impl Broadcaster {
             if sent || started.elapsed() > Duration::from_secs(60) {
                 backoff = Duration::from_secs(2);
             }
-            // The client stopping is expected; anything else is worth showing.
-            if *ready.borrow() {
-                let status = DestinationStatus { state: DestinationState::Error, ..connecting(&id, Some(explain(&error))) };
-                self.set(generation, status).await;
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(Duration::from_secs(30));
-            }
+            let status = DestinationStatus { state: DestinationState::Error, ..connecting(&id, Some(explain(&error))) };
+            self.set(generation, status).await;
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(Duration::from_secs(30));
         }
     }
 

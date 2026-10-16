@@ -1,4 +1,4 @@
-use std::{env, net::SocketAddr, path::PathBuf};
+use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 
@@ -22,9 +22,13 @@ pub struct Config {
     pub mediamtx_api_port: u16,
     pub mediamtx_bin: String,
     pub ffmpeg_bin: String,
-    /// Exit when this process does. Set by the Parallax app when it runs the
-    /// server itself, so a crashed app doesn't leave the server behind.
+    /// The Parallax app that runs this server. Once it exits, the server
+    /// keeps a live broadcast going (on the slate) and exits when there's
+    /// nothing left to do: not live, and no app connected.
     pub parent_pid: Option<u32>,
+    /// End a broadcast once the client has sent no video for this long, in
+    /// case it isn't coming back. None never does.
+    pub offline_timeout: Option<Duration>,
     pub twitch: Option<TwitchConfig>,
     pub youtube: Option<YouTubeConfig>,
     pub x: Option<XConfig>,
@@ -105,6 +109,12 @@ impl Config {
             parent_pid: var("PARALLAX_PARENT_PID")
                 .map(|v| v.parse().context("PARALLAX_PARENT_PID must be a process ID"))
                 .transpose()?,
+            offline_timeout: match var("PARALLAX_OFFLINE_TIMEOUT") {
+                Some(v) => Some(v.parse::<u64>().context("PARALLAX_OFFLINE_TIMEOUT must be a number of seconds")?),
+                None => Some(15 * 60),
+            }
+            .filter(|&secs| secs > 0)
+            .map(Duration::from_secs),
             twitch,
             youtube,
             x,

@@ -1,5 +1,6 @@
 import AppKit
 import ParallaxCore
+import ParallaxMedia
 import ParallaxRemote
 import SwiftUI
 
@@ -382,7 +383,8 @@ private struct UplinkRow: View {
             switch model.uplinkState {
             case nil:
                 if model.broadcast.status.live {
-                    Label("Live on the server, but this Mac isn't sending video.", systemImage: "exclamationmark.triangle.fill")
+                    Label("This Mac isn't sending video, so viewers see “\(Slate.defaultText)”.",
+                          systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                     Button("Send Video") { Task { await model.startUplink() } }
                 } else {

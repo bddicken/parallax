@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import ParallaxRemote
@@ -68,6 +69,37 @@ import Testing
         #expect(ports.allSatisfy { $0 > 0 })
         let tcp = [ports[0], ports[1], ports[3]]
         #expect(Set(tcp).count == 3)
+    }
+
+    @Test func portsInUseArentFree() throws {
+        let types = [SOCK_STREAM, SOCK_DGRAM]
+        let ports = try #require(LocalServer.freePorts(types))
+        #expect(LocalServer.arePortsFree(ports, types))
+        // Hold the TCP one.
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        defer { close(fd) }
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = ports[0].bigEndian
+        addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+        let bound = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        try #require(bound == 0 && listen(fd, 1) == 0)
+        #expect(!LocalServer.arePortsFree(ports, types))
+        #expect(!LocalServer.arePortsFree([ports[1]], types), "one port per type")
+    }
+
+    @MainActor @Test func savedEndpointIsOwnerOnlyAndClearedOnStop() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let server = LocalServer(directory: dir)
+        let saved = LocalServer.Saved(url: URL(string: "http://127.0.0.1:1")!, token: "t", pid: 1, ports: [1, 2, 3, 4])
+        try JSONEncoder().encode(saved).write(to: server.savedURL)
+        server.stop()
+        #expect(!FileManager.default.fileExists(atPath: server.savedURL.path))
     }
 
     @Test func findsToolsByOverrideAndPath() throws {

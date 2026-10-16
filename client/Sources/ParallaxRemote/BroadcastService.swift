@@ -21,6 +21,10 @@ public protocol BroadcastService: Sendable {
     /// Sets the current broadcast's thumbnail where the platform supports one
     /// (YouTube). `image` is a JPEG or PNG of at most 2 MB.
     func setThumbnail(_ image: Data) async throws
+    /// Sets what viewers see while this Mac isn't sending video: `image` (a
+    /// PNG or JPEG at the stream's size) as a video at `fps`. Only between
+    /// broadcasts.
+    func setSlate(_ image: Data, fps: Int) async throws
     func sendChat(_ request: SendChatRequest) async throws
     func accounts() async throws -> [Account]
     /// Starts signing in to `platform`; the user finishes in a browser.
@@ -52,6 +56,7 @@ public struct OfflineBroadcastService: BroadcastService {
     public func startBroadcast(_ request: StartBroadcastRequest) async throws { throw notConnected }
     public func stopBroadcast() async throws {}
     public func setThumbnail(_ image: Data) async throws { throw notConnected }
+    public func setSlate(_ image: Data, fps: Int) async throws { throw notConnected }
     public func sendChat(_ request: SendChatRequest) async throws { throw notConnected }
     public func accounts() async throws -> [Account] { [] }
     public func connectAccount(_ platform: Platform) async throws -> DeviceCode { throw notConnected }
@@ -92,6 +97,17 @@ public final class HTTPBroadcastService: BroadcastService {
 
     public func setThumbnail(_ image: Data) async throws {
         var r = request("v1/broadcast/thumbnail", method: "POST")
+        r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        r.httpBody = image
+        _ = try await perform(r)
+    }
+
+    public func setSlate(_ image: Data, fps: Int) async throws {
+        var components = URLComponents(url: baseURL.appending(path: "v1/broadcast/slate"), resolvingAgainstBaseURL: false)!
+        components.queryItems = [URLQueryItem(name: "fps", value: String(fps))]
+        var r = URLRequest(url: components.url!)
+        r.httpMethod = "POST"
+        r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         r.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
         r.httpBody = image
         _ = try await perform(r)

@@ -117,6 +117,7 @@ final class AppModel {
             if stopped { Task { await self.stopRecording() } }
         }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
+        broadcast.onStatusChanged = { [weak self] in self?.resumeUplinkIfNeeded() }
         localServer.onStateChanged = { [weak self] _ in self?.updateBroadcastConnection() }
         // Save identities that sources re-found (renumbered display, replugged
         // camera) so the next launch goes straight to the right device.
@@ -591,6 +592,7 @@ final class AppModel {
             await stopRecording()
             saveNow()
             _ = try? await NSWorkspace.shared.openApplication(at: url, configuration: config)
+            quitKeepsBroadcast = true
             NSApp.terminate(nil)
             // Backstop in case something still vetoes termination.
             try? await Task.sleep(for: .seconds(2))
@@ -706,6 +708,8 @@ final class AppModel {
     /// pretends, so nothing is sent.
     func goLive(_ destinationIDs: [String]) async {
         if broadcast.service.mode == .server {
+            let size = profile.broadcast.stream.resolution.size(for: profile.output)
+            await broadcast.uploadSlate(width: size.width, height: size.height, fps: profile.output.fps)
             guard await startUplink() else { return }
         }
         let settings = profile.broadcast
@@ -734,6 +738,29 @@ final class AppModel {
         await broadcast.stop()
         stopUplink()
     }
+
+    /// Whether quitting leaves the broadcast running on the server without
+    /// asking (quit by a signal or to relaunch). Viewers see the slate until
+    /// the app is back.
+    var quitKeepsBroadcast = false
+
+    /// Whether the server is live, so quitting would leave viewers on the slate.
+    var isLiveOnServer: Bool {
+        broadcast.service.mode == .server && broadcast.status.live
+    }
+
+    /// Picks the stream back up when the server is live without video from
+    /// this Mac, e.g. after Parallax restarted mid-broadcast.
+    private func resumeUplinkIfNeeded() {
+        guard isLiveOnServer, !broadcast.status.ingestActive, uplinkState == nil, !isResumingUplink else { return }
+        isResumingUplink = true
+        Task {
+            await startUplink()
+            isResumingUplink = false
+        }
+    }
+
+    @ObservationIgnored private var isResumingUplink = false
 
     /// For when the server is live but this app isn't sending (e.g. it was
     /// restarted mid-broadcast).

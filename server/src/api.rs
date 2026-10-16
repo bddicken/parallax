@@ -1,12 +1,18 @@
 //! The control API from docs/protocol.md: REST plus the `/v1/events` WebSocket.
 
-use std::sync::Arc;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use axum::{
     Json, Router,
     body::Bytes,
     extract::{
-        DefaultBodyLimit, Path, Request, State,
+        DefaultBodyLimit, Path, Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
     http::{HeaderMap, StatusCode, header},
@@ -38,12 +44,16 @@ pub struct AppState {
     pub broadcaster: Arc<Broadcaster>,
     pub twitch: Option<Arc<Twitch>>,
     pub youtube: Option<Arc<YouTube>>,
+    /// Apps connected to `/v1/events`.
+    pub clients: AtomicUsize,
 }
 
 type AppResult<T> = Result<T, ApiError>;
 
 /// YouTube's limit for a thumbnail.
 const THUMBNAIL_LIMIT: usize = 2 * 1024 * 1024;
+/// A full-size PNG of the slate (it's mostly flat color, so far smaller).
+const SLATE_LIMIT: usize = 20 * 1024 * 1024;
 
 pub fn router(state: Arc<AppState>) -> Router {
     let v1 = Router::new()
@@ -53,6 +63,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/broadcast/start", post(start))
         .route("/broadcast/stop", post(stop))
         .route("/broadcast/thumbnail", post(set_thumbnail).layer(DefaultBodyLimit::max(THUMBNAIL_LIMIT)))
+        .route("/broadcast/slate", post(set_slate).layer(DefaultBodyLimit::max(SLATE_LIMIT)))
         .route("/chat/send", post(send_chat))
         .route("/accounts", get(accounts))
         .route("/accounts/{platform}/connect", post(connect_account))
@@ -219,22 +230,75 @@ async fn start(State(state): State<Arc<AppState>>, Json(req): Json<StartBroadcas
 }
 
 async fn stop(State(state): State<Arc<AppState>>) -> StatusCode {
+    end_broadcast(&state).await;
+    StatusCode::NO_CONTENT
+}
+
+async fn end_broadcast(state: &AppState) {
     // A rehearsal never made a YouTube broadcast, so there's none to end.
     let rehearsal = state.broadcaster.is_rehearsal().await;
     state.broadcaster.stop().await;
     if let Some(youtube) = state.youtube.as_ref().filter(|_| !rehearsal) {
         youtube.end_broadcast().await;
     }
-    StatusCode::NO_CONTENT
+}
+
+/// Ends the broadcast once the client has been away (the slate playing) for
+/// `config.offline_timeout`, in case it isn't coming back. Never returns.
+pub async fn end_abandoned_broadcasts(state: Arc<AppState>) {
+    let Some(timeout) = state.config.offline_timeout else { return };
+    let mut away_since = None;
+    loop {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let away = state.broadcaster.is_live().await && !*state.ingest.ready().borrow();
+        let since = match (away, away_since) {
+            (false, _) => {
+                away_since = None;
+                continue;
+            }
+            (true, None) => *away_since.insert(tokio::time::Instant::now()),
+            (true, Some(since)) => since,
+        };
+        if since.elapsed() >= timeout {
+            tracing::warn!("no video from Parallax for {}s; ending the broadcast", timeout.as_secs());
+            end_broadcast(&state).await;
+            away_since = None;
+        }
+    }
+}
+
+fn image_type(image: &[u8]) -> Option<&'static str> {
+    match image {
+        [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),
+        [0x89, b'P', b'N', b'G', ..] => Some("image/png"),
+        _ => None,
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SlateQuery {
+    fps: Option<u32>,
+}
+
+/// Sets what viewers see while the client isn't sending, from a JPEG or PNG
+/// at the stream's size. Only between broadcasts: changing it drops relays.
+async fn set_slate(State(state): State<Arc<AppState>>, Query(query): Query<SlateQuery>, image: Bytes) -> AppResult<StatusCode> {
+    if image_type(&image).is_none() {
+        return Err(ApiError::bad_request("A slate must be a JPEG or PNG."));
+    }
+    if state.broadcaster.is_live().await {
+        return Err(ApiError(StatusCode::CONFLICT, "The slate can't change while you're live.".into()));
+    }
+    let path = state.ingest.set_slate(&image, query.fps.unwrap_or(30)).await?;
+    state.store.update(|s| s.slate = Some(path))?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Sets the current broadcast's thumbnail where the platform supports one
 /// (YouTube). The body is the JPEG or PNG itself.
 async fn set_thumbnail(State(state): State<Arc<AppState>>, image: Bytes) -> AppResult<StatusCode> {
-    let content_type = match image.as_ref() {
-        [0xFF, 0xD8, 0xFF, ..] => "image/jpeg",
-        [0x89, b'P', b'N', b'G', ..] => "image/png",
-        _ => return Err(ApiError::bad_request("A thumbnail must be a JPEG or PNG.")),
+    let Some(content_type) = image_type(&image) else {
+        return Err(ApiError::bad_request("A thumbnail must be a JPEG or PNG."));
     };
     let Some(youtube) = &state.youtube else {
         return Err(ApiError::bad_request("YouTube isn't set up on the server."));
@@ -342,6 +406,14 @@ async fn events(State(state): State<Arc<AppState>>, ws: WebSocketUpgrade) -> Res
 
 /// Sends the current status and accounts, then every event as it happens.
 async fn stream_events(state: Arc<AppState>, mut socket: WebSocket) {
+    struct Connected<'a>(&'a AtomicUsize);
+    impl Drop for Connected<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+    state.clients.fetch_add(1, Ordering::SeqCst);
+    let _connected = Connected(&state.clients);
     let mut rx = state.events.subscribe();
     let initial = [ServerEvent::Status(state.broadcaster.status().await), ServerEvent::Accounts(account_list(&state).await)];
     for event in initial {

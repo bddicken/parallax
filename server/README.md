@@ -19,11 +19,20 @@ It leans on existing tools for media: [MediaMTX](https://mediamtx.org) receives 
 | `src/twitch.rs` | Device code sign-in, token refresh, stream key, chat (EventSub WebSocket in, Helix out) |
 | `src/youtube.rs` | Device code sign-in, a reusable stream, one broadcast per go-live, chat (streamed or polled in, `liveChatMessages.insert` out) |
 | `src/x.rs` | X ingest URL from `.env` (switched to RTMPS). Video only for now |
-| `src/store.rs` | `data/state.json`: API token, ingest key, platform sign-ins, custom destinations |
+| `src/store.rs` | `data/state.json`: API token, ingest key, platform sign-ins, custom destinations, the slate, and the live broadcast |
 
 ## Built into the app
 
-Parallax runs this server itself when Settings › Server is set to **This Mac** (the default); `client/scripts/build-app.sh` bundles it into the app. It runs while the app is open, listens on localhost only with ports and a token picked at each launch, and keeps its state in `~/Library/Application Support/Parallax/Server/` (with `server.log`). Platform settings are entered in Settings › Server instead of `.env`. You still need `brew install mediamtx ffmpeg`.
+Parallax runs this server itself when Settings › Server is set to **This Mac** (the default); `client/scripts/build-app.sh` bundles it into the app. It runs while the app is open, listens on localhost only with ports and a token the app picks, and keeps its state in `~/Library/Application Support/Parallax/Server/` (with `server.log`). Platform settings are entered in Settings › Server instead of `.env`. You still need `brew install mediamtx ffmpeg`.
+
+## Restarting mid-broadcast
+
+The app and the server can each restart without ending a broadcast:
+
+- **The app.** While nothing's coming from the app, MediaMTX plays a slate ("We'll be right back", which the app sends before going live) on the ingest path, so relays stay connected and viewers keep watching. Quitting while live asks whether to keep the broadcast going (a `SIGTERM` or a relaunch keeps it without asking). The built-in server keeps running after the app quits while it's live, and the app saves its address in `Server/endpoint.json`. The next launch takes it over and starts sending video again. If nothing comes back for `PARALLAX_OFFLINE_TIMEOUT` (15 minutes), the server ends the broadcast, and once nothing's live and no app is connected, it exits.
+- **The server.** The live broadcast is saved in `state.json`, so a restarted server starts its relays again right away (on the slate until video arrives). The app restarts its built-in server on the same ports, so the uplink reconnects by itself. Viewers see a few seconds of buffering while each relay reconnects to its platform. YouTube broadcasts are created with auto-stop off for this reason; the server ends them itself.
+
+This needs a MediaMTX with always-available paths (`alwaysAvailable`, tested with 1.21).
 
 ## Run it yourself
 
@@ -75,7 +84,8 @@ Environment variables (a `.env` file works too):
 | `PARALLAX_SRT_PORT` / `PARALLAX_RTMP_PORT` | `8890` / `1935` | Ingest ports (SRT is UDP) |
 | `PARALLAX_MEDIAMTX_API_PORT` | `9997` | MediaMTX API, localhost only |
 | `PARALLAX_MEDIAMTX` / `PARALLAX_FFMPEG` | from `PATH` | Binaries |
-| `PARALLAX_PARENT_PID` | | Exit when this process exits (the app sets it when running the server itself) |
+| `PARALLAX_PARENT_PID` | | The app running this server. Once it exits, the server exits too, except while a broadcast is live or another app is connected |
+| `PARALLAX_OFFLINE_TIMEOUT` | `900` | Seconds without video from the app before a live broadcast ends (`0`: never) |
 | `TWITCH_CLIENT_ID` | | Enables Twitch |
 | `TWITCH_CLIENT_SECRET` | | Only for Confidential apps |
 | `TWITCH_INGEST_URL` | `rtmps://ingest.global-contribute.live-video.net:443/app` | Twitch ingest (auto-picks the nearest region) |

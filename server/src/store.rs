@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use rand::distr::{Alphanumeric, SampleString};
 use serde::{Deserialize, Serialize};
 
-use crate::protocol::Destination;
+use crate::{broadcast::Target, protocol::Destination};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -28,6 +28,19 @@ pub struct State {
     pub youtube_broadcast: Option<YouTubeBroadcast>,
     /// Custom RTMP destinations. Platform destinations come from accounts.
     pub custom_destinations: Vec<Destination>,
+    /// The client's "We'll be right back" video, played while it isn't sending.
+    pub slate: Option<PathBuf>,
+    /// The broadcast that's live, so a restarted server carries on with it.
+    pub broadcast: Option<SavedBroadcast>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SavedBroadcast {
+    pub started_at: chrono::DateTime<chrono::Utc>,
+    pub targets: Vec<Target>,
+    /// Saved so a restarted server resumes a rehearsal as one.
+    #[serde(default)]
+    pub rehearsal: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

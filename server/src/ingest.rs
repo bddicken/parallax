@@ -1,8 +1,17 @@
 //! Receives the client's video with MediaMTX, which we run as a child
 //! process. The client publishes to the `live` path over SRT (or RTMP) with
 //! the ingest key; relays read it back over local RTMP.
+//!
+//! The path is always available: while the client isn't sending, MediaMTX
+//! plays a slate ("We'll be right back") on repeat, so relays stay connected
+//! and viewers keep watching while the app restarts.
 
-use std::{path::PathBuf, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    process::Stdio,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use tokio::{process::Command, sync::watch};
@@ -12,18 +21,25 @@ use crate::config::Config;
 pub const PATH: &str = "live";
 const USER: &str = "parallax";
 
+/// How long one loop of the slate runs. MediaMTX repeats it.
+const SLATE_SECONDS: u32 = 4;
+
 pub struct Ingest {
     config: Arc<Config>,
     key: String,
     ready: watch::Sender<bool>,
+    /// The client's slate video, if it sent one. Otherwise MediaMTX's own
+    /// blank one plays.
+    slate: Mutex<Option<PathBuf>>,
 }
 
 impl Ingest {
-    pub fn new(config: Arc<Config>, key: String) -> Arc<Ingest> {
-        Arc::new(Ingest { config, key, ready: watch::channel(false).0 })
+    pub fn new(config: Arc<Config>, key: String, slate: Option<PathBuf>) -> Arc<Ingest> {
+        let slate = slate.filter(|path| path.is_file());
+        Arc::new(Ingest { config, key, ready: watch::channel(false).0, slate: Mutex::new(slate) })
     }
 
-    /// True while the client is sending video.
+    /// True while the client is sending video (rather than the slate playing).
     pub fn ready(&self) -> watch::Receiver<bool> {
         self.ready.subscribe()
     }
@@ -114,41 +130,122 @@ authInternalUsers:
       - action: read
       - action: api
 paths:
-  {PATH}: {{}}
-"#,
+  {PATH}:
+    alwaysAvailable: yes
+{slate}"#,
             api = c.mediamtx_api_port,
             rtmp = c.rtmp_port,
             rtmp_bind = c.ingest_bind.as_deref().unwrap_or(""),
             srt_bind = c.ingest_bind.as_deref().unwrap_or("0.0.0.0"),
             srt = c.srt_port,
             key = self.key,
+            slate = slate_config(self.slate.lock().unwrap().as_deref()),
         );
         let path = c.data_dir.join("mediamtx.yml");
         std::fs::write(&path, yaml).with_context(|| format!("writing {}", path.display()))?;
         Ok(path)
     }
 
+    /// Makes `image` (PNG or JPEG, at the stream's size) the slate, as a
+    /// video at `fps` that matches the client's codecs (H.264 without
+    /// B-frames, AAC at 48 kHz stereo). MediaMTX reads the slate once, and
+    /// changing it drops everyone on the path, so only do this while nobody's
+    /// live. Returns the new slate's path, for saving.
+    pub async fn set_slate(&self, image: &[u8], fps: u32) -> Result<PathBuf> {
+        let dir = &self.config.data_dir;
+        let stamp = chrono::Utc::now().timestamp_millis();
+        let input = dir.join(format!("slate-{stamp}.img"));
+        let output = dir.join(format!("slate-{stamp}.mp4"));
+        std::fs::write(&input, image).with_context(|| format!("writing {}", input.display()))?;
+        let result = encode_slate(&self.config.ffmpeg_bin, &input, &output, fps).await;
+        let _ = std::fs::remove_file(&input);
+        result?;
+
+        // A new file name, since MediaMTX only reloads a path whose settings changed.
+        let url = format!("http://127.0.0.1:{}/v3/config/paths/patch/{PATH}", self.config.mediamtx_api_port);
+        let patch = serde_json::json!({ "alwaysAvailableFile": output, "alwaysAvailableTracks": [] });
+        let response = reqwest::Client::new().patch(&url).json(&patch).timeout(Duration::from_secs(5)).send().await;
+        if let Err(e) = response.and_then(|r| r.error_for_status()) {
+            let _ = std::fs::remove_file(&output);
+            anyhow::bail!("couldn't give MediaMTX the slate: {e}");
+        }
+        let old = self.slate.lock().unwrap().replace(output.clone());
+        if let Some(old) = old {
+            let _ = std::fs::remove_file(old);
+        }
+        tracing::info!("slate set ({})", output.display());
+        Ok(output)
+    }
+
     async fn poll_ready(&self) {
         #[derive(serde::Deserialize)]
         struct PathInfo {
             ready: bool,
+            /// Whether a publisher is connected. An always-available path is
+            /// ready even without one.
+            online: Option<bool>,
         }
         let url = format!("http://127.0.0.1:{}/v3/paths/get/{PATH}", self.config.mediamtx_api_port);
         let http = reqwest::Client::builder().timeout(Duration::from_secs(2)).build().expect("HTTP client");
         loop {
             let ready = match http.get(&url).send().await {
-                Ok(r) if r.status().is_success() => r.json::<PathInfo>().await.map(|p| p.ready).unwrap_or(false),
+                Ok(r) if r.status().is_success() => r.json::<PathInfo>().await.map(|p| p.online.unwrap_or(p.ready)).unwrap_or(false),
                 _ => false,
             };
             self.ready.send_if_modified(|current| {
                 let changed = *current != ready;
                 *current = ready;
                 if changed {
-                    tracing::info!("ingest {}", if ready { "started" } else { "stopped" });
+                    tracing::info!("ingest {}", if ready { "started" } else { "stopped; the slate is playing" });
                 }
                 changed
             });
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
+    }
+}
+
+/// The path settings for the slate: the client's video, or else MediaMTX's
+/// blank one with the client's codecs.
+fn slate_config(file: Option<&Path>) -> String {
+    match file {
+        Some(file) => format!("    alwaysAvailableFile: {}\n", serde_json::to_string(&file).expect("a path")),
+        None => "    alwaysAvailableTracks:\n      - codec: H264\n      - codec: MPEG4Audio\n        sampleRate: 48000\n        channelCount: 2\n".into(),
+    }
+}
+
+async fn encode_slate(ffmpeg: &str, image: &Path, output: &Path, fps: u32) -> Result<()> {
+    let fps = fps.clamp(1, 120).to_string();
+    let seconds = SLATE_SECONDS.to_string();
+    let result = Command::new(ffmpeg)
+        .args(["-hide_banner", "-nostdin", "-loglevel", "error", "-y"])
+        .args(["-loop", "1", "-framerate", &fps, "-t", &seconds])
+        .arg("-i")
+        .arg(image)
+        .args(["-f", "lavfi", "-t", &seconds, "-i", "anullsrc=r=48000:cl=stereo"])
+        .args(["-map", "0:v", "-map", "1:a", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p"])
+        .args(["-c:v", "libx264", "-preset", "veryfast", "-tune", "stillimage", "-bf", "0", "-g", &fps])
+        .args(["-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart"])
+        .arg(output)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .with_context(|| format!("starting {ffmpeg}"))?;
+    anyhow::ensure!(
+        result.status.success(),
+        "ffmpeg couldn't make the slate: {}",
+        String::from_utf8_lossy(&result.stderr).trim()
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slate_config_is_yaml() {
+        assert_eq!(slate_config(Some(Path::new("/a b/slate.mp4"))), "    alwaysAvailableFile: \"/a b/slate.mp4\"\n");
+        assert!(slate_config(None).contains("codec: MPEG4Audio"));
     }
 }
