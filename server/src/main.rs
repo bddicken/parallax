@@ -9,7 +9,7 @@ mod twitch;
 mod x;
 mod youtube;
 
-use std::sync::Arc;
+use std::sync::{Arc, atomic::Ordering};
 
 use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     let saved = store.get();
     let events = Events::new();
 
-    let ingest = Ingest::new(config.clone(), saved.ingest_key.clone());
+    let ingest = Ingest::new(config.clone(), saved.ingest_key.clone(), saved.slate.clone());
     tokio::spawn(ingest.clone().run());
 
     let twitch = config.twitch.clone().map(|c| Twitch::new(c, store.clone(), events.clone()));
@@ -56,26 +56,53 @@ async fn main() -> Result<()> {
         tracing::warn!("X_RTMP_URL/X_STREAM_KEY aren't set, so X is off");
     }
 
-    let broadcaster = Broadcaster::new(config.ffmpeg_bin.clone(), ingest.clone(), events.clone());
-    let state = Arc::new(AppState { config: config.clone(), store, events, ingest, broadcaster, twitch, youtube });
+    let broadcaster = Broadcaster::new(config.ffmpeg_bin.clone(), ingest.clone(), events.clone(), store.clone());
+    broadcaster.resume().await;
+    let state = Arc::new(AppState {
+        config: config.clone(),
+        store,
+        events,
+        ingest,
+        broadcaster,
+        twitch,
+        youtube,
+        clients: Default::default(),
+    });
     tokio::spawn(api::publish_accounts(state.clone()));
+    tokio::spawn(api::end_abandoned_broadcasts(state.clone()));
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(config.addr).await.with_context(|| format!("listening on {}", config.addr))?;
     tracing::info!("parallax-server on http://{}", config.addr);
     tracing::info!("API token: {} (paste into Parallax › Settings › Server)", saved.api_token);
-    axum::serve(listener, app).with_graceful_shutdown(shutdown(config.parent_pid)).await?;
+    axum::serve(listener, app).with_graceful_shutdown(shutdown(state)).await?;
     Ok(())
 }
 
-async fn shutdown(parent_pid: Option<u32>) {
+async fn shutdown(state: Arc<AppState>) {
     let ctrl_c = tokio::signal::ctrl_c();
     #[cfg(unix)]
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).expect("SIGTERM handler");
     #[cfg(unix)]
-    tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {}, _ = parent_exited(parent_pid) => {} }
+    tokio::select! { _ = ctrl_c => {}, _ = term.recv() => {}, _ = orphaned_and_idle(&state) => {} }
     #[cfg(not(unix))]
     let _ = ctrl_c.await;
+}
+
+/// Resolves once the app that started this server has exited and there's
+/// nothing left to do: no broadcast (the app quit while live, so the slate
+/// carries it until the app's back), and no app connected (a relaunched app
+/// may have picked this server up). Never resolves without a parent pid.
+#[cfg(unix)]
+async fn orphaned_and_idle(state: &AppState) {
+    parent_exited(state.config.parent_pid).await;
+    loop {
+        if !state.broadcaster.is_live().await && state.clients.load(Ordering::SeqCst) == 0 {
+            tracing::info!("the app that started this server is gone and nothing's live; shutting down");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
 }
 
 /// Resolves once `pid` is no longer our parent (it exited and we were
@@ -86,5 +113,5 @@ async fn parent_exited(pid: Option<u32>) {
     while std::os::unix::process::parent_id() == pid {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
-    tracing::info!("the app that started this server exited; shutting down");
+    tracing::info!("the app that started this server exited");
 }

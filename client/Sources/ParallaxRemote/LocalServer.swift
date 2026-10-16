@@ -84,10 +84,14 @@ public struct LocalServerCredentials: Codable, Hashable, Sendable {
     }
 }
 
-/// Runs parallax-server on this Mac as a child process, for as long as the
-/// app is open. It listens on localhost only, on ports picked at launch, with
-/// a fresh API token each time, so there's nothing to configure. Restarts it
-/// if it exits unexpectedly.
+/// Runs parallax-server on this Mac as a child process. It listens on
+/// localhost only, on ports and with an API token picked by the app, so
+/// there's nothing to configure. Restarts it (on the same ports) if it exits
+/// unexpectedly.
+///
+/// It usually stops when the app quits, but a broadcast can outlive the app:
+/// `detach` leaves the server running (viewers see the slate), and the next
+/// launch picks it back up from `endpoint.json`.
 @MainActor @Observable
 public final class LocalServer {
     public struct Endpoint: Equatable, Sendable {
@@ -133,19 +137,35 @@ public final class LocalServer {
     public var logURL: URL { directory.appending(path: "server.log") }
 
     @ObservationIgnored private var process: Process?
+    /// A server a previous run of the app left running, which this one took over.
+    @ObservationIgnored private var adopted: (pid: pid_t, watcher: DispatchSourceProcess)?
     @ObservationIgnored private var credentials: LocalServerCredentials?
+    /// Kept across restarts, so the uplink's address stays valid.
+    @ObservationIgnored private var ports: [UInt16]?
+    @ObservationIgnored private var token: String?
     /// Bumped on every launch and stop, so callbacks from an older process
     /// are ignored.
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var restartDelay = Duration.seconds(1)
     @ObservationIgnored private var pending: Task<Void, Never>?
 
+    /// Where a running server is, so the next launch of the app can find it.
+    struct Saved: Codable, Equatable {
+        var url: URL
+        var token: String
+        var pid: Int32
+        var ports: [UInt16]
+    }
+
+    var savedURL: URL { directory.appending(path: "endpoint.json") }
+
     public init(directory: URL) {
         self.directory = directory
     }
 
     /// Starts the server, or restarts it if the credentials changed. Does
-    /// nothing if it's already running (or starting) with these.
+    /// nothing if it's already running (or starting) with these. On launch,
+    /// takes over a server the last run left live.
     public func run(with credentials: LocalServerCredentials) {
         switch state {
         case .running, .starting: if credentials == self.credentials { return }
@@ -153,7 +173,11 @@ public final class LocalServer {
         }
         self.credentials = credentials
         restartDelay = .seconds(1)
-        launch()
+        if process == nil, adopted == nil, let saved = loadSaved() {
+            adopt(saved)
+        } else {
+            launch()
+        }
     }
 
     /// Starts again with the same credentials, e.g. after installing tools.
@@ -166,19 +190,82 @@ public final class LocalServer {
         generation += 1
         pending?.cancel()
         if let process, process.isRunning { process.terminate() }
+        if let adopted {
+            adopted.watcher.cancel()
+            kill(adopted.pid, SIGTERM)
+        }
         process = nil
+        adopted = nil
+        try? FileManager.default.removeItem(at: savedURL)
         state = .stopped
     }
 
     /// Stops the server and waits (briefly) for it to exit, for app quit. The
     /// server stops MediaMTX and ffmpeg on its way out.
     public func stopAndWait(timeout: TimeInterval = 3) {
-        let process = self.process
+        let process = self.process, adoptedPID = adopted?.pid
         stop()
-        guard let process, process.isRunning else { return }
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning, Date() < deadline { usleep(20_000) }
-        if process.isRunning { killpg(process.processIdentifier, SIGKILL) }
+        if let process, process.isRunning {
+            let deadline = Date().addingTimeInterval(timeout)
+            while process.isRunning, Date() < deadline { usleep(20_000) }
+            if process.isRunning { killpg(process.processIdentifier, SIGKILL) }
+        } else if let adoptedPID {
+            Self.waitForExit(adoptedPID, timeout: timeout)
+        }
+    }
+
+    /// Leaves the server running after the app quits, so a broadcast carries
+    /// on (the server plays the slate). The next launch takes it over.
+    public func detach() {
+        generation += 1
+        pending?.cancel()
+        adopted?.watcher.cancel()
+        process = nil
+        adopted = nil
+    }
+
+    /// Takes over a server a previous run left behind, if it's live; otherwise
+    /// stops it and starts a fresh one (from this build, with these settings).
+    private func adopt(_ saved: Saved) {
+        generation += 1
+        let generation = generation
+        ports = saved.ports
+        token = saved.token
+        state = .starting
+        pending = Task { [weak self] in
+            let endpoint = Endpoint(url: saved.url, token: saved.token)
+            let config = URLSessionConfiguration.ephemeral
+            config.timeoutIntervalForRequest = 3
+            let service = HTTPBroadcastService(baseURL: endpoint.url, token: endpoint.token, session: URLSession(configuration: config))
+            let status = try? await service.status()
+            guard let self, !Task.isCancelled, generation == self.generation else { return }
+            if status?.live == true {
+                watch(saved.pid, generation: generation)
+                state = .running(endpoint)
+                return
+            }
+            if status != nil {
+                kill(saved.pid, SIGTERM)
+                await Task.detached { Self.waitForExit(saved.pid, timeout: 3) }.value
+                guard generation == self.generation else { return }
+            }
+            launch()
+        }
+    }
+
+    /// Notices when an adopted server exits, as `terminationHandler` does for
+    /// one this run started.
+    private func watch(_ pid: pid_t, generation: Int) {
+        let watcher = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+        let exited: () -> Void = { [weak self] in
+            killpg(pid, SIGKILL)
+            MainActor.assumeIsolated { self?.exited(generation: generation, status: -1) }
+        }
+        watcher.setEventHandler(handler: exited)
+        watcher.resume()
+        adopted = (pid, watcher)
+        // It may have exited before the watcher started.
+        if kill(pid, 0) != 0 { exited() }
     }
 
     private func launch() {
@@ -194,11 +281,16 @@ public final class LocalServer {
             state = .missingTools(missing)
             return
         }
-        guard let ports = Self.freePorts([SOCK_STREAM, SOCK_STREAM, SOCK_DGRAM, SOCK_STREAM]) else {
+        // The same ports as last time if they're free, so the uplink (which
+        // keeps retrying its address) reconnects by itself.
+        let types = [SOCK_STREAM, SOCK_STREAM, SOCK_DGRAM, SOCK_STREAM]
+        guard let ports = self.ports.flatMap({ Self.arePortsFree($0, types) ? $0 : nil }) ?? Self.freePorts(types) else {
             state = .failed("Couldn't find free ports on this Mac for the server.")
             return
         }
-        let token = Self.randomToken()
+        let token = self.token ?? Self.randomToken()
+        self.ports = ports
+        self.token = token
         let url = URL(string: "http://127.0.0.1:\(ports[0])")!
 
         var env = (credentials ?? .init()).environment
@@ -252,6 +344,17 @@ public final class LocalServer {
         pending = Task { [weak self] in
             await self?.waitUntilReady(generation: generation, endpoint: Endpoint(url: url, token: token))
         }
+        save(Saved(url: url, token: token, pid: process.processIdentifier, ports: ports))
+    }
+
+    private func loadSaved() -> Saved? {
+        (try? Data(contentsOf: savedURL)).flatMap { try? JSONDecoder().decode(Saved.self, from: $0) }
+    }
+
+    /// Owner-only, since it holds the token.
+    private func save(_ saved: Saved) {
+        guard let data = try? JSONEncoder().encode(saved) else { return }
+        FileManager.default.createFile(atPath: savedURL.path, contents: data, attributes: [.posixPermissions: 0o600])
     }
 
     private func waitUntilReady(generation: Int, endpoint: Endpoint) async {
@@ -275,6 +378,8 @@ public final class LocalServer {
     private func exited(generation: Int, status: Int32) {
         guard generation == self.generation else { return }
         process = nil
+        adopted?.watcher.cancel()
+        adopted = nil
         if case .running = state {
             // It was working; bring it back, backing off if it keeps dying.
             state = .starting
@@ -357,6 +462,38 @@ public final class LocalServer {
             ports.append(UInt16(bigEndian: addr.sin_port))
         }
         return ports
+    }
+
+    /// Whether each port is free on 127.0.0.1 (`types` as in `freePorts`).
+    nonisolated static func arePortsFree(_ ports: [UInt16], _ types: [Int32]) -> Bool {
+        guard ports.count == types.count else { return false }
+        return zip(ports, types).allSatisfy { port, type in
+            let fd = socket(AF_INET, type, 0)
+            guard fd >= 0 else { return false }
+            defer { close(fd) }
+            // As the server's own listeners do, so a recent connection's
+            // TIME_WAIT doesn't count as taken.
+            var on: Int32 = 1
+            setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, socklen_t(MemoryLayout<Int32>.size))
+            var addr = sockaddr_in()
+            addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            addr.sin_family = sa_family_t(AF_INET)
+            addr.sin_port = port.bigEndian
+            addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+            return withUnsafePointer(to: &addr) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) == 0
+                }
+            }
+        }
+    }
+
+    /// Waits for `pid` (not our child, so never a zombie) to exit, then ends
+    /// whatever's left of its process group.
+    nonisolated static func waitForExit(_ pid: pid_t, timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while kill(pid, 0) == 0, Date() < deadline { usleep(20_000) }
+        killpg(pid, SIGKILL)
     }
 
     nonisolated private static func randomToken() -> String {

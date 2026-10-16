@@ -58,6 +58,20 @@ public final class Uplink: MediaSink, @unchecked Sendable {
         task.cancel()
     }
 
+    /// Stops and waits up to `timeout` for the connection to close, so the
+    /// server learns right away that video stopped (otherwise it waits for a
+    /// timeout). Blocks; for app quit.
+    public func stopAndWait(timeout: TimeInterval) {
+        stop()
+        let closed = DispatchSemaphore(value: 0)
+        let task = task
+        Task.detached {
+            await task.value
+            closed.signal()
+        }
+        _ = closed.wait(timeout: .now() + timeout)
+    }
+
     public func appendVideo(_ pixelBuffer: CVPixelBuffer, pts: CMTime) {
         guard let format = format(for: pixelBuffer) else { return }
         var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: pts, decodeTimeStamp: .invalid)

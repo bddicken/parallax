@@ -371,6 +371,15 @@ public final class MediaEngine {
         updateActivity()
     }
 
+    /// Like `stopStreaming`, but blocks (briefly) until the connection
+    /// closes. For app quit.
+    public func stopStreamingAndWait(timeout: TimeInterval = 1) {
+        guard let u = uplink else { return }
+        sinks.remove(u)
+        uplink = nil
+        u.stopAndWait(timeout: timeout)
+    }
+
     // MARK: Nodes
 
     // Record the new identity as what's running before the app saves it, so
