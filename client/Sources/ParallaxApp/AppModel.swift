@@ -707,6 +707,9 @@ final class AppModel {
     /// `destinationIDs` (or rehearse, per `rehearse`). The mock server only
     /// pretends, so nothing is sent.
     func goLive(_ destinationIDs: [String]) async {
+        // X's API can't start a broadcast, so Live Studio's page does it.
+        let onX = broadcast.service.mode == .server && !rehearse && broadcast.includes(.x, in: destinationIDs)
+        if onX { broadcast.prepareXGoLive() }
         if broadcast.service.mode == .server {
             let size = profile.broadcast.stream.resolution.size(for: profile.output)
             await broadcast.uploadSlate(width: size.width, height: size.height, fps: profile.output.fps)
@@ -723,8 +726,7 @@ final class AppModel {
             return
         }
         guard !request.rehearsal else { return }
-        // X's API can't start a broadcast, so Live Studio's page does it.
-        if broadcast.service.mode == .server, broadcast.includes(.x, in: destinationIDs) {
+        if onX {
             let title = request.title ?? ""
             Task { await broadcast.goLiveOnX(title: title, thumbnailPath: settings.thumbnailPath) }
         }
@@ -735,8 +737,12 @@ final class AppModel {
 
     func endBroadcast() async {
         broadcast.xGoLiveProblem = nil
+        // Alongside stopping the server, so other platforms end right away.
+        let endingOnX = broadcast.service.mode == .server && broadcast.isLive(on: .x)
+            ? Task { await broadcast.endOnX() } : nil
         await broadcast.stop()
         stopUplink()
+        await endingOnX?.value
     }
 
     /// Whether quitting leaves the broadcast running on the server without

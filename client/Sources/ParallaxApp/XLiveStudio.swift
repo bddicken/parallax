@@ -5,9 +5,9 @@ import WebKit
 private let log = Logger(subsystem: "com.bddicken.parallax", category: "x-live-studio")
 
 /// X's Live Studio in a Parallax window. X's Livestream API is
-/// approval-only, so to start an X broadcast Parallax clicks through Live
-/// Studio for you (see `XLiveStudioScript`); if that fails, you finish here
-/// by hand. Shares cookies with the X Chat window, so signing in to X in
+/// approval-only, so to start and end an X broadcast Parallax clicks through
+/// Live Studio for you (see `XLiveStudioScript`); if that fails, you finish
+/// here by hand. Shares cookies with the X Chat window, so signing in to X in
 /// either one signs in both.
 final class XLiveStudio: NSObject {
     // x.com/i/live-studio only frames this page, which scripts can't reach into.
@@ -17,13 +17,28 @@ final class XLiveStudio: NSObject {
     private var window: NSWindow?
     private var webView: WKWebView?
     private var popups: [WKWebView: NSWindow] = [:]
+    /// The load of Live Studio that hasn't brought up its page yet.
+    private var pendingLoad: WKNavigation?
+    /// When Live Studio was last loaded for a script that hasn't run yet.
+    private var preparedAt: ContinuousClock.Instant?
 
     /// Shows the window, loading Live Studio unless it's already open.
     func show() {
         let webView = webView ?? makeWebView()
         let window = window ?? makeWindow(webView)
-        if webView.url == nil { webView.load(URLRequest(url: Self.home)) }
+        if webView.url == nil { loadHome(webView) }
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Loads Live Studio ahead of `goLive`, while the stream starts up, so
+    /// it's ready by the time X has video.
+    func prepare() {
+        let webView = webView ?? makeWebView()
+        let window = window ?? makeWindow(webView)
+        window.makeKeyAndOrderFront(nil)
+        window.subtitle = "Getting ready to start your X broadcast…"
+        loadHome(webView)
+        preparedAt = .now
     }
 
     /// Starts an X broadcast from your source with `title` and the JPEG
@@ -34,15 +49,21 @@ final class XLiveStudio: NSObject {
         let window = window ?? makeWindow(webView)
         window.makeKeyAndOrderFront(nil)
         window.subtitle = "Starting your X broadcast…"
-        var (problem, clickedAnything) = await attempt(webView, title: title, thumbnail: thumbnail, dryRun: dryRun)
+        // Use the page `prepare` loaded, if it's still as it came up.
+        let prepared = preparedAt.map { $0.duration(to: .now) < .seconds(60) } ?? false
+        preparedAt = nil
+        let arguments: [String: Any] = ["title": title, "thumbnail": thumbnail?.base64EncodedString() ?? "", "dryRun": dryRun]
+        if !prepared { loadHome(webView) }
+        var (problem, clickedAnything) = await run(XLiveStudioScript.goLive, arguments, in: webView)
         // Live Studio sometimes comes up blank. Nothing was clicked, so it's
         // safe to reload and start over once.
-        if problem != nil, !clickedAnything, webView.url?.path().hasPrefix(Self.home.path()) == true {
+        if problem != nil, !clickedAnything, isOnLiveStudio(webView) {
             log.info("nothing clicked; reloading Live Studio and trying again")
-            (problem, _) = await attempt(webView, title: title, thumbnail: thumbnail, dryRun: dryRun)
+            loadHome(webView)
+            (problem, _) = await run(XLiveStudioScript.goLive, arguments, in: webView)
         }
         log.info("\(dryRun ? "dry run" : "go live", privacy: .public) at \(webView.url?.absoluteString ?? "-", privacy: .public): \(problem ?? "ok", privacy: .public)")
-        if webView.url?.path().hasPrefix(Self.home.path()) != true {
+        if !isOnLiveStudio(webView) {
             window.subtitle = "Sign in to X here, then start your broadcast from Live Studio."
             return "You're not signed in to X in the X Live Studio window."
         } else if let problem {
@@ -61,24 +82,62 @@ final class XLiveStudio: NSObject {
         return nil
     }
 
-    /// Loads Live Studio and runs the script once. `clickedAnything` is false
-    /// only when the script ran and found nothing to click; after an
-    /// exception it's unknown, so it's true.
-    private func attempt(_ webView: WKWebView, title: String, thumbnail: Data?, dryRun: Bool) async
-        -> (problem: String?, clickedAnything: Bool) {
-        webView.load(URLRequest(url: Self.home))
-        try? await Task.sleep(for: .seconds(1))
-        for _ in 0..<120 where webView.isLoading {
-            try? await Task.sleep(for: .milliseconds(250))
+    /// Ends the X broadcast in Live Studio, showing how it went under the
+    /// window title. Returns what went wrong, if anything.
+    func endBroadcast() async -> String? {
+        let webView = webView ?? makeWebView()
+        let window = window ?? makeWindow(webView)
+        window.makeKeyAndOrderFront(nil)
+        window.subtitle = "Ending your X broadcast…"
+        preparedAt = nil
+        var problem: String?, clickedAnything = false
+        // The End button is likely where Go Live left the page. If it isn't
+        // there, it's safe to load Live Studio afresh and look again.
+        if isOnLiveStudio(webView) {
+            (problem, clickedAnything) = await run(XLiveStudioScript.endBroadcast, ["seconds": 3], in: webView)
         }
+        if !isOnLiveStudio(webView) || (problem != nil && !clickedAnything) {
+            loadHome(webView)
+            (problem, _) = await run(XLiveStudioScript.endBroadcast, ["seconds": 20], in: webView)
+        }
+        log.info("end at \(webView.url?.absoluteString ?? "-", privacy: .public): \(problem ?? "ok", privacy: .public)")
+        if !isOnLiveStudio(webView) {
+            window.subtitle = "Sign in to X here, then end your broadcast from Live Studio."
+            return "You're not signed in to X in the X Live Studio window."
+        } else if let problem {
+            window.subtitle = "\(problem) End it here by hand."
+            return problem
+        }
+        window.subtitle = "Ended your X broadcast."
+        return nil
+    }
+
+    private func isOnLiveStudio(_ webView: WKWebView) -> Bool {
+        guard let url = webView.url else { return false }
+        return url.host() == Self.home.host() && url.path().hasPrefix(Self.home.path())
+    }
+
+    private func loadHome(_ webView: WKWebView) {
+        pendingLoad = webView.load(URLRequest(url: Self.home))
+    }
+
+    /// Runs `script` once the page from the last `loadHome` is up. It needn't
+    /// have finished loading: the script waits for what it needs.
+    /// `clickedAnything` is false only when the script ran and found nothing
+    /// to click; after an exception it's unknown, so it's true.
+    private func run(_ script: String, _ arguments: [String: Any], in webView: WKWebView) async
+        -> (problem: String?, clickedAnything: Bool) {
+        let start = ContinuousClock.now
+        for _ in 0..<600 where pendingLoad != nil {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        log.info("page up after \(start.duration(to: .now), privacy: .public)")
         do {
-            let result = try await webView.callAsyncJavaScript(
-                XLiveStudioScript.goLive,
-                arguments: ["title": title, "thumbnail": thumbnail?.base64EncodedString() ?? "", "dryRun": dryRun],
-                contentWorld: .page) as? [String: Any]
+            let result = try await webView.callAsyncJavaScript(script, arguments: arguments, contentWorld: .page) as? [String: Any]
             let steps = result?["steps"] as? [String] ?? []
             for step in steps { log.info("step: \(step, privacy: .public)") }
             for control in result?["controls"] as? [String] ?? [] { log.info("control: \(control, privacy: .public)") }
+            log.info("script done after \(start.duration(to: .now), privacy: .public)")
             return (result?["problem"] as? String, !steps.isEmpty)
         } catch {
             let info = (error as NSError).userInfo
@@ -97,6 +156,7 @@ final class XLiveStudio: NSObject {
         config.preferences.inactiveSchedulingPolicy = .none
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.uiDelegate = self
+        webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         #if DEBUG
         webView.isInspectable = true
@@ -171,5 +231,15 @@ extension XLiveStudio: WKUIDelegate {
 
     func webViewDidClose(_ webView: WKWebView) {
         popups.removeValue(forKey: webView)?.close()
+    }
+}
+
+extension XLiveStudio: WKNavigationDelegate {
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        if navigation === pendingLoad { pendingLoad = nil }
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: any Error) {
+        if navigation === pendingLoad { pendingLoad = nil }
     }
 }
