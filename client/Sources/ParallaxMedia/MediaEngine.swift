@@ -68,7 +68,9 @@ public final class MediaEngine {
         for (id, running) in videoSources {
             // Screens capture at the canvas rate and size; cameras pick 4K or 1080p from it.
             let isCamera = if case .camera = running.kind { true } else { false }
-            let needsRestart = (fpsChanged && running.kind.isScreen) || (sizeChanged && (running.kind.isScreen || isCamera))
+            // The countdown is drawn at the canvas size.
+            let isCountdown = if case .countdown = running.kind { true } else { false }
+            let needsRestart = (fpsChanged && running.kind.isScreen) || (sizeChanged && (running.kind.isScreen || isCamera || isCountdown))
             if wantedVideo[id]?.kind != running.kind || needsRestart {
                 registry[id]?.stop()
                 registry[id] = nil
@@ -422,6 +424,10 @@ public final class MediaEngine {
             return ChatFeedNode(feedLayers)
         case .featuredChat:
             return StaticImageNode(image: featuredImage)
+        case .countdown(let settings):
+            let size = canvas.width > 0 && canvas.height > 0 ? CGSize(width: canvas.width, height: canvas.height)
+                : CGSize(width: 1920, height: 1080)
+            return CountdownNode(settings: settings, size: size)
         }
     }
 
