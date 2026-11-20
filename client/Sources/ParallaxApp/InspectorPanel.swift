@@ -158,6 +158,10 @@ private struct ItemInspector: View {
                 section("Countdown") { CountdownControls(sourceID: source.id, settings: settings) }
             }
 
+            if case .startingSoon(let settings) = source.kind {
+                section("Starting Soon") { StartingSoonControls(sourceID: source.id, settings: settings) }
+            }
+
             HStack {
                 Button { model.moveItem(item.id, by: 1) } label: { Label("Forward", systemImage: "square.2.layers.3d.top.filled") }
                 Button { model.moveItem(item.id, by: -1) } label: { Label("Backward", systemImage: "square.2.layers.3d.bottom.filled") }
@@ -366,6 +370,48 @@ private struct CountdownControls: View {
     }
 
     private func binding<T>(_ path: WritableKeyPath<CountdownSettings, T>) -> Binding<T> {
+        Binding(get: { settings[keyPath: path] }, set: { value in update { $0[keyPath: path] = value } })
+    }
+}
+
+/// Sets up a starting-soon source.
+private struct StartingSoonControls: View {
+    @Environment(AppModel.self) private var model
+    let sourceID: UUID
+    let settings: StartingSoonSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Animation").font(.caption).foregroundStyle(.secondary)
+            Picker("Animation", selection: binding(\.animation)) {
+                ForEach(StartingSoonAnimation.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            Text("Behind it").font(.caption).foregroundStyle(.secondary)
+            Picker("Behind it", selection: binding(\.backdrop)) {
+                ForEach(StartingSoonBackdrop.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .help("How the sources beneath it in the scene are blurred")
+            HStack {
+                Text("Strength").font(.caption)
+                Slider(value: binding(\.strength), in: 0...1)
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private func update(_ body: (inout StartingSoonSettings) -> Void) {
+        model.updateVideoSource(sourceID) { source in
+            guard case .startingSoon(var settings) = source.kind else { return }
+            body(&settings)
+            source.kind = .startingSoon(settings)
+        }
+    }
+
+    private func binding<T>(_ path: WritableKeyPath<StartingSoonSettings, T>) -> Binding<T> {
         Binding(get: { settings[keyPath: path] }, set: { value in update { $0[keyPath: path] = value } })
     }
 }

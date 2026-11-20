@@ -108,6 +108,7 @@ extension VideoSourceKind {
         case .chatFeed: "bubble.left.and.bubble.right.fill"
         case .featuredChat: "text.bubble.fill"
         case .countdown: "timer"
+        case .startingSoon: "sparkles.tv"
         }
     }
 }

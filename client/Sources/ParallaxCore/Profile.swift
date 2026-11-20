@@ -33,6 +33,8 @@ public enum VideoSourceKind: Codable, Hashable, Sendable {
     case featuredChat
     /// A "Stream starting soon" screen with a timer.
     case countdown(CountdownSettings)
+    /// A "Starting soon" screen with no timer that blurs or fogs the scene beneath it.
+    case startingSoon(StartingSoonSettings)
 }
 
 extension VideoSourceKind {

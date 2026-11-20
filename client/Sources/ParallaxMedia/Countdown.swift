@@ -81,7 +81,7 @@ enum CountdownRenderer {
         return context.makeImage().map { CIImage(cgImage: $0) } ?? .empty()
     }
 
-    private struct Line {
+    struct Line {
         var ctLine: CTLine
         var width: CGFloat
         var ascent: CGFloat
@@ -95,7 +95,7 @@ enum CountdownRenderer {
     }
 
     /// One line of text, shrunk to fit `maxWidth`.
-    private static func line(_ text: String, size: CGFloat, weight: NSFont.Weight, tracking: CGFloat = 0,
+    static func line(_ text: String, size: CGFloat, weight: NSFont.Weight, tracking: CGFloat = 0,
                              monospacedDigits: Bool = false, color: CGColor, maxWidth: CGFloat) -> Line {
         func make(_ size: CGFloat) -> Line {
             let font = monospacedDigits ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight)
