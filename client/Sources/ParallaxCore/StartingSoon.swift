@@ -2,8 +2,8 @@ import Foundation
 
 /// The slow motion behind a "Starting soon" screen.
 public enum StartingSoonAnimation: String, Codable, CaseIterable, Sendable {
-    /// Thin lines that sweep from wide to narrow, with light running along them.
-    case streams
+    /// Points of light drifting slowly, linked by faint lines when near.
+    case constellation
     /// Soft colored glows drifting about.
     case aurora
     /// Specks of light rising slowly.
@@ -13,7 +13,7 @@ public enum StartingSoonAnimation: String, Codable, CaseIterable, Sendable {
 
     public var title: String {
         switch self {
-        case .streams: "Streams"
+        case .constellation: "Constellation"
         case .aurora: "Aurora"
         case .drift: "Drift"
         case .ripples: "Ripples"
@@ -46,7 +46,7 @@ public struct StartingSoonSettings: Codable, Hashable, Sendable {
 
     public static let text = "Starting soon"
 
-    public init(animation: StartingSoonAnimation = .streams, backdrop: StartingSoonBackdrop = .blur, strength: Double = 0.6) {
+    public init(animation: StartingSoonAnimation = .constellation, backdrop: StartingSoonBackdrop = .blur, strength: Double = 0.6) {
         self.animation = animation
         self.backdrop = backdrop
         self.strength = strength

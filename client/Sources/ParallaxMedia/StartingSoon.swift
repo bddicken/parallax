@@ -50,7 +50,7 @@ enum StartingSoonRenderer {
         let unit = unit(w, h)
         context.setLineCap(.round)
         switch animation {
-        case .streams: streams(context, w: w, h: h, unit: unit, t: t)
+        case .constellation: constellation(context, w: w, h: h, unit: unit, t: t)
         case .drift: drift(context, w: w, h: h, unit: unit, t: t)
         case .ripples: ripples(context, w: w, h: h, unit: unit, t: t)
         case .aurora: break
@@ -60,54 +60,36 @@ enum StartingSoonRenderer {
 
     // MARK: Animations
 
-    /// Lines spread across the left that sweep together on the right, each
-    /// breathing a little, with light running along some of them.
-    private static func streams(_ context: CGContext, w: CGFloat, h: CGFloat, unit: CGFloat, t: Double) {
-        let count = 22, samples = 120
-        let lineWidth = max(1, unit / 1080 * 1.3)
-        let blue = CGColor(srgbRed: 0.36, green: 0.56, blue: 1, alpha: 0.55)
-        for i in 0..<count {
-            let f = (CGFloat(i) + 0.5) / CGFloat(count)
-            let left = h * (0.06 + 0.88 * f)
-            let right = h / 2 + (left - h / 2) * 0.42 + CGFloat(sin(t * 0.25 + Double(i) * 0.7)) * unit * 0.008
-            let points = (0...samples).map { k -> CGPoint in
-                let x = w * CGFloat(k) / CGFloat(samples)
-                return CGPoint(x: x, y: left + (right - left) * smootherstep((x / w - 0.28) / 0.44))
-            }
-            context.setStrokeColor(blue)
-            context.setLineWidth(lineWidth)
-            context.addLines(between: points)
-            context.strokePath()
-
-            // One or two runs of light, each at its own pace.
-            let runs = random(i, 0) < 0.4 ? 2 : 1
-            for r in 0..<runs {
-                let seed = i * 7 + r
-                let length = 0.06 + 0.12 * random(seed, 1)
-                let speed = 0.025 + 0.05 * random(seed, 2)
-                let start = fract(random(seed, 3) + t * speed) * (1 + length) - length
-                drawRun(context, points: points, from: start, length: length, width: lineWidth * 1.15)
+    /// Points drifting slowly in every direction, linked by faint lines
+    /// that fade in as two come near and out as they part.
+    private static func constellation(_ context: CGContext, w: CGFloat, h: CGFloat, unit: CGFloat, t: Double) {
+        // They roam a margin past the edges, so wrapping around happens off screen.
+        let pad = unit * 0.15
+        let points = (0..<56).map { i -> CGPoint in
+            let angle = random(i, 0) * 2 * .pi
+            let speed = unit * (0.006 + 0.014 * random(i, 1))
+            let x = CGFloat(random(i, 2)) * (w + pad * 2) + CGFloat(cos(angle) * t) * speed
+            let y = CGFloat(random(i, 3)) * (h + pad * 2) + CGFloat(sin(angle) * t) * speed
+            return CGPoint(x: wrap(x, w + pad * 2) - pad, y: wrap(y, h + pad * 2) - pad)
+        }
+        let reach = unit * 0.24
+        context.setLineWidth(max(1, unit / 1080 * 1.1))
+        for i in points.indices {
+            for j in points.indices where j > i {
+                let d = hypot(points[i].x - points[j].x, points[i].y - points[j].y)
+                guard d < reach else { continue }
+                let alpha = 0.32 * pow(1 - d / reach, 1.5)
+                context.setStrokeColor(CGColor(srgbRed: 0.72, green: 0.84, blue: 1, alpha: alpha))
+                context.strokeLineSegments(between: [points[i], points[j]])
             }
         }
-    }
-
-    /// A stretch of `points` (as fractions of its length in x) in white,
-    /// fading in and out at its ends.
-    private static func drawRun(_ context: CGContext, points: [CGPoint], from start: Double, length: Double, width: CGFloat) {
-        let n = points.count - 1
-        let first = max(0, Int((start * Double(n)).rounded(.down)))
-        let last = min(n, Int(((start + length) * Double(n)).rounded(.up)))
-        guard last > first else { return }
-        context.setLineWidth(width)
-        var k = first
-        while k < last {
-            let next = min(last, k + 3)
-            let u = (Double(k + next) / 2 / Double(n) - start) / length
-            let alpha = 0.9 * sin(.pi * min(1, max(0, u)))
-            context.setStrokeColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: alpha))
-            context.addLines(between: Array(points[k...next]))
-            context.strokePath()
-            k = next
+        for (i, p) in points.enumerated() {
+            let radius = unit * (0.002 + 0.0025 * random(i, 4))
+            let alpha = 0.55 + 0.35 * (0.5 + 0.5 * sin(t * (0.4 + 0.8 * random(i, 5)) + Double(i)))
+            context.setFillColor(CGColor(srgbRed: 0.72, green: 0.84, blue: 1, alpha: alpha * 0.15))
+            context.fillEllipse(in: CGRect(x: p.x - radius * 3, y: p.y - radius * 3, width: radius * 6, height: radius * 6))
+            context.setFillColor(CGColor(srgbRed: 0.9, green: 0.95, blue: 1, alpha: alpha))
+            context.fillEllipse(in: CGRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2))
         }
     }
 
@@ -189,6 +171,12 @@ enum StartingSoonRenderer {
     private static func smootherstep(_ x: Double) -> Double { Double(smootherstep(CGFloat(x))) }
 
     private static func fract(_ x: Double) -> Double { x - x.rounded(.down) }
+
+    /// `x` wrapped into 0..<`length`.
+    private static func wrap(_ x: CGFloat, _ length: CGFloat) -> CGFloat {
+        let r = x.truncatingRemainder(dividingBy: length)
+        return r < 0 ? r + length : r
+    }
 
     /// A fixed pseudo-random number in 0..<1 for `index` and `salt`, so each
     /// line or speck keeps its own pace from frame to frame.
