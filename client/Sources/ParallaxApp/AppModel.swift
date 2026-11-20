@@ -343,8 +343,9 @@ final class AppModel {
         // Same physical device (or same overlay kind) reuses the existing source.
         let reusable = { (existing: VideoSource) -> Bool in
             if let key = kind.deviceKey { return existing.kind.deviceKey == key }
-            // One countdown, however it's been set up since.
+            // One countdown or starting-soon screen, however it's been set up since.
             if case .countdown = kind, case .countdown = existing.kind { return true }
+            if case .startingSoon = kind, case .startingSoon = existing.kind { return true }
             return existing.kind == kind && !kind.allowsDuplicates
         }
         if let existing = profile.videoSources.first(where: reusable) {

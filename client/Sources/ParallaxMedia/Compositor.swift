@@ -172,7 +172,7 @@ final class Compositor: @unchecked Sendable {
         var result = CIImage(color: .black).cropped(to: canvas)
         guard let scene else { return result }
         for item in scene.items where item.isVisible && !leavingOut.contains(item.sourceID) {
-            guard let source = registry[item.sourceID]?.image(at: time) else { continue }
+            guard let node = registry[item.sourceID], let source = node.image(at: time) else { continue }
             let extent = source.extent
             let frame = item.frame.denormalized(in: canvas.size)
             guard let p = Placement.compute(sourceSize: extent.size, crop: item.crop, frame: frame, mode: item.contentMode) else { continue }
@@ -191,6 +191,11 @@ final class Compositor: @unchecked Sendable {
                 .transformed(by: transform, highQualityDownsample: true)
                 .cropped(to: dst)
             placed = styled(placed, in: dst, item: item, canvasHeight: canvas.height)
+            // Blur or fog what's beneath, within the item's frame.
+            if let effect = (node as? BackdropNode)?.backdrop {
+                let beneath = effect.apply(to: result, in: dst, canvasHeight: canvas.height)
+                result = rounded(beneath, in: dst, item: item).composited(over: result)
+            }
             if let shadow = shadow(of: placed, item.shadow, canvasHeight: canvas.height) {
                 result = shadow.composited(over: result)
             }
@@ -199,20 +204,28 @@ final class Compositor: @unchecked Sendable {
         return result
     }
 
+    private func cornerRadius(of rect: CGRect, item: SceneItem) -> Float {
+        Float(min(rect.width, rect.height) * min(0.5, max(0, item.cornerRadius)))
+    }
+
+    /// `image` with the item's rounded corners cut out.
+    private func rounded(_ image: CIImage, in rect: CGRect, item: SceneItem) -> CIImage {
+        let radius = cornerRadius(of: rect, item: item)
+        guard radius > 0 else { return image }
+        let mask = CIFilter.roundedRectangleGenerator()
+        mask.extent = rect
+        mask.radius = radius
+        mask.color = .white
+        let blend = CIFilter.blendWithMask()
+        blend.inputImage = image
+        blend.backgroundImage = CIImage.empty()
+        blend.maskImage = mask.outputImage
+        return blend.outputImage ?? image
+    }
+
     private func styled(_ image: CIImage, in rect: CGRect, item: SceneItem, canvasHeight: CGFloat) -> CIImage {
-        let radius = Float(min(rect.width, rect.height) * min(0.5, max(0, item.cornerRadius)))
-        var out = image
-        if radius > 0 {
-            let mask = CIFilter.roundedRectangleGenerator()
-            mask.extent = rect
-            mask.radius = radius
-            mask.color = .white
-            let blend = CIFilter.blendWithMask()
-            blend.inputImage = image
-            blend.backgroundImage = CIImage.empty()
-            blend.maskImage = mask.outputImage
-            out = blend.outputImage ?? image
-        }
+        let radius = cornerRadius(of: rect, item: item)
+        var out = rounded(image, in: rect, item: item)
         if item.border.isEnabled, item.border.width > 0 {
             let width = Float(item.border.width * canvasHeight / 1080)
             // The generator strokes inward from the extent, so it hugs the image edge.

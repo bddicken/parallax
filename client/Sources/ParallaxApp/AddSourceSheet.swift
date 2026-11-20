@@ -111,6 +111,9 @@ struct AddSourceSheet: View {
             row("Countdown", systemImage: "timer", detail: "“Stream starting soon” with a timer") {
                 add(.countdown(CountdownSettings()), "Countdown")
             }
+            row("Starting Soon", systemImage: "sparkles.tv", detail: "No timer; blurs what's beneath, with a gentle animation") {
+                add(.startingSoon(StartingSoonSettings()), "Starting Soon")
+            }
             row("Image…", systemImage: "photo", detail: "PNG, JPEG, HEIC…") { importingImage = true }
             HStack {
                 ColorPicker("", selection: $color).labelsHidden()
