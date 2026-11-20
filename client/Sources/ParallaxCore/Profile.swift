@@ -31,6 +31,8 @@ public enum VideoSourceKind: Codable, Hashable, Sendable {
     case chatFeed
     /// A single chat message the host has chosen to feature on screen.
     case featuredChat
+    /// A "Stream starting soon" screen with a timer.
+    case countdown(CountdownSettings)
 }
 
 extension VideoSourceKind {

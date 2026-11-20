@@ -107,6 +107,7 @@ extension VideoSourceKind {
         case .color: "paintpalette.fill"
         case .chatFeed: "bubble.left.and.bubble.right.fill"
         case .featuredChat: "text.bubble.fill"
+        case .countdown: "timer"
         }
     }
 }

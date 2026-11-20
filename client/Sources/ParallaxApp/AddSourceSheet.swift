@@ -108,6 +108,9 @@ struct AddSourceSheet: View {
             row("Featured Comment", systemImage: "text.bubble.fill", detail: "The comment you star in the chat panel") {
                 add(.featuredChat, "Featured Comment")
             }
+            row("Countdown", systemImage: "timer", detail: "“Stream starting soon” with a timer") {
+                add(.countdown(CountdownSettings()), "Countdown")
+            }
             row("Image…", systemImage: "photo", detail: "PNG, JPEG, HEIC…") { importingImage = true }
             HStack {
                 ColorPicker("", selection: $color).labelsHidden()

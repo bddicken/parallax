@@ -154,6 +154,10 @@ private struct ItemInspector: View {
                 }
             }
 
+            if case .countdown(let settings) = source.kind {
+                section("Countdown") { CountdownControls(sourceID: source.id, settings: settings) }
+            }
+
             HStack {
                 Button { model.moveItem(item.id, by: 1) } label: { Label("Forward", systemImage: "square.2.layers.3d.top.filled") }
                 Button { model.moveItem(item.id, by: -1) } label: { Label("Backward", systemImage: "square.2.layers.3d.bottom.filled") }
@@ -304,5 +308,64 @@ private struct SourceSwapMenu: View {
         } label: {
             if kind.deviceKey == source.kind.deviceKey { Label(name, systemImage: "checkmark") } else { Text(name) }
         }
+    }
+}
+
+/// Sets up and runs a countdown source.
+private struct CountdownControls: View {
+    @Environment(AppModel.self) private var model
+    let sourceID: UUID
+    let settings: CountdownSettings
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Title", text: binding(\.title), prompt: Text(CountdownSettings.defaultTitle))
+                .textFieldStyle(.roundedBorder)
+            Picker("Theme", selection: binding(\.theme)) {
+                ForEach(CountdownTheme.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            Stepper("Length: \(settings.minutes) min", value: binding(\.minutes), in: 1...180)
+                .controlSize(.small)
+
+            HStack(alignment: .firstTextBaseline) {
+                TimelineView(.periodic(from: .now, by: 0.25)) { context in
+                    Text(settings.clock(at: context.date))
+                        .font(.title2.weight(.semibold)).monospacedDigit()
+                }
+                Text(settings.endsAt.map { "ends at \($0.formatted(date: .omitted, time: .shortened))" } ?? "not started")
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            HStack {
+                Button(settings.endsAt == nil ? "Start" : "Restart") {
+                    update { $0.endsAt = Date.now.addingTimeInterval(TimeInterval($0.minutes * 60)) }
+                }
+                .buttonStyle(.borderedProminent)
+                if let endsAt = settings.endsAt {
+                    Button("+1 min") {
+                        update { $0.endsAt = max(endsAt, .now).addingTimeInterval(60) }
+                    }
+                    .help("Add a minute to the time left")
+                    Button("Reset") { update { $0.endsAt = nil } }
+                        .help("Stop the timer and show the full length again")
+                }
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private func update(_ body: (inout CountdownSettings) -> Void) {
+        model.updateVideoSource(sourceID) { source in
+            guard case .countdown(var settings) = source.kind else { return }
+            body(&settings)
+            source.kind = .countdown(settings)
+        }
+    }
+
+    private func binding<T>(_ path: WritableKeyPath<CountdownSettings, T>) -> Binding<T> {
+        Binding(get: { settings[keyPath: path] }, set: { value in update { $0[keyPath: path] = value } })
     }
 }
