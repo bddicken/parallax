@@ -36,6 +36,7 @@ struct ParallaxApp: App {
         .commands {
             SceneCommands(model: model)
             MusicCommands(model: model)
+            ChatTextCommands()
         }
 
         Settings {
