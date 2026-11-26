@@ -6,12 +6,27 @@ struct ChatPanel: View {
     @Environment(AppModel.self) private var model
     @State private var draft = ""
     @State private var target: Platform?
+    @AppStorage(ChatPanelText.key) private var textSize = ChatPanelText.standard
 
     private var broadcast: BroadcastModel { model.broadcast }
 
     var body: some View {
         VStack(spacing: 0) {
             PanelHeader(title: "Chat") {
+                ControlGroup {
+                    Button { textSize = ChatPanelText.stepped(textSize, by: -1) } label: {
+                        Image(systemName: "textformat.size.smaller")
+                    }
+                    .disabled(textSize <= ChatPanelText.range.lowerBound)
+                    .help("Smaller chat text (⌘−)")
+                    Button { textSize = ChatPanelText.stepped(textSize, by: 1) } label: {
+                        Image(systemName: "textformat.size.larger")
+                    }
+                    .disabled(textSize >= ChatPanelText.range.upperBound)
+                    .help("Bigger chat text (⌘+)")
+                }
+                .controlSize(.small)
+                .fixedSize()
                 PopOutChatMenu()
                 Toggle(isOn: mockBinding) { Text("Mock") }
                     .toggleStyle(.button)
@@ -30,7 +45,7 @@ struct ChatPanel: View {
             Divider()
             ScrollViewReader { proxy in
                 List(broadcast.messages) { message in
-                    ChatRow(message: message, isFeatured: message.id == broadcast.featuredMessageID) {
+                    ChatRow(message: message, isFeatured: message.id == broadcast.featuredMessageID, textSize: textSize) {
                         broadcast.toggleFeatured(message.id)
                     }
                     .id(message.id)
@@ -87,6 +102,40 @@ struct ChatPanel: View {
         let text = draft
         draft = ""
         Task { await broadcast.send(text, to: target.map { [$0] }) }
+    }
+}
+
+/// Text size of the chat list in the window (not the on-stream feed, which
+/// has its own). Kept per Mac rather than in the profile.
+enum ChatPanelText {
+    static let key = "chatPanelTextSize"
+    /// The system's callout size, which chat used before it was adjustable.
+    static let standard = 12.0
+    static let range = 10.0...28.0
+
+    static func stepped(_ size: Double, by steps: Double) -> Double {
+        // Bigger steps once the text is big, so each press is noticeable.
+        let step = size + min(steps, 0) >= 18 ? 2.0 : 1.0
+        return min(max(size + steps * step, range.lowerBound), range.upperBound)
+    }
+}
+
+/// View › Bigger / Smaller Chat Text.
+struct ChatTextCommands: Commands {
+    @AppStorage(ChatPanelText.key) private var textSize = ChatPanelText.standard
+
+    var body: some Commands {
+        CommandGroup(before: .toolbar) {
+            Button("Bigger Chat Text") { textSize = ChatPanelText.stepped(textSize, by: 1) }
+                .keyboardShortcut("+", modifiers: .command)
+                .disabled(textSize >= ChatPanelText.range.upperBound)
+            Button("Smaller Chat Text") { textSize = ChatPanelText.stepped(textSize, by: -1) }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(textSize <= ChatPanelText.range.lowerBound)
+            Button("Default Chat Text Size") { textSize = ChatPanelText.standard }
+                .disabled(textSize == ChatPanelText.standard)
+            Divider()
+        }
     }
 }
 
@@ -185,20 +234,25 @@ private struct OnStreamBar: View {
 private struct ChatRow: View {
     let message: ChatMessage
     let isFeatured: Bool
+    let textSize: Double
     let toggleFeatured: () -> Void
     @State private var hovering = false
 
     var body: some View {
+        let scale = textSize / ChatPanelText.standard
         HStack(alignment: .top, spacing: 8) {
-            ChatAvatar(author: message.author, platform: message.platform)
+            ChatAvatar(author: message.author, platform: message.platform, scale: scale)
                 .help("\(message.author.displayName) on \(message.platform.displayName)")
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 4) {
-                    Text(message.author.displayName).font(.callout.weight(.semibold))
-                    if message.author.isOwner { Image(systemName: "person.crop.circle.badge.checkmark").font(.caption) }
-                    if message.author.isModerator { Image(systemName: "shield.fill").font(.caption).foregroundStyle(.green) }
+                    Text(message.author.displayName).font(.system(size: textSize, weight: .semibold))
+                    Group {
+                        if message.author.isOwner { Image(systemName: "person.crop.circle.badge.checkmark") }
+                        if message.author.isModerator { Image(systemName: "shield.fill").foregroundStyle(.green) }
+                    }
+                    .font(.system(size: textSize - 2))
                 }
-                Text(message.text).font(.callout).textSelection(.enabled)
+                Text(message.text).font(.system(size: textSize)).textSelection(.enabled)
             }
             Spacer(minLength: 0)
             Button(action: toggleFeatured) {
@@ -220,16 +274,17 @@ private struct ChatRow: View {
 private struct ChatAvatar: View {
     let author: ChatAuthor
     let platform: Platform
-
-    private static let size: CGFloat = 28
+    /// Grows with the chat text, so a name still lines up with its picture.
+    var scale: Double = 1
 
     var body: some View {
+        let size = (28 * scale).rounded()
         picture
-            .frame(width: Self.size, height: Self.size)
+            .frame(width: size, height: size)
             .clipShape(Circle())
             .overlay(alignment: .bottomTrailing) {
-                PlatformBadge(platform: platform, font: .system(size: 8, weight: .bold))
-                    .frame(width: 14, height: 14)
+                PlatformBadge(platform: platform, font: .system(size: 8 * scale, weight: .bold))
+                    .frame(width: 14 * scale, height: 14 * scale)
                     .background(Circle().fill(.background))
                     .offset(x: 4, y: 4)
             }
@@ -253,7 +308,7 @@ private struct ChatAvatar: View {
 
     private var initial: some View {
         Text(author.displayName.first.map { String($0).uppercased() } ?? "?")
-            .font(.system(size: 13, weight: .semibold))
+            .font(.system(size: 13 * scale, weight: .semibold))
             .foregroundStyle(.white)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(platform.accent.color.opacity(0.8))
