@@ -87,6 +87,8 @@ struct ControlBar: View {
             }
             RecordingContentsButton()
 
+            StreamHealthButton()
+
             let status = model.broadcast.status
             Button { showingGoLive = true } label: {
                 HStack(spacing: 6) {

@@ -614,6 +614,9 @@ public struct StreamSettings: Codable, Hashable, Sendable {
     public var videoBitrateKbps: Int = 6_000
     public var audioBitrateKbps: Int = 160
     public var keyframeIntervalSeconds: Int = 2
+    /// Turn the video bitrate down while the stream can't keep up, and back
+    /// up once it can. `videoBitrateKbps` is then the most it sends.
+    public var adaptiveBitrate = true
 
     public init() {}
 
@@ -624,6 +627,7 @@ public struct StreamSettings: Codable, Hashable, Sendable {
         videoBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .videoBitrateKbps) ?? d.videoBitrateKbps
         audioBitrateKbps = try c.decodeIfPresent(Int.self, forKey: .audioBitrateKbps) ?? d.audioBitrateKbps
         keyframeIntervalSeconds = try c.decodeIfPresent(Int.self, forKey: .keyframeIntervalSeconds) ?? d.keyframeIntervalSeconds
+        adaptiveBitrate = try c.decodeIfPresent(Bool.self, forKey: .adaptiveBitrate) ?? d.adaptiveBitrate
     }
 }
 

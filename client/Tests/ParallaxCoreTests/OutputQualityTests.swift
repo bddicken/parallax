@@ -67,6 +67,7 @@ import Testing
         let broadcast = #"{"serverURL":"","uplinkVideoBitrateKbps":8000}"#
         let b = try JSONDecoder().decode(BroadcastSettings.self, from: Data(broadcast.utf8))
         #expect(b.stream == StreamSettings())
+        #expect(b.stream.adaptiveBitrate, "older profiles get adaptive bitrate")
         #expect(!b.useMockServer, "mock chat is off unless turned on")
         #expect(b.serverMode == .local, "no server set up, so use the built-in one")
         let remote = #"{"serverURL":"https://relay.example.com"}"#

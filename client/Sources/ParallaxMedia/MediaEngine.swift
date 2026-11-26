@@ -357,12 +357,19 @@ public final class MediaEngine {
     public var isStreaming: Bool { uplink != nil }
 
     /// Starts sending the program to parallax-server at `url` (SRT).
-    public func startStreaming(to url: URL, settings: StreamSettings, onState: @escaping @Sendable (UplinkState) -> Void) {
+    public func startStreaming(to url: URL, settings: StreamSettings, onState: @escaping @Sendable (UplinkState) -> Void,
+                               onStats: @escaping @Sendable (UplinkStats) -> Void = { _ in }) {
         stopStreaming()
-        let u = Uplink(url: url, stream: settings, output: compositor.outputSettings, onState: onState)
+        let u = Uplink(url: url, stream: settings, output: compositor.outputSettings, onState: onState, onStats: onStats)
         uplink = u
         sinks.add(u)
         updateActivity()
+    }
+
+    /// Tells the uplink how far the server's slowest relay is behind and
+    /// the bitrate it's sending at, for adaptive bitrate.
+    public func setRelayLag(ms: Int, kbps: Int) {
+        uplink?.setRelayLag(ms: ms, kbps: kbps)
     }
 
     public func stopStreaming() {

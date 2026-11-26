@@ -16,6 +16,7 @@ A macOS livestreaming studio in one app. It replaces an OBS + StreamYard + Loopb
 - **Music**: a built-in player for your own songs, such as ones you download from Suno in a Suno window inside Parallax. It has shuffle, per-song volume, loudness matching, and music that ducks while you talk. Songs are audio only and never show on screen.
 - **Local recording**: H.264/HEVC up to 4K, crash-safe, independent of the stream.
 - **Multistreaming**: upload one stream, and the server relays it to each platform (Twitch and YouTube today).
+- **Stream health**: see the bitrate going out, packet loss, dropped frames, and whether each destination is keeping up. When your connection can't, Parallax lowers the video bitrate instead of dropping video, and raises it again by itself.
 - **Unified chat**: read platform chat and reply from the app.
 - **Viewer counts**: see how many people are watching on each platform, and in total.
 

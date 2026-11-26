@@ -58,6 +58,17 @@ final class BroadcastModel {
         }
     }
 
+    /// How far the slowest relay is behind real time.
+    var relayLagMs: Int { slowestRelay?.lagMs ?? 0 }
+
+    /// The relay furthest behind real time, if any is behind.
+    var slowestRelay: DestinationStatus? {
+        status.destinations.filter { $0.lagMs != nil }.max { ($0.lagMs ?? 0) < ($1.lagMs ?? 0) }
+    }
+
+    /// Destinations in the broadcast that aren't getting video.
+    var relaysDown: Int { status.live ? status.destinations.count { $0.state == .error } : 0 }
+
     /// Everyone watching across platforms. Someone watching on two counts twice.
     var totalViewers: Int? {
         let counts = viewerCounts
