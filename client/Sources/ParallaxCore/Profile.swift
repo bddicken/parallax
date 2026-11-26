@@ -797,6 +797,14 @@ public struct Profile: Codable, Hashable, Sendable {
         }
     }
 
+    /// Every profile has a System Audio channel, so its fader is always in
+    /// the mixer. It's added muted, so the stream doesn't change until you
+    /// turn it on.
+    public mutating func ensureSystemAudioSource() {
+        guard !audioSources.contains(where: { $0.kind == .systemAudio }) else { return }
+        audioSources.append(AudioSource(name: "System Audio", kind: .systemAudio, isMuted: true, channelMode: .stereo))
+    }
+
     /// The input music plays through in the current mode, if it's been added.
     public var musicSource: AudioSource? {
         let kind: AudioSourceKind = musicMode == .library ? .music : .webPlayer
