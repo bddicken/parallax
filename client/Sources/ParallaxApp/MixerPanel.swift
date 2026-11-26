@@ -15,7 +15,7 @@ struct MixerPanel: View {
             }
             // Only the music input for the current music mode is shown (and runs).
             if model.profile.activeAudioSources.isEmpty {
-                Text("No audio inputs. Add a microphone or system audio.")
+                Text("No audio inputs. Add a microphone.")
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -43,7 +43,6 @@ private struct AddAudioMenu: View {
                     Button(mic.name) { model.addAudioSource(kind: mic.microphoneKind, name: mic.name) }
                 }
             }
-            Button("System Audio") { model.addAudioSource(kind: .systemAudio, name: "System Audio") }
             Button(model.profile.musicMode == .library ? "Music" : "Suno Player") { model.ensureMusicSource() }
                 .disabled(model.musicSource != nil)
         } label: {
@@ -126,7 +125,10 @@ private struct ChannelStrip: View {
             Button("Reset Gain") { model.updateAudioSource(source.id) { $0.gainDB = 0 } }
             Button("Reset Delay") { model.updateAudioSource(source.id) { $0.delayMs = 0 } }
             Toggle("Include in Recording", isOn: binding(\.isInRecording))
-            Button("Remove", role: .destructive) { model.removeAudioSource(source.id) }
+            // System Audio is always in the mixer; mute it instead.
+            if source.kind != .systemAudio {
+                Button("Remove", role: .destructive) { model.removeAudioSource(source.id) }
+            }
         }
     }
 

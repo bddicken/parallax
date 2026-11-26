@@ -128,3 +128,26 @@ import Testing
         #expect(leftovers.contains { $0.contains("corrupt") })
     }
 }
+
+@Suite struct SystemAudioSourceTests {
+    @Test func addsOneMutedStereoChannel() throws {
+        var p = Profile()
+        p.ensureSystemAudioSource()
+        p.ensureSystemAudioSource()
+        let sources = p.audioSources.filter { $0.kind == .systemAudio }
+        #expect(sources.count == 1)
+        let source = try #require(sources.first)
+        #expect(source.isMuted)
+        #expect(source.channelMode == .stereo)
+        #expect(p.activeAudioSources.contains { $0.id == source.id })
+    }
+
+    @Test func keepsExistingChannelSettings() {
+        var p = Profile()
+        p.audioSources = [AudioSource(name: "Mac", kind: .systemAudio, gainDB: -6, channelMode: .stereo)]
+        p.ensureSystemAudioSource()
+        #expect(p.audioSources.count == 1)
+        #expect(p.audioSources[0].gainDB == -6)
+        #expect(!p.audioSources[0].isMuted)
+    }
+}

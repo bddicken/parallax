@@ -58,7 +58,9 @@ final class AppModel {
 
     init() {
         let firstRun = !FileManager.default.fileExists(atPath: store.url.path)
-        profile = store.load()
+        var loaded = store.load()
+        loaded.ensureSystemAudioSource()
+        profile = loaded
         let directory = store.url.deletingLastPathComponent()
         secrets = SecretStore(url: directory.appending(path: "secrets.json"))
         // A scratch profile (PARALLAX_PROFILE) starts empty instead of
