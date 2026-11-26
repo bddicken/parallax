@@ -48,6 +48,8 @@ struct ControlBar: View {
 
             Spacer()
 
+            ViewerCounts()
+
             if let first = model.lastRecordingURLs.first, !model.isRecording {
                 let urls = model.lastRecordingURLs
                 Button {
@@ -201,6 +203,11 @@ struct GoLiveSheet: View {
                             .disabled(broadcast.status.live)
                             Spacer()
                             if let status = broadcast.status.destinations.first(where: { $0.destinationID == dest.id }) {
+                                if let viewers = status.viewers {
+                                    Label("\(viewers)", systemImage: "eye")
+                                        .font(.callout).monospacedDigit().foregroundStyle(.secondary)
+                                        .help("\(viewers) watching on \(dest.name)")
+                                }
                                 if dest.platform == .x, !broadcast.status.rehearsal {
                                     Button("Go Live on X…") { broadcast.showXLiveStudio() }
                                         .buttonStyle(.link).font(.callout)

@@ -30,8 +30,24 @@ public actor MockBroadcastService: BroadcastService {
         broadcast(.status(current))
         try? await Task.sleep(for: .seconds(1.5))
         guard current.live else { return }
-        current.destinations = current.destinations.map { DestinationStatus(destinationID: $0.destinationID, state: .live, bitrateKbps: 6000) }
+        // X reports no count, like the real server.
+        current.destinations = current.destinations.map {
+            DestinationStatus(destinationID: $0.destinationID, state: .live, bitrateKbps: 6000,
+                              viewers: $0.destinationID == "x" || current.rehearsal ? nil : Int.random(in: 5...80))
+        }
         broadcast(.status(current))
+    }
+
+    /// Nudges each live destination's audience up or down a little.
+    private func driftViewers() {
+        guard current.live else { return }
+        var changed = false
+        for i in current.destinations.indices {
+            guard let viewers = current.destinations[i].viewers else { continue }
+            current.destinations[i].viewers = max(0, viewers + Int.random(in: -3...5))
+            changed = true
+        }
+        if changed { broadcast(.status(current)) }
     }
 
     public func stopBroadcast() async throws {
@@ -82,6 +98,7 @@ public actor MockBroadcastService: BroadcastService {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(Double.random(in: 2...6)))
                     await self?.broadcast(.chat(Self.randomMessage()))
+                    await self?.driftViewers()
                 }
             }
         }
