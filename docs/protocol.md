@@ -25,7 +25,7 @@ Every `/v1` endpoint requires `Authorization: Bearer <token>`. Bodies are JSON, 
 Events:
 
 - `chat.message` → `ChatMessage` `{id, platform, author{id, displayName, avatarURL?, isOwner, isModerator}, text, timestamp}`
-- `broadcast.status` → `BroadcastStatus` `{live, ingestActive, startedAt?, destinations[{destinationID, state, bitrateKbps, error?, viewers?}], rehearsal?}` (`rehearsal` is left out when false). `viewers` is how many people are watching now, where the platform reports it (Twitch, YouTube); while live, the server checks every 30 s and sends a new status when a count changes. `live` without `ingestActive` means the slate is playing; the client starts sending again when it sees that.
+- `broadcast.status` → `BroadcastStatus` `{live, ingestActive, startedAt?, destinations[{destinationID, state, bitrateKbps, error?, viewers?, lagMs?}], rehearsal?}` (`rehearsal` is left out when false). `viewers` is how many people are watching now, where the platform reports it (Twitch, YouTube); while live, the server checks every 30 s and sends a new status when a count changes. `bitrateKbps` is what the relay sent over its last report (about 2 s), not an average since it started. `lagMs` is how far a relay is behind real time because the platform is taking the stream slower than it comes in (left out while the relay keeps up); when it grows, the client lowers its video bitrate to what that relay is sending. `live` without `ingestActive` means the slate is playing; the client starts sending again when it sees that.
 - `accounts` → `[Account]` `{platform, state: disconnected|pending|connected, login?, displayName?, pending?: DeviceCode, error?}`
 
 Unknown event types must be ignored so either side can add events.

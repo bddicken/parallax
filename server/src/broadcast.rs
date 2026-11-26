@@ -317,9 +317,21 @@ impl Broadcaster {
         let mut lines = BufReader::new(child.stdout.take().expect("piped")).lines();
         let mut kbps = 0;
         let mut sent = false;
+        let mut rate = RateMeter::default();
+        let mut lag = LagMeter::default();
+        let mut lag_ms = None;
         while let Ok(Some(line)) = lines.next_line().await {
-            if let Some(rate) = line.strip_prefix("bitrate=") {
-                kbps = rate.trim_end_matches("kbits/s").trim().parse::<f64>().map_or(0, |r| r.round() as i64);
+            if let Some(size) = line.strip_prefix("total_size=") {
+                // Not ffmpeg's `bitrate=`, which averages since it started
+                // and so hides a destination that has just slowed down.
+                if let Ok(bytes) = size.trim().parse::<i64>() {
+                    kbps = rate.update(Instant::now(), bytes).unwrap_or(kbps);
+                }
+            } else if let Some(time) = line.strip_prefix("out_time_us=") {
+                // "N/A" until the first packet is out.
+                if let Ok(us) = time.trim().parse::<i64>() {
+                    lag_ms = lag.update(Instant::now(), us);
+                }
             } else if line.starts_with("progress=") {
                 sent = true;
                 let status = DestinationStatus {
@@ -328,6 +340,7 @@ impl Broadcaster {
                     bitrate_kbps: kbps,
                     error: None,
                     viewers: None,
+                    lag_ms,
                 };
                 self.set(generation, status).await;
             }
@@ -340,6 +353,56 @@ impl Broadcaster {
             (Err(e), true) => e.to_string(),
         };
         Stopped { error, sent }
+    }
+}
+
+/// A relay's bitrate between one progress report and the next: what the
+/// destination is taking right now.
+#[derive(Default)]
+struct RateMeter {
+    last: Option<(Instant, i64)>,
+}
+
+impl RateMeter {
+    /// `None` for the first report, which has nothing to compare with.
+    fn update(&mut self, now: Instant, total_bytes: i64) -> Option<i64> {
+        let last = self.last.replace((now, total_bytes));
+        let (then, bytes) = last?;
+        let seconds = (now - then).as_secs_f64();
+        (seconds > 0.0).then(|| ((total_bytes - bytes).max(0) as f64 * 8.0 / 1000.0 / seconds).round() as i64)
+    }
+}
+
+/// Measures how far a relay has fallen behind real time, from ffmpeg's
+/// progress reports. The stream is live, so the time ffmpeg has sent
+/// (`out_time`) should advance as fast as the clock; when the platform
+/// takes data slower than that, `out_time` falls behind. The smallest gap
+/// seen is "keeping up", and anything over it is lag.
+#[derive(Default)]
+struct LagMeter {
+    /// The clock and `out_time` at the first report.
+    origin: Option<(Instant, i64)>,
+    last: Option<Instant>,
+    keeping_up_ms: f64,
+}
+
+impl LagMeter {
+    /// Lag under this is jitter in when ffmpeg reports, not falling behind.
+    const NOISE_MS: f64 = 500.0;
+    /// The sender's clock and ours tick at slightly different rates, which
+    /// over hours would look like lag. Let "keeping up" follow that drift.
+    const DRIFT_MS_PER_S: f64 = 1.0;
+
+    /// Returns the lag to report, rounded to 100 ms, or `None` while the
+    /// relay keeps up.
+    fn update(&mut self, now: Instant, out_time_us: i64) -> Option<i64> {
+        let (start, first) = *self.origin.get_or_insert((now, out_time_us));
+        let gap_ms = (now - start).as_secs_f64() * 1000.0 - (out_time_us - first) as f64 / 1000.0;
+        let since_last = self.last.map_or(0.0, |last| (now - last).as_secs_f64());
+        self.last = Some(now);
+        self.keeping_up_ms = (self.keeping_up_ms + since_last * Self::DRIFT_MS_PER_S).min(gap_ms);
+        let lag_ms = gap_ms - self.keeping_up_ms;
+        (lag_ms >= Self::NOISE_MS).then(|| (lag_ms / 100.0).round() as i64 * 100)
     }
 }
 
@@ -371,7 +434,7 @@ fn stop_relays(inner: &mut Inner) {
 }
 
 fn connecting(id: &str, error: Option<String>) -> DestinationStatus {
-    DestinationStatus { destination_id: id.into(), state: DestinationState::Connecting, bitrate_kbps: 0, error, viewers: None }
+    DestinationStatus { destination_id: id.into(), state: DestinationState::Connecting, bitrate_kbps: 0, error, viewers: None, lag_ms: None }
 }
 
 fn merge_viewers(known: &HashMap<String, i64>, live: &[String], checked: Vec<(String, Option<i64>)>) -> HashMap<String, i64> {
@@ -418,6 +481,43 @@ mod tests {
         assert_eq!(merge_viewers(&known, &live, vec![("twitch".into(), None)]), HashMap::from([("youtube".to_owned(), 12)]));
         // A relay dropped: its count goes, even with no check.
         assert_eq!(merge_viewers(&known, &live[..1], vec![]), HashMap::from([("twitch".to_owned(), 40)]));
+    }
+
+    #[test]
+    fn measures_how_far_a_relay_is_behind() {
+        let start = Instant::now();
+        let at = |s: f64| start + Duration::from_secs_f64(s);
+        let mut lag = LagMeter::default();
+        // Keeping up: two seconds of video every two seconds, give or take.
+        assert_eq!(lag.update(at(0.0), 5_000_000), None);
+        assert_eq!(lag.update(at(2.0), 7_050_000), None);
+        assert_eq!(lag.update(at(4.0), 8_950_000), None);
+        // The platform takes half of it: one second of video per two.
+        assert_eq!(lag.update(at(6.0), 9_900_000), Some(1_100));
+        assert_eq!(lag.update(at(8.0), 10_900_000), Some(2_100));
+        // It catches up by sending faster than real time.
+        assert_eq!(lag.update(at(10.0), 14_950_000), None);
+    }
+
+    #[test]
+    fn measures_the_bitrate_between_reports() {
+        let start = Instant::now();
+        let mut rate = RateMeter::default();
+        assert_eq!(rate.update(start, 1_000_000), None);
+        // 1.5 MB in 2 s is 6 Mbps, however long the relay has been running.
+        assert_eq!(rate.update(start + Duration::from_secs(2), 2_500_000), Some(6_000));
+        assert_eq!(rate.update(start + Duration::from_secs(4), 3_250_000), Some(3_000));
+    }
+
+    #[test]
+    fn clock_drift_is_not_lag() {
+        let start = Instant::now();
+        let mut lag = LagMeter::default();
+        // Six hours with the sender's clock 50 ppm slow: over a second apart by the end.
+        for s in (0..6 * 3600).step_by(2) {
+            let out_time_us = (s as f64 * 1e6 * (1.0 - 50e-6)) as i64;
+            assert_eq!(lag.update(start + Duration::from_secs(s), out_time_us), None);
+        }
     }
 
     #[test]

@@ -37,6 +37,7 @@ import Testing
         guard case .status(let status) = try decode(ServerEvent.self, "event-status") else { Issue.record("not status"); return }
         #expect(status.destinations.map(\.state) == [.live, .error])
         #expect(status.destinations.map(\.viewers) == [90, nil])
+        #expect(status.destinations.map(\.lagMs) == [2300, nil])
         #expect(status.startedAt != nil)
         #expect(!status.rehearsal)
 

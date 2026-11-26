@@ -243,6 +243,8 @@ private struct StreamingSettingsView: View {
                         .disabled(stream.videoBitrateKbps == recommended)
                     }
                 }
+                Toggle("Lower the bitrate while the stream can't keep up", isOn: $model.profile.broadcast.stream.adaptiveBitrate)
+                    .help("When your connection or a destination falls behind, Parallax sends lower-quality video (down to a quarter of the bitrate) instead of letting viewers miss video, and brings it back up by itself.")
                 Picker("Audio bitrate", selection: $model.profile.broadcast.stream.audioBitrateKbps) {
                     ForEach([128, 160, 192, 256], id: \.self) { Text("\($0) kbps").tag($0) }
                 }

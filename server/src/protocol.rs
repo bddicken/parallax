@@ -53,6 +53,10 @@ pub struct DestinationStatus {
     /// People watching now, where the platform reports it (Twitch, YouTube).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewers: Option<i64>,
+    /// How far the relay is behind real time, when it can't send as fast as
+    /// the stream comes in. Left out while it keeps up.
+    #[serde(rename = "lagMs", default, skip_serializing_if = "Option::is_none")]
+    pub lag_ms: Option<i64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

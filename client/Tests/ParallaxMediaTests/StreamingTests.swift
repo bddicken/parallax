@@ -24,16 +24,34 @@ import Testing
         engine.setProgram(profile.programSceneID, transition: TransitionSettings(kind: .cut))
 
         let states = StateLog()
+        let stats = StatsLog()
         var stream = StreamSettings()
-        stream.videoBitrateKbps = 2_500
-        engine.startStreaming(to: try #require(Self.url), settings: stream) { states.append($0) }
+        stream.videoBitrateKbps = Int(ProcessInfo.processInfo.environment["PARALLAX_TEST_KBPS"] ?? "") ?? 2_500
+        engine.startStreaming(to: try #require(Self.url), settings: stream, onState: { states.append($0) }, onStats: {
+            // To watch adaptive bitrate at work, e.g. through a rate-limited link.
+            print("uplink: sent \($0.sentKbps) kbps, video \($0.videoKbps)/\($0.fullVideoKbps) kbps, rtt \($0.rttMs) ms, "
+                  + "loss \(String(format: "%.1f", $0.lossPercent))%, backlog \($0.backlogMs) ms, "
+                  + "dropped \($0.droppedFrames) frames \($0.droppedPackets) packets")
+            stats.append($0)
+        })
         try await Task.sleep(for: .seconds(Double(ProcessInfo.processInfo.environment["PARALLAX_TEST_SECONDS"] ?? "6") ?? 6))
         engine.stopStreaming()
 
         #expect(states.all.first == .connecting)
         #expect(states.all.contains(.sending), "states: \(states.all)")
         #expect(!states.all.contains { if case .retrying = $0 { true } else { false } }, "states: \(states.all)")
+        // About one reading a second, and something was actually sent.
+        #expect(stats.all.count >= 3, "stats: \(stats.all)")
+        #expect(stats.all.contains { $0.sentKbps > 0 })
+        #expect(stats.all.allSatisfy { $0.fullVideoKbps == stream.videoBitrateKbps && $0.videoKbps <= $0.fullVideoKbps })
     }
+}
+
+private final class StatsLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stats: [UplinkStats] = []
+    func append(_ s: UplinkStats) { lock.withLock { stats.append(s) } }
+    var all: [UplinkStats] { lock.withLock { stats } }
 }
 
 private final class StateLog: @unchecked Sendable {

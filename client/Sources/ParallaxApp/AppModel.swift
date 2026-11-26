@@ -35,6 +35,10 @@ final class AppModel {
     var showingRecordPicker = false
     /// Sending video to the server; nil when not streaming.
     var uplinkState: UplinkState?
+    /// The latest once-a-second reading of the uplink; nil unless sending.
+    private(set) var uplinkStats: UplinkStats?
+    /// When the uplink last gave up on packets or skipped a frame.
+    private(set) var uplinkDroppedAt: Date?
     /// The last recording's files (more than one if a file failed partway).
     var lastRecordingURLs: [URL] = []
     var sourceErrors: [UUID: String] = [:]
@@ -119,7 +123,11 @@ final class AppModel {
             if stopped { Task { await self.stopRecording() } }
         }
         broadcast.onChatChanged = { [weak self] in self?.refreshChatOverlay() }
-        broadcast.onStatusChanged = { [weak self] in self?.resumeUplinkIfNeeded() }
+        broadcast.onStatusChanged = { [weak self] in
+            guard let self else { return }
+            resumeUplinkIfNeeded()
+            engine.setRelayLag(ms: broadcast.relayLagMs, kbps: broadcast.slowestRelay?.bitrateKbps ?? 0)
+        }
         localServer.onStateChanged = { [weak self] _ in self?.updateBroadcastConnection() }
         // Save identities that sources re-found (renumbered display, replugged
         // camera) so the next launch goes straight to the right device.
@@ -785,19 +793,40 @@ final class AppModel {
         uplinkGeneration += 1
         let generation = uplinkGeneration
         uplinkState = .connecting
-        engine.startStreaming(to: url, settings: profile.broadcast.stream) { [weak self] state in
+        engine.startStreaming(to: url, settings: profile.broadcast.stream, onState: { [weak self] state in
             Task { @MainActor in
                 guard let self, self.uplinkGeneration == generation, self.uplinkState != nil else { return }
                 self.uplinkState = state
+                if state != .sending { self.uplinkStats = nil }
             }
-        }
+        }, onStats: { [weak self] stats in
+            Task { @MainActor in
+                guard let self, self.uplinkGeneration == generation, self.uplinkState == .sending else { return }
+                if let last = self.uplinkStats,
+                   stats.droppedPackets > last.droppedPackets || stats.droppedFrames > last.droppedFrames {
+                    self.uplinkDroppedAt = Date()
+                }
+                self.uplinkStats = stats
+            }
+        })
+        engine.setRelayLag(ms: broadcast.relayLagMs, kbps: broadcast.slowestRelay?.bitrateKbps ?? 0)
         return true
     }
 
     func stopUplink() {
         uplinkGeneration += 1
         uplinkState = nil
+        uplinkStats = nil
+        uplinkDroppedAt = nil
         engine.stopStreaming()
+    }
+
+    /// How the stream is doing, from this Mac's connection to the server
+    /// and the server's relays to the platforms.
+    var streamHealth: StreamHealth {
+        // Stay red for a few seconds after a drop, so it isn't missed.
+        let dropping = uplinkDroppedAt.map { Date().timeIntervalSince($0) < 5 } ?? false
+        return .of(uplinkStats, dropping: dropping, relayLagMs: broadcast.relayLagMs, relaysDown: broadcast.relaysDown)
     }
 
     // MARK: Chat
