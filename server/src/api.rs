@@ -270,6 +270,34 @@ pub async fn end_abandoned_broadcasts(state: Arc<AppState>) {
     }
 }
 
+/// While live, checks each platform's viewer count every 30 seconds. Twitch
+/// only refreshes its count about once a minute anyway, and each YouTube
+/// check costs 1 quota unit. Never returns.
+pub async fn poll_viewers(state: Arc<AppState>) {
+    let mut tick = tokio::time::interval(Duration::from_secs(30));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        tick.tick().await;
+        let live = state.broadcaster.live_destinations().await;
+        let mut checked = Vec::new();
+        let mut record = |id: &str, count: anyhow::Result<Option<i64>>| match count {
+            Ok(count) => checked.push((id.to_owned(), count)),
+            Err(e) => tracing::warn!("{e:#}"),
+        };
+        if let Some(twitch) = &state.twitch
+            && live.iter().any(|id| id == "twitch")
+        {
+            record("twitch", twitch.viewers().await);
+        }
+        if let Some(youtube) = &state.youtube
+            && live.iter().any(|id| id == "youtube")
+        {
+            record("youtube", youtube.viewers().await);
+        }
+        state.broadcaster.set_viewers(&live, checked).await;
+    }
+}
+
 fn image_type(image: &[u8]) -> Option<&'static str> {
     match image {
         [0xFF, 0xD8, 0xFF, ..] => Some("image/jpeg"),

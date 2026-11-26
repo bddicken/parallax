@@ -4,7 +4,7 @@
 //!
 //! Quota: every project gets 10,000 units a day. Going live costs about 200
 //! (create + bind + end the broadcast), a thumbnail 50, each chat message
-//! sent 50, and each chat read 1.
+//! sent 50, and each chat read or viewer-count check 1.
 
 use std::{
     collections::{HashSet, VecDeque},
@@ -383,6 +383,17 @@ impl YouTube {
         let stream = YouTubeStream { id: created.id, url: format!("{}/{}", base.trim_end_matches('/'), info.stream_name) };
         self.store.update(|s| s.youtube_stream = Some(stream.clone()))?;
         Ok(stream)
+    }
+
+    /// People watching our broadcast now. `None` until YouTube reports a
+    /// count, or if the channel hides it.
+    pub async fn viewers(&self) -> Result<Option<i64>> {
+        let Some(broadcast) = self.store.get().youtube_broadcast else { return Ok(None) };
+        let list: List<Video> = self
+            .call(reqwest::Method::GET, "videos", &[("part", "liveStreamingDetails"), ("id", &broadcast.id)], None)
+            .await
+            .context("Couldn't get the YouTube viewer count")?;
+        Ok(viewer_count(list))
     }
 
     // MARK: Chat
@@ -767,6 +778,10 @@ fn chat_message(item: ChatItem) -> Option<ChatMessage> {
     })
 }
 
+fn viewer_count(list: List<Video>) -> Option<i64> {
+    list.items.into_iter().next()?.live_streaming_details?.concurrent_viewers?.parse().ok()
+}
+
 // MARK: API types
 
 #[derive(Deserialize)]
@@ -797,6 +812,19 @@ struct Snippet {
 struct Status {
     #[serde(default)]
     life_cycle_status: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Video {
+    live_streaming_details: Option<LiveStreamingDetails>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LiveStreamingDetails {
+    /// A number, sent as a string.
+    concurrent_viewers: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -920,6 +948,15 @@ mod tests {
          "authorDetails": {"channelId": "UC3", "displayName": "Grace", "isChatOwner": false, "isChatModerator": false}}
       ]
     }"#;
+
+    #[test]
+    fn reads_the_viewer_count() {
+        let count = |json: &str| viewer_count(serde_json::from_str(json).unwrap());
+        assert_eq!(count(r#"{"items": [{"liveStreamingDetails": {"concurrentViewers": "52"}}]}"#), Some(52));
+        // Hidden by the channel, or not live yet.
+        assert_eq!(count(r#"{"items": [{"liveStreamingDetails": {"actualStartTime": "2026-09-24T18:20:00Z"}}]}"#), None);
+        assert_eq!(count(r#"{"items": []}"#), None);
+    }
 
     #[test]
     fn maps_chat_items() {

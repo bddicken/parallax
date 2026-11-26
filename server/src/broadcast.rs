@@ -4,7 +4,12 @@
 //! broadcast is saved so a restarted server picks it back up. A rehearsal
 //! runs the same relays but throws their output away.
 
-use std::{collections::VecDeque, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
 
 use chrono::{DateTime, Utc};
 use tokio::{
@@ -51,6 +56,9 @@ struct Inner {
     /// Bumped on every start and stop, so late updates from a stopped relay are dropped.
     generation: u64,
     relays: Vec<(DestinationStatus, Option<JoinHandle<()>>)>,
+    /// Latest viewer counts by destination, kept apart from the relays'
+    /// statuses so relay updates don't wipe them.
+    viewers: HashMap<String, i64>,
     /// The rehearsal's preview window. Dropping it closes the window.
     preview: Option<Child>,
 }
@@ -75,7 +83,11 @@ impl Broadcaster {
             live: inner.started_at.is_some(),
             ingest_active: *self.ingest.ready().borrow(),
             started_at: inner.started_at,
-            destinations: inner.relays.iter().map(|(s, _)| s.clone()).collect(),
+            destinations: inner
+                .relays
+                .iter()
+                .map(|(s, _)| DestinationStatus { viewers: inner.viewers.get(&s.destination_id).copied(), ..s.clone() })
+                .collect(),
             rehearsal: inner.rehearsal,
         }
     }
@@ -117,6 +129,7 @@ impl Broadcaster {
         inner.generation += 1;
         inner.started_at = Some(saved.started_at);
         inner.rehearsal = saved.rehearsal;
+        inner.viewers.clear();
         let generation = inner.generation;
         for target in saved.targets {
             let (status, task) = match target.url {
@@ -185,6 +198,32 @@ impl Broadcaster {
         inner.started_at = None;
         inner.rehearsal = false;
         inner.preview = None;
+        inner.viewers.clear();
+        drop(inner);
+        self.publish().await;
+    }
+
+    /// Destinations whose viewer counts are worth checking: the ones
+    /// relaying video to a platform. None during a rehearsal.
+    pub async fn live_destinations(&self) -> Vec<String> {
+        let inner = self.inner.lock().await;
+        if inner.rehearsal {
+            return Vec::new();
+        }
+        inner.relays.iter().filter(|(s, _)| s.state == DestinationState::Live).map(|(s, _)| s.destination_id.clone()).collect()
+    }
+
+    /// Records the counts just checked (`None`: the platform reports none)
+    /// and forgets those of destinations in `live` no longer. A destination
+    /// whose check failed isn't in `checked`, so it keeps its last count.
+    /// Announces the new status if anything changed.
+    pub async fn set_viewers(&self, live: &[String], checked: Vec<(String, Option<i64>)>) {
+        let mut inner = self.inner.lock().await;
+        let viewers = merge_viewers(&inner.viewers, live, checked);
+        if inner.viewers == viewers {
+            return;
+        }
+        inner.viewers = viewers;
         drop(inner);
         self.publish().await;
     }
@@ -288,6 +327,7 @@ impl Broadcaster {
                     state: DestinationState::Live,
                     bitrate_kbps: kbps,
                     error: None,
+                    viewers: None,
                 };
                 self.set(generation, status).await;
             }
@@ -331,7 +371,19 @@ fn stop_relays(inner: &mut Inner) {
 }
 
 fn connecting(id: &str, error: Option<String>) -> DestinationStatus {
-    DestinationStatus { destination_id: id.into(), state: DestinationState::Connecting, bitrate_kbps: 0, error }
+    DestinationStatus { destination_id: id.into(), state: DestinationState::Connecting, bitrate_kbps: 0, error, viewers: None }
+}
+
+fn merge_viewers(known: &HashMap<String, i64>, live: &[String], checked: Vec<(String, Option<i64>)>) -> HashMap<String, i64> {
+    let mut viewers = known.clone();
+    viewers.retain(|id, _| live.contains(id));
+    for (id, count) in checked {
+        match count {
+            Some(n) => viewers.insert(id, n),
+            None => viewers.remove(&id),
+        };
+    }
+    viewers
 }
 
 /// Hides the stream key (the last path segment) in logs and errors.
@@ -353,6 +405,19 @@ mod tests {
         assert!(explain(dropped).starts_with("Fell behind"));
         let refused = "[out#0/flv @ 0x807418180] Error opening output rtmps://ingest.example/app/…: Input/output error";
         assert_eq!(explain(refused), refused);
+    }
+
+    #[test]
+    fn keeps_a_count_when_its_check_fails() {
+        let known = HashMap::from([("twitch".to_owned(), 40), ("youtube".to_owned(), 12)]);
+        let live = ["twitch".to_owned(), "youtube".to_owned()];
+        // YouTube's check failed, so only Twitch was checked.
+        let merged = merge_viewers(&known, &live, vec![("twitch".into(), Some(45))]);
+        assert_eq!(merged, HashMap::from([("twitch".to_owned(), 45), ("youtube".to_owned(), 12)]));
+        // The platform stopped reporting a count.
+        assert_eq!(merge_viewers(&known, &live, vec![("twitch".into(), None)]), HashMap::from([("youtube".to_owned(), 12)]));
+        // A relay dropped: its count goes, even with no check.
+        assert_eq!(merge_viewers(&known, &live[..1], vec![]), HashMap::from([("twitch".to_owned(), 40)]));
     }
 
     #[test]

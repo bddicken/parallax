@@ -15,6 +15,7 @@ use twitch_api::{
         self, Event, EventsubWebsocketData, Transport,
         channel::{ChannelChatMessageV1, ChannelChatMessageV1Payload},
     },
+    helix::streams::GetStreamsRequest,
 };
 use twitch_oauth2::{
     AccessToken, ClientSecret, RefreshToken, Scope, TwitchToken, UserToken, tokens::DeviceUserTokenBuilder,
@@ -240,6 +241,15 @@ impl Twitch {
         let token = self.token().await?;
         let key = self.helix.get_stream_key(&token.user_id, &token).await.context("Couldn't get the Twitch stream key")?;
         Ok(format!("{}/{}", self.config.ingest_url.trim_end_matches('/'), key.as_str()))
+    }
+
+    /// People watching the channel now, or `None` if Twitch doesn't list it
+    /// as live yet (it lags going live by up to a minute).
+    pub async fn viewers(&self) -> Result<Option<i64>> {
+        let token = self.token().await?;
+        let request = GetStreamsRequest::user_ids(vec![token.user_id.clone()]);
+        let response = self.helix.req_get(request, &token).await.context("Couldn't get the Twitch viewer count")?;
+        Ok(response.data.first().map(|s| s.viewer_count as i64))
     }
 
     pub async fn send_chat(&self, text: &str) -> Result<()> {

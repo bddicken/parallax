@@ -70,6 +70,7 @@ async fn main() -> Result<()> {
     });
     tokio::spawn(api::publish_accounts(state.clone()));
     tokio::spawn(api::end_abandoned_broadcasts(state.clone()));
+    tokio::spawn(api::poll_viewers(state.clone()));
     let app = api::router(state.clone());
 
     let listener = tokio::net::TcpListener::bind(config.addr).await.with_context(|| format!("listening on {}", config.addr))?;
